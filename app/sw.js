@@ -6,7 +6,9 @@ const SHELL = [
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
   './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
-  './assets/js/views/add.js'
+  './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js',
+  './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
+  './assets/js/services/providers/ygoprodeck.js'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
   'images.pokemontcg.io', 'cards.scryfall.io', 'images.ygoprodeck.com'

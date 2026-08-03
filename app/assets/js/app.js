@@ -1,23 +1,19 @@
-import { pageHeader } from './core/components.js';
 import { clearLocalData, exportBackup, exportHoldingsCSV, getAll, importBackup, putRecord, removeHolding, saveHolding } from './core/db.js';
 import { getState, setState, subscribe } from './core/store.js';
 import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML } from './core/utils.js';
+import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
 import { renderPortfolio } from './views/portfolio.js';
 import { renderProfile } from './views/profile.js';
+import { renderSearch } from './views/search.js';
 
 const root = document.querySelector('#main-content');
 const defaults = { currency: 'USD', theme: 'dark' };
 
-function renderSearchShell() {
-  return `${pageHeader('Catalog discovery', 'Search collectibles', 'Search Pokémon, Magic, and Yu-Gi-Oh! catalogs together.')}
-    <section class="empty-state"><span class="empty-symbol">⌕</span><h2>Catalog search is warming up</h2><p>You can add a custom holding now or continue to the provider search.</p><div class="button-row"><button class="button" data-action="custom-holding">Create custom item</button><button class="button secondary" disabled>Search providers</button></div></section>`;
-}
-
 function render(state = getState()) {
-  const views = { home: renderHome, search: renderSearchShell, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile };
+  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile };
   root.innerHTML = state.ready ? (views[state.activeView] || renderHome)(state) : '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>';
   document.querySelectorAll('.bottom-nav [data-view]').forEach((button) => {
     const selected = button.dataset.view === state.activeView;
@@ -45,8 +41,8 @@ function option(value, selected, label = value) {
   return `<option value="${escapeAttribute(value)}" ${selected === value ? 'selected' : ''}>${escapeHTML(label)}</option>`;
 }
 
-function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Approve custom holding', image = '' } = {}) {
-  const item = holding?.item || {};
+function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Approve custom holding', image = '', item: proposedItem = null } = {}) {
+  const item = holding?.item || proposedItem || {};
   const category = item.category || 'other';
   const content = `<form id="holding-form">
     <div class="field-grid">
@@ -57,6 +53,7 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
       <label>Number / issue<input name="number" maxlength="50" value="${escapeAttribute(item.number || '')}"></label>
       <label>Variant / rarity<input name="variant" maxlength="100" value="${escapeAttribute(item.variant || '')}"></label>
       <label>Year<input name="year" inputmode="numeric" maxlength="4" value="${escapeAttribute(item.year || '')}"></label>
+      ${item.priceOptions?.length ? `<label class="span-all">Variant / finish and provider price<select name="finish">${item.priceOptions.map((entry, index) => `<option value="${index}" ${entry.finish === item.variant ? 'selected' : ''}>${escapeHTML(entry.finish)} — ${escapeHTML(String(entry.price))} ${escapeHTML(item.currency || 'USD')}</option>`).join('')}</select><span class="fine-print">Changing finish snapshots that price; the full provider options remain stored.</span></label>` : ''}
       <label>Quantity<input name="quantity" type="number" min="1" step="1" value="${escapeAttribute(holding?.quantity || 1)}" required></label>
       <label>Condition<select name="condition">${['Mint','Near Mint','Excellent','Good','Played','Poor','Graded'].map((value) => option(value, holding?.condition || 'Near Mint')).join('')}</select></label>
       <label>Grade company<input name="gradeCompany" maxlength="40" value="${escapeAttribute(holding?.gradeCompany || '')}" placeholder="PSA, CGC, BGS"></label>
@@ -81,10 +78,11 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
         const data = Object.fromEntries(new FormData(form));
         const file = form.elements.photo.files[0];
         const userImage = file ? await fileToDataURL(file) : data.existingImage;
-        const providerItem = holding?.item || {};
+        const providerItem = holding?.item || proposedItem || {};
+        const finish = providerItem.priceOptions?.[Number(data.finish)];
         await saveHolding({
           ...holding,
-          item: { ...providerItem, id: providerItem.id || createId(), externalId: providerItem.externalId || '', provider: providerItem.provider || 'custom', category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: data.variant, rarity: providerItem.rarity || '', year: data.year, image: providerItem.image || '', imageSmall: providerItem.imageSmall || '', price: providerItem.price ?? null, priceOptions: providerItem.priceOptions || [], currency: providerItem.currency || 'USD', priceSource: providerItem.priceSource || '', priceUrl: providerItem.priceUrl || '', priceUpdatedAt: providerItem.priceUpdatedAt || '' },
+          item: { ...providerItem, id: providerItem.id || createId(), externalId: providerItem.externalId || '', provider: providerItem.provider || 'custom', category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: finish?.finish || data.variant, rarity: providerItem.rarity || '', year: data.year, image: providerItem.image || '', imageSmall: providerItem.imageSmall || '', price: finish?.price ?? providerItem.price ?? null, priceOptions: providerItem.priceOptions || [], currency: providerItem.currency || 'USD', priceSource: providerItem.priceSource || '', priceUrl: providerItem.priceUrl || '', priceUpdatedAt: providerItem.priceUpdatedAt || '' },
           quantity: data.quantity, condition: data.condition, gradeCompany: data.gradeCompany, grade: data.grade,
           purchasePrice: data.purchasePrice, purchaseDate: data.purchaseDate, fees: data.fees,
           manualMarketPrice: data.manualMarketPrice, folder: data.folder, notes: data.notes, userImage
@@ -163,6 +161,38 @@ async function loadDemo() {
   showToast('Demo collection loaded');
 }
 
+async function runCatalogSearch(form) {
+  const data = Object.fromEntries(new FormData(form));
+  setState({ search: { ...getState().search, query: data.query, category: data.category, provider: data.provider, loading: true, results: [], warnings: [], cached: false } });
+  try {
+    const response = await searchCatalog(data);
+    setState({ search: { ...getState().search, loading: false, ...response } });
+    if (response.manual) showToast('This category uses custom entry so coverage is not overstated', 'warning');
+    else if (!response.results.length) showToast('No catalog candidates found', 'warning');
+  } catch (error) {
+    setState({ search: { ...getState().search, loading: false, warnings: [error.message || 'Search failed'], results: [] } });
+  }
+}
+
+async function refreshPrices() {
+  const holdings = getState().holdings.filter((holding) => holding.item?.provider && holding.item.provider !== 'custom');
+  if (!holdings.length) { showToast('There are no provider-linked holdings to refresh', 'warning'); return; }
+  showToast(`Refreshing ${holdings.length} provider-linked holding${holdings.length === 1 ? '' : 's'}…`, 'warning');
+  let refreshed = 0;
+  let failed = 0;
+  for (const holding of holdings) {
+    try {
+      const item = await refreshCatalogItem(holding.item);
+      await saveHolding({ ...holding, item, lastPriceRefresh: new Date().toISOString() });
+      refreshed++;
+    } catch {
+      failed++;
+    }
+  }
+  await loadLocal();
+  showToast(`Refreshed ${refreshed}; ${failed} failed without losing saved prices`, failed ? 'warning' : 'success');
+}
+
 function confirmClear() {
   openModal({ title: 'Clear all local data?', content: '<p>This cannot be undone from this device unless you exported a backup. Type <strong>CLEAR</strong> to confirm.</p><label>Confirmation<input id="clear-confirm" autocomplete="off"></label>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-clear-confirmed disabled>Clear this device</button>', onOpen(layer) {
     const input = layer.querySelector('#clear-confirm');
@@ -183,7 +213,14 @@ root.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]');
   if (!action) return;
   const id = action.dataset.id;
-  if (action.dataset.action === 'custom-holding') holdingForm();
+  if (action.dataset.action === 'custom-holding') {
+    const category = action.dataset.category;
+    holdingForm(null, category ? { item: { provider: 'custom', category } } : {});
+  }
+  if (action.dataset.action === 'add-catalog') {
+    const item = getState().search.results[Number(action.dataset.index)];
+    if (item) holdingForm(null, { title: 'Review catalog match', item });
+  }
   if (action.dataset.action === 'edit-holding') holdingForm(getState().holdings.find((entry) => entry.id === id));
   if (action.dataset.action === 'delete-holding') confirmDelete(id);
   if (action.dataset.action === 'export-json') exportJSON();
@@ -191,8 +228,15 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'export-csv') exportCSV();
   if (action.dataset.action === 'load-demo') loadDemo();
   if (action.dataset.action === 'clear-data') confirmClear();
-  if (action.dataset.action === 'refresh-prices') showToast('Provider refresh is available after catalog search is enabled', 'warning');
+  if (action.dataset.action === 'refresh-prices') refreshPrices();
   if (['start-multi-scan','start-single-scan','resume-scan'].includes(action.dataset.action)) showToast('The local scan workbench opens in the image-ingestion milestone', 'warning');
+});
+
+root.addEventListener('submit', (event) => {
+  if (event.target.matches('#catalog-search')) {
+    event.preventDefault();
+    runCatalogSearch(event.target);
+  }
 });
 
 root.addEventListener('change', async (event) => {

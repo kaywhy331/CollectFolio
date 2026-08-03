@@ -1,0 +1,40 @@
+import { fetchJSON } from '../../core/utils.js';
+
+const endpoint = 'https://api.scryfall.com/cards/search';
+
+export function normalizeScryfallCard(card) {
+  const images = card.image_uris || card.card_faces?.find((face) => face.image_uris)?.image_uris || {};
+  const rawOptions = [['regular', card.prices?.usd], ['foil', card.prices?.usd_foil], ['etched', card.prices?.usd_etched]];
+  const priceOptions = rawOptions.flatMap(([finish, price]) => Number.isFinite(Number(price)) ? [{ finish, price: Number(price), source: 'Scryfall daily price' }] : []);
+  const preferred = priceOptions[0];
+  return {
+    id: `scryfall:${card.id}`,
+    externalId: String(card.id),
+    provider: 'scryfall',
+    category: 'magic',
+    game: 'Magic: The Gathering',
+    name: card.name || 'Unnamed Magic card',
+    setName: card.set_name || '',
+    number: card.collector_number || '',
+    variant: preferred?.finish || '',
+    rarity: card.rarity || '',
+    year: card.released_at?.slice(0, 4) || '',
+    image: images.large || images.normal || images.small || '',
+    imageSmall: images.small || images.normal || '',
+    price: preferred?.price ?? null,
+    priceOptions,
+    currency: 'USD',
+    priceSource: preferred ? 'Scryfall daily price' : '',
+    priceUrl: card.scryfall_uri || '',
+    priceUpdatedAt: card.prices?.usd || card.prices?.usd_foil || card.prices?.usd_etched ? new Date().toISOString().slice(0, 10) : ''
+  };
+}
+
+export async function searchScryfall(query) {
+  const url = new URL(endpoint);
+  url.searchParams.set('q', query);
+  url.searchParams.set('unique', 'prints');
+  url.searchParams.set('order', 'name');
+  const payload = await fetchJSON(url, { headers: { Accept: 'application/json' } });
+  return (payload.data || []).map(normalizeScryfallCard);
+}
