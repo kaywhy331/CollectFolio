@@ -1,11 +1,14 @@
 import { fetchJSON } from '../../core/utils.js';
 
-const endpoint = 'https://api.scryfall.com/cards/search';
+const cardsEndpoint = 'https://api.scryfall.com/cards';
+const endpoint = `${cardsEndpoint}/search`;
 
 export function normalizeScryfallCard(card) {
   const images = card.image_uris || card.card_faces?.find((face) => face.image_uris)?.image_uris || {};
   const rawOptions = [['regular', card.prices?.usd], ['foil', card.prices?.usd_foil], ['etched', card.prices?.usd_etched]];
-  const priceOptions = rawOptions.flatMap(([finish, price]) => Number.isFinite(Number(price)) ? [{ finish, price: Number(price), source: 'Scryfall daily price' }] : []);
+  const priceOptions = rawOptions.flatMap(([finish, price]) => price !== null && price !== undefined && price !== '' && Number.isFinite(Number(price))
+    ? [{ finish, price: Number(price), source: 'Scryfall daily price' }]
+    : []);
   const preferred = priceOptions[0];
   return {
     id: `scryfall:${card.id}`,
@@ -37,4 +40,10 @@ export async function searchScryfall(query) {
   url.searchParams.set('order', 'name');
   const payload = await fetchJSON(url, { headers: { Accept: 'application/json' } });
   return (payload.data || []).map(normalizeScryfallCard);
+}
+
+export async function getScryfallCard(externalId) {
+  const payload = await fetchJSON(`${cardsEndpoint}/${encodeURIComponent(String(externalId))}`, { headers: { Accept: 'application/json' } });
+  if (!payload?.id) throw new Error('Scryfall card detail was not found.');
+  return normalizeScryfallCard(payload);
 }

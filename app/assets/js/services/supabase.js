@@ -1,5 +1,5 @@
 import { dataUrlBytes } from '../core/utils.js';
-import { deleteRecord, getAll, putRecord } from '../core/db.js';
+import { deleteRecord, getAll, putRecord, recordDailySnapshot } from '../core/db.js';
 
 const SESSION_KEY = 'collectfolio:supabase-session';
 const INLINE_IMAGE_LIMIT = 180 * 1024;
@@ -46,8 +46,14 @@ function storeSession(payload) {
   return session;
 }
 
+export function authRedirectPath(path, current = globalThis.location) {
+  if (!current?.origin) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}redirect_to=${encodeURIComponent(`${current.origin}${current.pathname || '/'}`)}`;
+}
+
 export async function signUp(email, password) {
-  return storeSession(await request('/auth/v1/signup', { method: 'POST', body: { email, password } }));
+  return storeSession(await request(authRedirectPath('/auth/v1/signup'), { method: 'POST', body: { email, password } }));
 }
 
 export async function signIn(email, password) {
@@ -55,7 +61,7 @@ export async function signIn(email, password) {
 }
 
 export async function requestMagicLink(email) {
-  await request('/auth/v1/otp', { method: 'POST', body: { email, options: { emailRedirectTo: `${location.origin}${location.pathname}` } } });
+  await request(authRedirectPath('/auth/v1/otp'), { method: 'POST', body: { email, create_user: true } });
 }
 
 export function consumeAuthCallback() {
@@ -95,13 +101,16 @@ export function mergeTombstones(...sets) {
 }
 
 export function mergeHoldings(local, remote, deletedIds = new Set()) {
+  const localImages = new Map(local.filter((holding) => holding?.id && holding.userImage).map((holding) => [holding.id, holding.userImage]));
   const merged = new Map();
   for (const holding of [...local, ...remote]) {
     if (!holding?.id || deletedIds.has(holding.id)) continue;
     const current = merged.get(holding.id);
     if (!current || String(holding.updatedAt || '') > String(current.updatedAt || '')) merged.set(holding.id, { ...holding });
   }
-  return [...merged.values()];
+  return [...merged.values()].map((holding) => holding.userImage || !localImages.has(holding.id)
+    ? holding
+    : { ...holding, userImage: localImages.get(holding.id) });
 }
 
 function remoteHolding(row) {
@@ -150,5 +159,6 @@ export async function syncPortfolio() {
     await request('/rest/v1/holdings?on_conflict=id', { method: 'POST', session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: merged.map((holding) => holdingRow(holding, userId)) });
   }
   for (const tombstone of tombstones) await putRecord('deletions', { ...tombstone, dirty: false });
+  await recordDailySnapshot();
   return { holdings: merged.length, deletions: tombstones.length, omittedImages: merged.filter((holding) => holding.userImage && dataUrlBytes(holding.userImage) > INLINE_IMAGE_LIMIT).length };
 }

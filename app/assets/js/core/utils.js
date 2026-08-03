@@ -10,7 +10,9 @@ export function escapeAttribute(value = '') {
 
 export function safeImageUrl(value = '') {
   const url = String(value).trim();
-  if (url.startsWith('data:image/')) return url;
+  if (!url) return '';
+  if (/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(url)) return url;
+  if (url.startsWith('data:')) return '';
   try {
     const parsed = new URL(url, location.href);
     return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
