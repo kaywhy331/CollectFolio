@@ -1,0 +1,20 @@
+{
+  "name": "CollectFolio",
+  "short_name": "CollectFolio",
+  "description": "Local-first collectible portfolio and batch ingestion workbench",
+  "id": "/",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c151d",
+  "theme_color": "#0c151d",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
