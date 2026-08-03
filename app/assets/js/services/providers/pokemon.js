@@ -48,7 +48,6 @@ export async function searchPokemon(query) {
   const url = new URL(endpoint);
   url.searchParams.set('q', buildPokemonQuery(query));
   url.searchParams.set('pageSize', '24');
-  url.searchParams.set('orderBy', 'name,number');
   const payload = await fetchJSON(url);
   return (payload.data || []).map(normalizePokemonCard);
 }

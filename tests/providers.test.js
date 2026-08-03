@@ -49,6 +49,7 @@ test('provider search preserves punctuation required by catalog APIs', async () 
   try {
     await searchPokemon('Charizard 4/102');
     assert.equal(requested.searchParams.get('q'), 'name:charizard number:4');
+    assert.equal(requested.searchParams.has('orderBy'), false);
     await searchYGOPRODeck('Blue-Eyes White Dragon');
     assert.equal(requested.searchParams.get('fname'), 'Blue-Eyes White Dragon');
   } finally {

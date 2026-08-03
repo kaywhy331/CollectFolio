@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.1.0';
+const CACHE = 'collectfolio-shell-v0.1.1';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
