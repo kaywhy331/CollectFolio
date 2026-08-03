@@ -2,7 +2,8 @@ const CACHE = 'collectfolio-shell-v0.1.0';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
-  './assets/css/app.css', './assets/icons/icon.svg', './assets/js/app.js',
+  './assets/css/app.css', './assets/icons/icon.svg', './assets/icons/icon-192.png',
+  './assets/icons/icon-512.png', './assets/js/app.js',
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
   './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
@@ -35,7 +36,7 @@ async function cacheFirst(request, cacheName) {
   const cached = await cache.match(request);
   if (cached) return cached;
   const response = await fetch(request);
-  if (response.ok || response.type === 'opaque') cache.put(request, response.clone());
+  if (response.ok || response.type === 'opaque') await cache.put(request, response.clone());
   return response;
 }
 
@@ -49,8 +50,8 @@ self.addEventListener('fetch', (event) => {
   }
   if (url.origin !== location.origin) return;
   if (event.request.mode === 'navigate') {
-    event.respondWith(fetch(event.request).then((response) => {
-      if (response.ok) caches.open(CACHE).then((cache) => cache.put('./index.html', response.clone()));
+    event.respondWith(fetch(event.request).then(async (response) => {
+      if (response.ok) await caches.open(CACHE).then((cache) => cache.put('./index.html', response.clone()));
       return response;
     }).catch(() => caches.match('./index.html')));
     return;

@@ -8,7 +8,7 @@ export function externalImage(item, className = '') {
   const url = safeImageUrl(item?.userImage || item?.imageSmall || item?.image);
   const label = item?.name || 'Collectible';
   return url
-    ? `<img class="${escapeAttribute(className)}" src="${escapeAttribute(url)}" alt="${escapeAttribute(label)}" loading="lazy" referrerpolicy="no-referrer" crossorigin="anonymous">`
+    ? `<img class="${escapeAttribute(className)}" src="${escapeAttribute(url)}" alt="${escapeAttribute(label)}" loading="lazy" referrerpolicy="no-referrer">`
     : `<div class="image-placeholder ${escapeAttribute(className)}" aria-label="No image available"><span>CF</span></div>`;
 }
 

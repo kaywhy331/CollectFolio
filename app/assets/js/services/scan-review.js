@@ -81,8 +81,12 @@ export async function deleteCrop(draft, cropId) {
   return draft;
 }
 
+export function eligibleApprovedCrops(draft) {
+  return draft.crops.filter((crop) => crop.approved && (crop.customItem || (crop.selectedId && crop.candidates.some((candidate) => candidate.id === crop.selectedId))));
+}
+
 export async function batchAddApproved(draft) {
-  const approved = draft.crops.filter((crop) => crop.approved && (crop.customItem || crop.selectedId));
+  const approved = eligibleApprovedCrops(draft);
   for (const crop of approved) {
     const item = crop.customItem || crop.candidates.find((candidate) => candidate.id === crop.selectedId);
     if (!item) continue;

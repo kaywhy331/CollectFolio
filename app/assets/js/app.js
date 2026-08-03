@@ -3,7 +3,7 @@ import { getState, setState, subscribe } from './core/store.js';
 import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML } from './core/utils.js';
 import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
-import { cropsFromBoxes, fileToImageDataURL, loadImage } from './services/image.js';
+import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
 import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
 import { consumeAuthCallback, isSupabaseConfigured, loadSession, requestMagicLink, signIn, signOut, signUp, syncPortfolio } from './services/supabase.js';
@@ -95,7 +95,7 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
         const form = event.currentTarget;
         const data = Object.fromEntries(new FormData(form));
         const file = form.elements.photo.files[0];
-        const userImage = file ? await fileToDataURL(file) : data.existingImage;
+        const userImage = file ? await fileToPortfolioImage(file) : data.existingImage;
         const providerItem = holding?.item || proposedItem || {};
         const finish = providerItem.priceOptions?.[Number(data.finish)];
         await saveHolding({
@@ -116,13 +116,10 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
   }});
 }
 
-function fileToDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => resolve(reader.result));
-    reader.addEventListener('error', () => reject(reader.error));
-    reader.readAsDataURL(file);
-  });
+async function fileToPortfolioImage(file) {
+  const source = await fileToImageDataURL(file);
+  const image = await loadImage(source);
+  return cropToJPEG(image, { x: 0, y: 0, width: image.naturalWidth || image.width, height: image.naturalHeight || image.height });
 }
 
 async function confirmDelete(id) {
@@ -358,7 +355,11 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'export-json') exportJSON();
   if (action.dataset.action === 'import-json') document.querySelector('#backup-file')?.click();
   if (action.dataset.action === 'export-csv') exportCSV();
-  if (action.dataset.action === 'load-demo') loadDemo();
+  if (action.dataset.action === 'load-demo') {
+    openModal({ title: 'Add demo collection?', content: '<p>This will add four clearly labeled demonstration holdings. They use sample values, not appraisals.</p>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" data-approve-demo>Approve demo holdings</button>', onOpen(layer) {
+      layer.querySelector('[data-approve-demo]').addEventListener('click', async () => { closeModal(); await loadDemo(); });
+    }});
+  }
   if (action.dataset.action === 'clear-data') confirmClear();
   if (action.dataset.action === 'open-auth') openAuth();
   if (action.dataset.action === 'sync-now') syncNow();
@@ -396,6 +397,14 @@ root.addEventListener('submit', (event) => {
   if (event.target.matches('#catalog-search')) {
     event.preventDefault();
     runCatalogSearch(event.target);
+  }
+});
+
+root.addEventListener('input', (event) => {
+  if (activeDraft && event.target.matches('[data-crop-query]')) {
+    const cropId = event.target.closest('[data-crop-id]')?.dataset.cropId;
+    const crop = activeDraft.crops.find((entry) => entry.id === cropId);
+    if (crop) crop.query = event.target.value;
   }
 });
 

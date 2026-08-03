@@ -21,6 +21,16 @@ export function rankCatalogItems(items, query) {
   }).sort((a, b) => b.matchScore - a.matchScore || String(a.name).localeCompare(String(b.name)));
 }
 
+export function collectSettledProviders(settled, selected) {
+  const results = [];
+  const warnings = [];
+  settled.forEach((result, index) => {
+    if (result.status === 'fulfilled') results.push(...result.value);
+    else warnings.push(`${selected[index][1].label} was unavailable: ${result.reason?.message || 'request failed'}`);
+  });
+  return { results, warnings };
+}
+
 export async function searchCatalog({ query, category = 'all', provider = 'all', bypassCache = false } = {}) {
   const normalized = normalizeQuery(query);
   if (!normalized) throw new Error('Enter a name, set, number, character, or player.');
@@ -34,12 +44,7 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
     if (cached?.expiresAt > Date.now()) return { ...cached.value, cached: true };
   }
   const settled = await Promise.allSettled(selected.map(([, config]) => config.search(normalized)));
-  const results = [];
-  const warnings = [];
-  settled.forEach((result, index) => {
-    if (result.status === 'fulfilled') results.push(...result.value);
-    else warnings.push(`${selected[index][1].label} was unavailable: ${result.reason?.message || 'request failed'}`);
-  });
+  const { results, warnings } = collectSettledProviders(settled, selected);
   const value = { results: rankCatalogItems(results, normalized), warnings, manual: false };
   await putRecord('catalogCache', { key, expiresAt: Date.now() + CACHE_MS, value }).catch(() => {});
   return { ...value, cached: false };

@@ -1,5 +1,5 @@
 import { externalImage, pageHeader } from '../core/components.js';
-import { escapeAttribute, escapeHTML, formatCurrency } from '../core/utils.js';
+import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from '../core/utils.js';
 
 export function renderScanReview(draft) {
   if (!draft) return `${pageHeader('Batch review', 'No saved scan selected', 'Return to Add to begin or resume a scan.')}<button class="button" data-go="add">Back to Add</button>`;
@@ -13,7 +13,7 @@ export function renderScanReview(draft) {
 function cropCard(crop, index) {
   const selected = crop.customItem || crop.candidates.find((candidate) => candidate.id === crop.selectedId);
   return `<article class="review-card ${crop.approved ? 'approved' : ''}" data-crop-id="${escapeAttribute(crop.id)}">
-    <div class="review-head"><img src="${escapeAttribute(crop.image)}" alt="Crop ${index + 1}" referrerpolicy="no-referrer"><div><p class="eyebrow">Crop ${index + 1} · ${escapeHTML(crop.status)}</p><h2>${escapeHTML(selected?.name || 'Unmatched crop')}</h2><p class="muted">${crop.approved ? 'Explicitly approved for batch add.' : selected ? 'Selected, but not approved.' : 'Run OCR, type a query, or create a custom item.'}</p></div></div>
+    <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Crop ${index + 1}" referrerpolicy="no-referrer"><div><p class="eyebrow">Crop ${index + 1} · ${escapeHTML(crop.status)}</p><h2>${escapeHTML(selected?.name || 'Unmatched crop')}</h2><p class="muted">${crop.approved ? 'Explicitly approved for batch add.' : selected ? 'Selected, but not approved.' : 'Run OCR, type a query, or create a custom item.'}</p></div></div>
     <label>Editable OCR / search query<input data-crop-query value="${escapeAttribute(crop.query)}" placeholder="Type a name, set, or number"></label>
     ${crop.ocrEngine ? `<p class="fine-print">OCR: ${escapeHTML(crop.ocrEngine)}${crop.ocrText ? ` · ${escapeHTML(crop.ocrText.slice(0, 120))}` : ''}</p>` : ''}
     ${crop.error ? `<p class="fine-print negative" role="status">${escapeHTML(crop.error)}</p>` : ''}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rankCatalogItems } from '../app/assets/js/services/catalog.js';
+import { collectSettledProviders, rankCatalogItems } from '../app/assets/js/services/catalog.js';
 import { normalizePokemonCard } from '../app/assets/js/services/providers/pokemon.js';
 import { normalizeScryfallCard } from '../app/assets/js/services/providers/scryfall.js';
 import { normalizeYGOCard } from '../app/assets/js/services/providers/ygoprodeck.js';
@@ -35,4 +35,16 @@ test('ranked merge favors name and exact number without collapsing printings', (
   ], 'charizard 4');
   assert.deepEqual(ranked.slice(0, 2).map((item) => item.id).sort(), ['a', 'b']);
   assert.equal(ranked.length, 3);
+});
+
+test('provider failure isolation retains every successful provider result', () => {
+  const selected = [['pokemon', { label: 'Pokémon' }], ['scryfall', { label: 'Scryfall' }], ['ygoprodeck', { label: 'YGO' }]];
+  const combined = collectSettledProviders([
+    { status: 'fulfilled', value: [{ id: 'pokemon:one' }] },
+    { status: 'rejected', reason: new Error('offline') },
+    { status: 'fulfilled', value: [{ id: 'ygo:one' }] }
+  ], selected);
+  assert.deepEqual(combined.results.map((item) => item.id), ['pokemon:one', 'ygo:one']);
+  assert.equal(combined.warnings.length, 1);
+  assert.match(combined.warnings[0], /Scryfall/);
 });

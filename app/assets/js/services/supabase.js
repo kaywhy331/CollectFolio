@@ -81,7 +81,7 @@ export async function validSession() {
 
 export async function signOut() {
   const session = loadSession();
-  try { if (session) await request('/auth/v1/logout', { method: 'POST', session }); } finally { localStorage.removeItem(SESSION_KEY); }
+  try { if (session) await request('/auth/v1/logout', { method: 'POST', session }); } catch { /* Local sign-out must still work offline. */ } finally { localStorage.removeItem(SESSION_KEY); }
 }
 
 export function mergeTombstones(...sets) {
