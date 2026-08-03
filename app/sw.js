@@ -10,7 +10,8 @@ const SHELL = [
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/image-algorithms.js',
   './assets/js/services/image.js', './assets/js/services/scan-workbench.js',
-  './assets/js/services/scan-review.js', './assets/js/views/scan.js'
+  './assets/js/services/scan-review.js', './assets/js/services/supabase.js',
+  './assets/js/views/scan.js'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
   'images.pokemontcg.io', 'cards.scryfall.io', 'images.ygoprodeck.com'

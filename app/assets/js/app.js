@@ -6,6 +6,7 @@ import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { cropsFromBoxes, fileToImageDataURL, loadImage } from './services/image.js';
 import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
+import { consumeAuthCallback, isSupabaseConfigured, loadSession, requestMagicLink, signIn, signOut, signUp, syncPortfolio } from './services/supabase.js';
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
 import { renderPortfolio } from './views/portfolio.js';
@@ -34,6 +35,18 @@ async function loadLocal() {
   const settings = { ...defaults, ...Object.fromEntries(settingsRecords.map((record) => [record.key, record.value])) };
   document.documentElement.dataset.theme = settings.theme;
   setState({ holdings, snapshots: snapshots.sort((a, b) => a.date.localeCompare(b.date)), settings, scanDraftCount: scans.filter((scan) => scan.status !== 'complete').length, ready: true });
+}
+
+function initializeAuth() {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const callback = consumeAuthCallback();
+    setState({ auth: { ...getState().auth, session: callback.session || loadSession() } });
+    if (callback.error) showToast(callback.error, 'error', 8000);
+    else if (callback.session && location.hash) showToast('Supabase sign-in completed');
+  } catch (error) {
+    showToast(error.message || 'Could not restore cloud session', 'error');
+  }
 }
 
 function navigate(view) {
@@ -150,10 +163,10 @@ async function exportCSV() {
 async function loadDemo() {
   const now = new Date();
   const demo = [
-    { id: 'demo-black-lotus', catalogId: 'demo:black-lotus', item: { id: 'demo:black-lotus', externalId: 'demo-1', provider: 'custom', category: 'magic', game: 'Magic', name: 'Black Lotus — Proxy Demo', setName: 'Demo catalog', number: '#233', variant: 'Display only', rarity: 'Rare', year: '1993', image: '', imageSmall: '', price: 720, priceOptions: [{ finish: 'regular', price: 720 }], currency: 'USD', priceSource: 'Demo price', priceUrl: '', priceUpdatedAt: now.toISOString() }, quantity: 1, condition: 'Near Mint', purchasePrice: 500, fees: 0, folder: 'Main collection', notes: 'Demonstration record; not a genuine appraisal.' },
-    { id: 'demo-charizard', catalogId: 'demo:charizard', item: { id: 'demo:charizard', externalId: 'demo-2', provider: 'custom', category: 'pokemon', game: 'Pokémon', name: 'Charizard — Base Set', setName: 'Base Set', number: '4/102', variant: 'Holo', rarity: 'Rare Holo', year: '1999', image: '', imageSmall: '', price: 385, priceOptions: [], currency: 'USD', priceSource: 'Demo price', priceUrl: '', priceUpdatedAt: now.toISOString() }, quantity: 1, condition: 'Good', purchasePrice: 250, fees: 20, folder: 'Main collection' },
-    { id: 'demo-sports', catalogId: 'demo:sports', item: { id: 'demo:sports', externalId: 'demo-3', provider: 'custom', category: 'sports', game: 'Basketball', name: 'Smoke Test Sports Card', setName: 'Rookie showcase', number: '23', variant: 'Base', rarity: '', year: '1996', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Graded', gradeCompany: 'PSA', grade: '9', purchasePrice: 75, fees: 5, manualMarketPrice: 142, folder: 'Slabs' },
-    { id: 'demo-comic', catalogId: 'demo:comic', item: { id: 'demo:comic', externalId: 'demo-4', provider: 'custom', category: 'comics', game: 'Comic', name: 'Demo Variant Comic', setName: 'Collector issue', number: '1', variant: 'Cover B', rarity: '', year: '2024', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Near Mint', purchasePrice: 10, fees: 0, manualMarketPrice: 85, folder: 'Comics' }
+    { id: '00000000-0000-4000-8000-000000000001', catalogId: 'demo:black-lotus', item: { id: 'demo:black-lotus', externalId: 'demo-1', provider: 'custom', category: 'magic', game: 'Magic', name: 'Black Lotus — Proxy Demo', setName: 'Demo catalog', number: '#233', variant: 'Display only', rarity: 'Rare', year: '1993', image: '', imageSmall: '', price: 720, priceOptions: [{ finish: 'regular', price: 720 }], currency: 'USD', priceSource: 'Demo price', priceUrl: '', priceUpdatedAt: now.toISOString() }, quantity: 1, condition: 'Near Mint', purchasePrice: 500, fees: 0, folder: 'Main collection', notes: 'Demonstration record; not a genuine appraisal.' },
+    { id: '00000000-0000-4000-8000-000000000002', catalogId: 'demo:charizard', item: { id: 'demo:charizard', externalId: 'demo-2', provider: 'custom', category: 'pokemon', game: 'Pokémon', name: 'Charizard — Base Set', setName: 'Base Set', number: '4/102', variant: 'Holo', rarity: 'Rare Holo', year: '1999', image: '', imageSmall: '', price: 385, priceOptions: [], currency: 'USD', priceSource: 'Demo price', priceUrl: '', priceUpdatedAt: now.toISOString() }, quantity: 1, condition: 'Good', purchasePrice: 250, fees: 20, folder: 'Main collection' },
+    { id: '00000000-0000-4000-8000-000000000003', catalogId: 'demo:sports', item: { id: 'demo:sports', externalId: 'demo-3', provider: 'custom', category: 'sports', game: 'Basketball', name: 'Smoke Test Sports Card', setName: 'Rookie showcase', number: '23', variant: 'Base', rarity: '', year: '1996', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Graded', gradeCompany: 'PSA', grade: '9', purchasePrice: 75, fees: 5, manualMarketPrice: 142, folder: 'Slabs' },
+    { id: '00000000-0000-4000-8000-000000000004', catalogId: 'demo:comic', item: { id: 'demo:comic', externalId: 'demo-4', provider: 'custom', category: 'comics', game: 'Comic', name: 'Demo Variant Comic', setName: 'Collector issue', number: '1', variant: 'Cover B', rarity: '', year: '2024', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Near Mint', purchasePrice: 10, fees: 0, manualMarketPrice: 85, folder: 'Comics' }
   ];
   for (const holding of demo) await saveHolding(holding);
   for (let day = 4; day >= 1; day--) {
@@ -210,6 +223,51 @@ function confirmClear() {
       showToast('Local CollectFolio data cleared');
     });
   }});
+}
+
+function openAuth() {
+  openModal({ title: 'Optional cloud account', content: `<form id="auth-form"><div class="field-grid"><label class="span-all">Email<input name="email" type="email" autocomplete="email" required></label><label class="span-all">Password<input name="password" type="password" autocomplete="current-password" minlength="6"></label></div><p class="fine-print">Your local portfolio remains available if you cancel or sign out.</p></form>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button secondary" type="button" data-magic-link>Send magic link</button><button class="button secondary" type="submit" name="authAction" value="signup" form="auth-form">Create account</button><button class="button" type="submit" name="authAction" value="signin" form="auth-form">Sign in</button>', onOpen(layer) {
+    const form = layer.querySelector('#auth-form');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(form));
+      const buttons = layer.querySelectorAll('button');
+      buttons.forEach((button) => { button.disabled = true; });
+      try {
+        const session = event.submitter.value === 'signup' ? await signUp(data.email, data.password) : await signIn(data.email, data.password);
+        if (session) {
+          setState({ auth: { ...getState().auth, session } });
+          closeModal();
+          showToast('Cloud account connected');
+        } else {
+          showToast('Check your email to finish creating the account', 'warning', 7000);
+          buttons.forEach((button) => { button.disabled = false; });
+        }
+      } catch (error) {
+        showToast(error.message || 'Authentication failed', 'error');
+        buttons.forEach((button) => { button.disabled = false; });
+      }
+    });
+    layer.querySelector('[data-magic-link]').addEventListener('click', async () => {
+      const email = form.elements.email.value;
+      if (!email) { form.elements.email.reportValidity(); return; }
+      try { await requestMagicLink(email); closeModal(); showToast('Magic link sent; check your email'); }
+      catch (error) { showToast(error.message || 'Could not send magic link', 'error'); }
+    });
+  }});
+}
+
+async function syncNow() {
+  setState({ auth: { ...getState().auth, syncing: true } });
+  try {
+    const result = await syncPortfolio();
+    await loadLocal();
+    showToast(`Synced ${result.holdings} holdings and ${result.deletions} deletion tombstones${result.omittedImages ? `; ${result.omittedImages} large crops stayed local` : ''}`);
+  } catch (error) {
+    showToast(error.message || 'Cloud sync failed', 'error', 8000);
+  } finally {
+    setState({ auth: { ...getState().auth, syncing: false } });
+  }
 }
 
 function chooseScanImage(single) {
@@ -302,6 +360,9 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'export-csv') exportCSV();
   if (action.dataset.action === 'load-demo') loadDemo();
   if (action.dataset.action === 'clear-data') confirmClear();
+  if (action.dataset.action === 'open-auth') openAuth();
+  if (action.dataset.action === 'sync-now') syncNow();
+  if (action.dataset.action === 'sign-out') { await signOut(); setState({ auth: { session: null, syncing: false } }); showToast('Signed out; local portfolio is unchanged'); }
   if (action.dataset.action === 'refresh-prices') refreshPrices();
   if (action.dataset.action === 'start-multi-scan') chooseScanImage(false);
   if (action.dataset.action === 'start-single-scan') chooseScanImage(true);
@@ -363,6 +424,7 @@ document.querySelector('.bottom-nav').addEventListener('click', (event) => {
 
 subscribe(render);
 render();
+initializeAuth();
 loadLocal().catch((error) => {
   setState({ ready: true });
   showToast(error.message || 'Could not open local portfolio', 'error', 8000);
