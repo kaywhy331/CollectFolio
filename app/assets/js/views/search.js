@@ -4,7 +4,7 @@ import { escapeAttribute, escapeHTML, formatCurrency } from '../core/utils.js';
 export function renderSearch(state) {
   const search = state.search;
   const manualCategory = ['sports', 'comics', 'slab', 'other'].includes(search.category);
-  return `${pageHeader('Catalog discovery', 'Search collectibles', 'Free TCG catalogs are searched concurrently; sports, comics, slabs, and unsupported items use custom entry.')}
+  return `${pageHeader('Catalog discovery', 'Search collectibles', 'Free TCG catalogs are searched concurrently; sports, comics, slabs, and unsupported items use custom entry.', '<button class="button secondary" type="button" data-action="start-single-scan">Search by image</button>')}
     <form id="catalog-search" class="card">
       <div class="search-bar"><label class="sr-only" for="catalog-query">Search catalog</label><input id="catalog-query" name="query" type="search" required minlength="2" value="${escapeAttribute(search.query)}" placeholder="Name, set, number, character, or player"><button class="button" ${search.loading ? 'disabled' : ''}>${search.loading ? 'Searching…' : 'Search'}</button></div>
       <div class="filter-grid"><label>Category<select name="category">${categoryOptions(search.category)}</select></label><label>Provider<select name="provider"><option value="all" ${search.provider === 'all' ? 'selected' : ''}>All enabled providers</option><option value="pokemon" ${search.provider === 'pokemon' ? 'selected' : ''}>Pokémon TCG API</option><option value="scryfall" ${search.provider === 'scryfall' ? 'selected' : ''}>Scryfall</option><option value="ygoprodeck" ${search.provider === 'ygoprodeck' ? 'selected' : ''}>YGOPRODeck</option></select></label></div>

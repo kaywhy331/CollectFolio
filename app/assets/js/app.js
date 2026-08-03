@@ -3,17 +3,22 @@ import { getState, setState, subscribe } from './core/store.js';
 import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML } from './core/utils.js';
 import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
+import { cropsFromBoxes, fileToImageDataURL, loadImage } from './services/image.js';
+import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
+import { ScanWorkbench } from './services/scan-workbench.js';
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
 import { renderPortfolio } from './views/portfolio.js';
 import { renderProfile } from './views/profile.js';
 import { renderSearch } from './views/search.js';
+import { renderScanReview } from './views/scan.js';
 
 const root = document.querySelector('#main-content');
 const defaults = { currency: 'USD', theme: 'dark' };
+let activeDraft = null;
 
 function render(state = getState()) {
-  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile };
+  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile, scan: () => renderScanReview(activeDraft) };
   root.innerHTML = state.ready ? (views[state.activeView] || renderHome)(state) : '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>';
   document.querySelectorAll('.bottom-nav [data-view]').forEach((button) => {
     const selected = button.dataset.view === state.activeView;
@@ -207,6 +212,75 @@ function confirmClear() {
   }});
 }
 
+function chooseScanImage(single) {
+  openModal({ title: single ? 'Scan one item' : 'Scan multiple items', content: `<p>Choose a camera or library image. Detection, cropping, and OCR run in this browser.</p><label>Source photo<input id="scan-source" type="file" accept="image/*" capture="environment"></label><p class="fine-print">The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
+    layer.querySelector('#scan-source').addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        const source = await fileToImageDataURL(file);
+        const image = await loadImage(source);
+        closeModal();
+        openWorkbench(image, single);
+      } catch (error) {
+        showToast(error.message || 'Could not open image', 'error');
+      }
+    });
+  }});
+}
+
+function openWorkbench(image, single) {
+  let editor;
+  openModal({ title: 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">Tap a box to select it, drag inside to move, or drag its lower-right handle to resize.</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div><div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="add">Draw new</button><button class="button secondary small" type="button" data-workbench="delete">Delete selected</button><button class="button secondary small" type="button" data-workbench="retry">Retry detection</button></div><div class="grid-controls"><label>Rows<input id="grid-rows" type="number" min="1" max="12" value="3"></label><label>Columns<input id="grid-columns" type="number" min="1" max="12" value="3"></label><button class="button secondary" type="button" data-workbench="grid">Apply grid</button></div><p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Create review crops</button>', onOpen(layer) {
+    const count = layer.querySelector('#boundary-count');
+    const updateCount = (boxes) => { count.textContent = `${boxes.length} editable ${boxes.length === 1 ? 'boundary' : 'boundaries'}`; };
+    editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, { single, onChange: updateCount });
+    editor.detect();
+    updateCount(editor.boxes);
+    layer.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-workbench]');
+      if (!button) return;
+      const action = button.dataset.workbench;
+      if (action === 'add') editor.setAddMode();
+      if (action === 'delete') editor.deleteSelected();
+      if (action === 'retry') editor.detect();
+      if (action === 'grid') editor.applyGrid(layer.querySelector('#grid-rows').value, layer.querySelector('#grid-columns').value);
+      if (action === 'continue') {
+        if (!editor.boxes.length) { showToast('Add at least one crop boundary', 'warning'); return; }
+        button.disabled = true;
+        const draft = createScanDraft(cropsFromBoxes(image, editor.boxes), single ? 'single' : 'multi');
+        await saveScanDraft(draft);
+        activeDraft = draft;
+        editor.destroy();
+        closeModal();
+        await loadLocal();
+        navigate('scan');
+        showToast('Review crops created on this device');
+      }
+    });
+  }});
+}
+
+async function resumeScan() {
+  const scans = (await getAll('scans')).filter((scan) => scan.status !== 'complete').sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  if (!scans.length) { showToast('No saved scan is waiting', 'warning'); return; }
+  activeDraft = scans[0];
+  navigate('scan');
+}
+
+function customCropForm(cropId) {
+  openModal({ title: 'Create custom match for crop', content: `<form id="crop-custom-form"><div class="field-grid"><label class="span-all">Name<input name="name" required maxlength="160"></label><label>Category<select name="category"><option value="sports">Sports</option><option value="comics">Comics</option><option value="slab">Graded slab</option><option value="other" selected>Other</option><option value="pokemon">Pokémon</option><option value="magic">Magic</option><option value="yugioh">Yu-Gi-Oh!</option></select></label><label>Game / type<input name="game" maxlength="80"></label><label>Set / series<input name="setName" maxlength="120"></label><label>Number / issue<input name="number" maxlength="50"></label><label>Variant / rarity<input name="variant" maxlength="100"></label><label>Manual unit value<input name="price" type="number" min="0" step="0.01"></label></div></form>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="submit" form="crop-custom-form">Select custom item</button>', onOpen(layer) {
+    layer.querySelector('#crop-custom-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.currentTarget));
+      await setCropCustomItem(activeDraft, cropId, { category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: data.variant, rarity: '', year: '', price: data.price === '' ? null : Number(data.price), priceSource: data.price === '' ? '' : 'Manual value', priceUrl: '', priceUpdatedAt: data.price === '' ? '' : new Date().toISOString() });
+      closeModal();
+      render();
+      showToast('Custom item selected; approve it to include this crop');
+    });
+  }});
+}
+
 root.addEventListener('click', async (event) => {
   const go = event.target.closest('[data-go]');
   if (go) { navigate(go.dataset.go); return; }
@@ -229,7 +303,32 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'load-demo') loadDemo();
   if (action.dataset.action === 'clear-data') confirmClear();
   if (action.dataset.action === 'refresh-prices') refreshPrices();
-  if (['start-multi-scan','start-single-scan','resume-scan'].includes(action.dataset.action)) showToast('The local scan workbench opens in the image-ingestion milestone', 'warning');
+  if (action.dataset.action === 'start-multi-scan') chooseScanImage(false);
+  if (action.dataset.action === 'start-single-scan') chooseScanImage(true);
+  if (action.dataset.action === 'resume-scan') resumeScan();
+  if (action.dataset.action === 'save-scan' && activeDraft) { await saveScanDraft(activeDraft); await loadLocal(); showToast('Scan saved on this device'); }
+  if (action.dataset.action === 'identify-crop' && activeDraft) {
+    const card = action.closest('[data-crop-id]');
+    const query = card.querySelector('[data-crop-query]').value;
+    activeDraft.crops.find((crop) => crop.id === id).status = 'identifying';
+    render();
+    await identifyCrop(activeDraft, id, query);
+    render();
+  }
+  if (action.dataset.action === 'select-candidate' && activeDraft) { await selectCropCandidate(activeDraft, id, action.dataset.candidate); render(); }
+  if (action.dataset.action === 'approve-crop' && activeDraft) {
+    try { await setCropApproval(activeDraft, id, action.dataset.approved !== 'true'); render(); }
+    catch (error) { showToast(error.message, 'warning'); }
+  }
+  if (action.dataset.action === 'custom-crop' && activeDraft) customCropForm(id);
+  if (action.dataset.action === 'delete-crop' && activeDraft) { await deleteCrop(activeDraft, id); render(); showToast('Crop removed from this review'); }
+  if (action.dataset.action === 'batch-add' && activeDraft) {
+    const count = await batchAddApproved(activeDraft);
+    activeDraft = null;
+    await loadLocal();
+    navigate('portfolio');
+    showToast(`${count} explicitly approved crop${count === 1 ? '' : 's'} added`);
+  }
 });
 
 root.addEventListener('submit', (event) => {
