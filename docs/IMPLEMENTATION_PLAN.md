@@ -64,20 +64,31 @@ The product is being delivered in a free-first sequence that protects the core i
 - [x] Password sign-up/sign-in, magic-link callback consumption, refresh, and sign-out.
 - [x] Holdings pull, merge, upsert, and deletion-tombstone propagation.
 - [x] Initial database migration and Row Level Security.
-- [ ] Apply migration in the Supabase SQL Editor.
-- [ ] Copy Supabase publishable/anon key into Netlify environment variables.
-- [ ] Confirm email authentication settings and redirect URL after Netlify creates the production domain.
-- [ ] Run a two-browser sync qualification test.
+- [x] Apply the migration to the hosted Supabase project.
+- [x] Copy the Supabase publishable key into the explicit Netlify staging environment.
+- [x] Configure the staging Site URL plus staging, deploy-preview, branch-preview, and local redirect URLs.
+- [x] Run a two-account, three-browser-context sync and Row Level Security qualification test.
 
 ## Milestone 6 — Netlify release
 
 - [x] `netlify.toml` build and SPA routing.
 - [x] Security and cache headers.
 - [x] Production build validation.
-- [ ] Create the Netlify project from `kaywhy331/CollectFolio` after the GitHub branch is merged.
-- [ ] Configure environment variables.
-- [ ] Confirm deploy preview and production PWA installation.
-- [ ] Add the final Netlify URL to Supabase Auth redirect URLs.
+- [x] Create and use the explicit `collectfolio-staging` Netlify project.
+- [x] Configure staging environment variables.
+- [x] Confirm a production-context staging deploy, hosted PWA shell, service-worker offline reload, and deep links.
+- [x] Add staging and preview URL patterns to Supabase Auth redirects.
+- [ ] After merge, publish `main` to the chosen final production site/domain and repeat device-install checks.
+
+## Hosted staging qualification — August 4, 2026
+
+- Supabase project `agmjgyyvhfcivbwdlvzk` has migration `0001_initial.sql` recorded remotely.
+- All five public tables exist with Row Level Security enabled, four own-user policies each, and authenticated CRUD grants.
+- Supabase Auth uses `https://collectfolio-staging.netlify.app` as its Site URL and permits staging, Netlify preview, and local development callbacks.
+- Netlify site `05b0e479-ad35-4466-a5c0-fa40d93d1a77` was explicitly deployed in the production context; deploy `6a71fe711d951a3a08af86bf` contains the browser-safe publishable key.
+- Hosted guest persistence, JSON/CSV export, deletion/reload, service-worker offline reload, and all three free catalog providers were qualified.
+- Hosted cloud qualification passed with user A on two isolated browser contexts and user B on a third: create/pull sync passed, user B's row was invisible to user A, a cross-user write was rejected with HTTP 403, and a deletion tombstone removed the stale second-client copy without resurrection.
+- All temporary qualification users and rows were removed; the final residue audit returned zero QA users, QA holdings, orphaned deletion rows, and orphaned profiles.
 
 ## Pilot qualification checklist
 
