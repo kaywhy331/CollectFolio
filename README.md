@@ -7,7 +7,7 @@ CollectFolio is a dependency-free, local-first progressive web app for collectib
 - Five-view mobile-first shell with dark, light, and system themes
 - IndexedDB portfolio with editable ownership metadata, tombstoned deletion, and daily snapshots
 - Separate market value and cost-basis trend lines, gain/loss, allocation, and top holdings
-- Concurrent failure-isolated Pokémon TCG API, Scryfall, and YGOPRODeck search with a 30-minute local cache
+- Concurrent failure-isolated Pokémon TCG API, Scryfall, and YGOPRODeck search with a 30-minute local cache and a free TCGdex Pokémon discovery fallback
 - Manual entries for sports, comics, slabs, unsupported items, and variants
 - In-browser boundary detection with add, move, lower-right resize, delete, retry, and 1–12 row/column grid tools
 - Browser-native OCR first, with user-triggered Tesseract.js fallback when enabled

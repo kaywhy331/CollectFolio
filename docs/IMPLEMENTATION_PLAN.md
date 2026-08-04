@@ -78,7 +78,8 @@ The product is being delivered in a free-first sequence that protects the core i
 - [x] Configure staging environment variables.
 - [x] Confirm a production-context staging deploy, hosted PWA shell, service-worker offline reload, and deep links.
 - [x] Add staging and preview URL patterns to Supabase Auth redirects.
-- [ ] After merge, publish `main` to the chosen final production site/domain and repeat device-install checks.
+- [x] After merge, publish `main` to the explicit `collectfolio-staging` production-context site and repeat hosted regression checks.
+- [ ] Select the final public domain and repeat physical PWA installation checks on Android/Chrome and iOS/Safari.
 
 ## Hosted staging qualification — August 4, 2026
 
@@ -97,6 +98,13 @@ The product is being delivered in a free-first sequence that protects the core i
 - Visible catalog images load eagerly, retry their alternate provider URL, and fall back to a labeled placeholder only after both URLs fail. The CSP permits all provider image hosts for both browser images and service-worker fetches.
 - OCR permits WebAssembly compilation without enabling broad `unsafe-eval`, bounds image/script/recognition/worker operations, disables duplicate identification, and recovers interrupted persisted scans into a retryable error state.
 - `npm run check` passed validation, all 34 tests, and the production build. Immutable Netlify draft `6a721904ce193f1d29302c26` passed the hosted Playwright qualification twice (6/6): all-provider Pikachu coverage without false warnings, forced-outage TCGdex fallback, Pokémon/Scrydex/TCGdex/Scryfall/YGOPRODeck image loading, and a real two-card Tesseract run that left `Identifying` successfully.
+
+## Main release qualification — August 4, 2026
+
+- PR #1 merged the eleven logical implementation commits into `main` as merge commit `ac6b6bc6f4adff670eb501e1e056e69b926aee25`; the merge-triggered GitHub Actions run passed.
+- A clean checkout of merged `main` passed validation, all 34 tests, and the production build.
+- Explicit-site production-context Netlify deploy `6a7227a3d9d91b32f07ac6a0` published the merged application tree to `https://collectfolio-staging.netlify.app`.
+- Post-merge hosted qualification passed all three gates: live multi-provider Pikachu discovery and images, forced PokéTCG outage with TCGdex fallback, and real two-card Tesseract OCR leaving `Identifying`.
 
 ## Pilot qualification checklist
 
