@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectSettledProviders, prepareCatalogQuery, rankCatalogItems, refreshCatalogItem } from '../app/assets/js/services/catalog.js';
-import { buildPokemonQuery, getPokemonCard, normalizePokemonCard, normalizeTCGDexCard, searchPokemon } from '../app/assets/js/services/providers/pokemon.js';
+import { buildPokemonQuery, clearPokemonSetCache, getPokemonCard, normalizePokemonCard, normalizeTCGDexCard, parsePokemonQuery, searchPokemon } from '../app/assets/js/services/providers/pokemon.js';
 import { getScryfallCard, normalizeScryfallCard, searchScryfall } from '../app/assets/js/services/providers/scryfall.js';
 import { getYGOCard, normalizeYGOCard, searchYGOPRODeck } from '../app/assets/js/services/providers/ygoprodeck.js';
 
@@ -13,6 +13,23 @@ test('Pokémon fixture normalizes finishes and market attribution', () => {
   assert.match(item.priceSource, /Pokémon/);
   assert.equal(buildPokemonQuery('Charizard 4/102'), 'name:charizard number:4');
   assert.equal(buildPokemonQuery('Mr. Mime'), 'name:"mr mime"');
+});
+
+test('Pokémon query parser recognizes the longest set name and preserves card qualifiers', () => {
+  const sets = [
+    { id: 'base1', name: 'Base Set' },
+    { id: 'base4', name: 'Base Set 2' },
+    { id: 'me5', name: 'Pitch Black' },
+    { id: 'base2', name: 'Jungle' }
+  ];
+  assert.deepEqual(parsePokemonQuery('Pitch Black', sets), {
+    raw: 'Pitch Black', name: '', number: '', set: sets[2]
+  });
+  assert.equal(buildPokemonQuery('Pitch Black', sets), 'set.id:me5');
+  assert.equal(buildPokemonQuery('Gengar Pitch Black', sets), 'name:gengar set.id:me5');
+  assert.equal(buildPokemonQuery('Charizard 4/130 Base Set 2', sets), 'name:charizard number:4 set.id:base4');
+  assert.equal(buildPokemonQuery('Jungle', sets), 'set.id:base2');
+  assert.equal(buildPokemonQuery('Mr. Mime', sets), 'name:"mr mime"');
 });
 
 test('TCGdex fallback normalizes stable Pokémon identifiers and image variants', () => {
@@ -45,6 +62,7 @@ test('YGOPRODeck fixture expands every set-code printing', () => {
 });
 
 test('provider search preserves punctuation required by catalog APIs', async () => {
+  clearPokemonSetCache();
   assert.deepEqual(prepareCatalogQuery('  Blue-Eyes White Dragon  '), {
     raw: 'Blue-Eyes White Dragon',
     normalized: 'blue eyes white dragon'
@@ -52,7 +70,11 @@ test('provider search preserves punctuation required by catalog APIs', async () 
   const previousFetch = globalThis.fetch;
   let requested;
   globalThis.fetch = async (url) => {
-    requested = new URL(url);
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'base1', name: 'Base Set' }] };
+    }
+    requested = parsed;
     return { ok: true, json: async () => ({ data: [] }) };
   };
   try {
@@ -65,6 +87,97 @@ test('provider search preserves punctuation required by catalog APIs', async () 
     assert.equal(requested.searchParams.get('fname'), 'Blue-Eyes White Dragon');
   } finally {
     globalThis.fetch = previousFetch;
+  }
+});
+
+test('Pokémon search scopes set-only and name-plus-set phrases at the provider', async () => {
+  clearPokemonSetCache();
+  const previousFetch = globalThis.fetch;
+  const cardQueries = [];
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'me05', name: 'Pitch Black' }] };
+    }
+    if (parsed.hostname === 'api.pokemontcg.io' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => ({ data: [{ id: 'me5', name: 'Pitch Black' }], totalCount: 1 }) };
+    }
+    cardQueries.push(parsed.searchParams.get('q'));
+    const named = parsed.searchParams.get('q').includes('name:gengar');
+    const cards = named
+      ? [{ id: 'me5-999', name: 'Gengar', number: '999', set: { name: 'Pitch Black' }, images: {} }]
+      : Array.from({ length: 120 }, (_, index) => ({ id: `me5-${index + 1}`, name: `Card ${index + 1}`, number: String(index + 1), set: { name: 'Pitch Black' }, images: {} }));
+    return { ok: true, json: async () => ({ data: cards, count: cards.length, totalCount: cards.length }) };
+  };
+  try {
+    assert.equal((await searchPokemon('Pitch Black')).length, 120);
+    assert.equal((await searchPokemon('Gengar Pitch Black')).length, 1);
+    assert.deepEqual(cardQueries, ['set.id:me5', 'name:gengar set.id:me5']);
+  } finally {
+    globalThis.fetch = previousFetch;
+    clearPokemonSetCache();
+  }
+});
+
+test('Pokémon set fallback returns the full set and an authoritative empty intersection', async () => {
+  clearPokemonSetCache();
+  const previousFetch = globalThis.fetch;
+  let primaryCardCalls = 0;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'me05', name: 'Pitch Black' }] };
+    }
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.includes('/sets/me05')) {
+      return {
+        ok: true,
+        json: async () => ({
+          id: 'me05', name: 'Pitch Black', releaseDate: '2026-07-17',
+          cardCount: { total: 120 },
+          cards: Array.from({ length: 120 }, (_, index) => ({ id: `me05-${index + 1}`, localId: String(index + 1).padStart(3, '0'), name: `Card ${index + 1}`, image: `https://assets.tcgdex.net/en/me/me05/${index + 1}` }))
+        })
+      };
+    }
+    if (parsed.hostname === 'api.pokemontcg.io' && parsed.pathname.endsWith('/sets')) {
+      return { ok: false, status: 500, json: async () => null };
+    }
+    if (parsed.hostname === 'api.pokemontcg.io') {
+      primaryCardCalls++;
+      return { ok: false, status: 500, json: async () => null };
+    }
+    throw new Error(`Unexpected URL: ${parsed}`);
+  };
+  try {
+    const setResults = await searchPokemon('Pitch Black');
+    assert.equal(setResults.length, 120);
+    assert.equal(setResults[0].setName, 'Pitch Black');
+    assert.equal(setResults[0].year, '2026');
+    assert.deepEqual(await searchPokemon('Gengar Pitch Black'), []);
+    assert.equal(primaryCardCalls, 8);
+  } finally {
+    globalThis.fetch = previousFetch;
+    clearPokemonSetCache();
+  }
+});
+
+test('Pokémon search never treats an incomplete fallback set as authoritative', async () => {
+  clearPokemonSetCache();
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'me05', name: 'Pitch Black' }] };
+    }
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.includes('/sets/me05')) {
+      return { ok: true, json: async () => ({ name: 'Pitch Black', cardCount: { total: 120 }, cards: [{ id: 'me05-1', localId: '001', name: 'Tropius' }] }) };
+    }
+    return { ok: false, status: 400, json: async () => null };
+  };
+  try {
+    await assert.rejects(searchPokemon('Pitch Black'), /Request failed \(400\)/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    clearPokemonSetCache();
   }
 });
 
@@ -92,9 +205,14 @@ test('provider-defined no-match responses are empty results, not outage warnings
 });
 
 test('Pokémon search tolerates several consecutive transient upstream failures', async () => {
+  clearPokemonSetCache();
   const previousFetch = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'base1', name: 'Base Set' }] };
+    }
     calls++;
     if (calls < 4) return { ok: false, status: 500, json: async () => null };
     return { ok: true, json: async () => ({ data: [], count: 0, totalCount: 0 }) };
@@ -104,15 +222,20 @@ test('Pokémon search tolerates several consecutive transient upstream failures'
     assert.equal(calls, 4);
   } finally {
     globalThis.fetch = previousFetch;
+    clearPokemonSetCache();
   }
 });
 
 test('Pokémon search falls back to TCGdex after the primary exhausts bounded retries', async () => {
+  clearPokemonSetCache();
   const previousFetch = globalThis.fetch;
   let primaryCalls = 0;
   let fallbackUrl;
   globalThis.fetch = async (url) => {
     const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'base1', name: 'Base Set' }] };
+    }
     if (parsed.hostname === 'api.pokemontcg.io') {
       primaryCalls++;
       return { ok: false, status: 500, json: async () => null };
@@ -128,15 +251,20 @@ test('Pokémon search falls back to TCGdex after the primary exhausts bounded re
     assert.equal(results[0].externalId, 'basep-1');
   } finally {
     globalThis.fetch = previousFetch;
+    clearPokemonSetCache();
   }
 });
 
 test('Pokémon and Scryfall searches follow provider pagination beyond the first page', async () => {
+  clearPokemonSetCache();
   const previousFetch = globalThis.fetch;
   const pokemonPages = [];
   let scryfallCalls = 0;
   globalThis.fetch = async (url) => {
     const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'base1', name: 'Base Set' }] };
+    }
     if (parsed.hostname === 'api.pokemontcg.io') {
       const page = Number(parsed.searchParams.get('page'));
       pokemonPages.push(page);
@@ -167,6 +295,7 @@ test('Pokémon and Scryfall searches follow provider pagination beyond the first
     assert.equal(scryfallCalls, 2);
   } finally {
     globalThis.fetch = previousFetch;
+    clearPokemonSetCache();
   }
 });
 

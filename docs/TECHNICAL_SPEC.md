@@ -163,8 +163,11 @@ Every provider normalizes into the internal item shape. The app never stores a p
 ### Pokémon
 
 - Search endpoint: `GET https://api.pokemontcg.io/v2/cards`.
+- Set discovery endpoint: `GET https://api.pokemontcg.io/v2/sets`, with TCGdex `/v2/en/sets` used for resilient set-name discovery.
 - Detail endpoint: `/v2/cards/{id}`.
-- Query combines name and card number when detected.
+- Query parsing prefers the longest contiguous exact set-name match, removes those tokens, and combines the remaining card name and number with the resolved set ID. Thus a set name searches the full set while `card name + set name` searches their intersection; numeric set names such as `Base Set 2` are resolved before card-number parsing.
+- Set metadata is cached in browser storage for 24 hours. A failed primary set-ID lookup has a short backoff and falls through to a set-name clause instead of blocking discovery.
+- If the primary card provider fails or has no cards for a recognized set, TCGdex set detail supplies the complete set and applies remaining name/number filters locally. An empty result from that complete set is authoritative rather than reported as a provider outage.
 - Price options are derived from returned TCGplayer finish fields.
 - The browser build intentionally uses the unauthenticated tier so no private/provider API key is exposed in client code.
 
