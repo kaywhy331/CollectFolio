@@ -106,6 +106,13 @@ The product is being delivered in a free-first sequence that protects the core i
 - Explicit-site production-context Netlify deploy `6a7227a3d9d91b32f07ac6a0` published the merged application tree to `https://collectfolio-staging.netlify.app`.
 - Post-merge hosted qualification passed all three gates: live multi-provider Pikachu discovery and images, forced PokéTCG outage with TCGdex fallback, and real two-card Tesseract OCR leaving `Identifying`.
 
+## Set-aware Pokémon search qualification — August 4, 2026
+
+- Natural-language Pokémon queries now resolve the longest exact set-name phrase before parsing the remaining card name and number. `Pitch Black` becomes a set-only query, while `Gengar Pitch Black` becomes the intersection of that name and set; `Base Set 2` is not misread as card number 2.
+- Set metadata is browser-cached for 24 hours. Primary set-ID resolution is bounded to one second with a five-minute failure backoff, and recognized sets can fall through to complete TCGdex set detail without presenting an authoritative empty intersection as an outage.
+- Live provider qualification returned all 120 image-backed `Pitch Black` cards and four `Mega Darkrai ex Pitch Black` printings. `Gengar Pitch Black` correctly returned zero because the current 120-card provider set contains no Gengar printing.
+- `npm run check` passed static validation, all 38 tests, and the production build. Catalog response cache v5 and service-worker shell v0.1.5 ensure older cached search behavior is replaced on the next deployment.
+
 ## Pilot qualification checklist
 
 Before inviting testers:

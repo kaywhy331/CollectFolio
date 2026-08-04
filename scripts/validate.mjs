@@ -48,7 +48,7 @@ for (const reference of ['./manifest.webmanifest', './runtime-config.js', './ass
 for (const view of ['home', 'search', 'add', 'portfolio', 'profile']) if (!index.includes(`data-view="${view}"`)) errors.push(`index.html is missing ${view} navigation.`);
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.1.4'")) errors.push('Service worker cache name must be collectfolio-shell-v0.1.4.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.1.5'")) errors.push('Service worker cache name must be collectfolio-shell-v0.1.5.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;

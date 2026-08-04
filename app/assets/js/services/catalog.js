@@ -5,7 +5,7 @@ import { getScryfallCard, searchScryfall } from './providers/scryfall.js';
 import { getYGOCard, searchYGOPRODeck } from './providers/ygoprodeck.js';
 
 const CACHE_MS = 30 * 60 * 1000;
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 const providers = {
   pokemon: { category: 'pokemon', label: 'Pokémon TCG API', search: searchPokemon, detail: getPokemonCard },
   scryfall: { category: 'magic', label: 'Scryfall', search: searchScryfall, detail: getScryfallCard },
