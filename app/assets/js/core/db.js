@@ -1,0 +1,156 @@
+import { portfolioSummary, snapshotFor } from './calculations.js';
+import { createId, csvCell } from './utils.js';
+
+const NAME = 'collectfolio';
+const VERSION = 2;
+export const STORES = ['holdings', 'snapshots', 'settings', 'scans', 'catalogCache', 'deletions'];
+let databasePromise;
+
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.addEventListener('success', () => resolve(request.result), { once: true });
+    request.addEventListener('error', () => reject(request.error), { once: true });
+  });
+}
+
+function transactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.addEventListener('complete', resolve, { once: true });
+    transaction.addEventListener('abort', () => reject(transaction.error), { once: true });
+    transaction.addEventListener('error', () => reject(transaction.error), { once: true });
+  });
+}
+
+export function openDatabase() {
+  if (!globalThis.indexedDB) return Promise.reject(new Error('IndexedDB is unavailable in this browser.'));
+  if (databasePromise) return databasePromise;
+  databasePromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(NAME, VERSION);
+    request.addEventListener('upgradeneeded', () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('holdings')) {
+        const holdings = db.createObjectStore('holdings', { keyPath: 'id' });
+        holdings.createIndex('catalogId', 'catalogId', { unique: false });
+        holdings.createIndex('updatedAt', 'updatedAt', { unique: false });
+      } else {
+        const holdings = request.transaction.objectStore('holdings');
+        if (!holdings.indexNames.contains('catalogId')) holdings.createIndex('catalogId', 'catalogId', { unique: false });
+        if (!holdings.indexNames.contains('updatedAt')) holdings.createIndex('updatedAt', 'updatedAt', { unique: false });
+      }
+      for (const store of STORES.filter((name) => name !== 'holdings')) {
+        if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, { keyPath: store === 'settings' || store === 'catalogCache' ? 'key' : 'id' });
+      }
+    });
+    request.addEventListener('success', () => resolve(request.result), { once: true });
+    request.addEventListener('error', () => reject(request.error), { once: true });
+  });
+  return databasePromise;
+}
+
+export async function getAll(storeName) {
+  const db = await openDatabase();
+  return requestResult(db.transaction(storeName).objectStore(storeName).getAll());
+}
+
+export async function getRecord(storeName, key) {
+  const db = await openDatabase();
+  return requestResult(db.transaction(storeName).objectStore(storeName).get(key));
+}
+
+export async function putRecord(storeName, value) {
+  const db = await openDatabase();
+  const transaction = db.transaction(storeName, 'readwrite');
+  transaction.objectStore(storeName).put(value);
+  await transactionDone(transaction);
+  return value;
+}
+
+export async function deleteRecord(storeName, key) {
+  const db = await openDatabase();
+  const transaction = db.transaction(storeName, 'readwrite');
+  transaction.objectStore(storeName).delete(key);
+  await transactionDone(transaction);
+}
+
+export async function saveHolding(input) {
+  const now = new Date().toISOString();
+  const holding = {
+    id: input.id || createId(),
+    catalogId: input.catalogId || `${input.item?.provider || 'custom'}:${input.item?.externalId || createId()}`,
+    item: { ...input.item },
+    quantity: Math.max(1, Number(input.quantity) || 1),
+    condition: input.condition || 'Near Mint',
+    gradeCompany: input.gradeCompany || '',
+    grade: input.grade || '',
+    purchasePrice: input.purchasePrice === '' ? '' : Math.max(0, Number(input.purchasePrice) || 0),
+    purchaseDate: input.purchaseDate || '',
+    fees: input.fees === '' ? '' : Math.max(0, Number(input.fees) || 0),
+    manualMarketPrice: input.manualMarketPrice === '' || input.manualMarketPrice === undefined ? '' : Math.max(0, Number(input.manualMarketPrice) || 0),
+    folder: input.folder || '',
+    notes: input.notes || '',
+    userImage: input.userImage || '',
+    createdAt: input.createdAt || now,
+    updatedAt: now,
+    lastPriceRefresh: input.lastPriceRefresh || '',
+    dirty: true
+  };
+  await putRecord('holdings', holding);
+  await recordDailySnapshot();
+  return holding;
+}
+
+export async function removeHolding(id) {
+  const now = new Date().toISOString();
+  const db = await openDatabase();
+  const transaction = db.transaction(['holdings', 'deletions'], 'readwrite');
+  transaction.objectStore('holdings').delete(id);
+  transaction.objectStore('deletions').put({ id, deletedAt: now, dirty: true });
+  await transactionDone(transaction);
+  await recordDailySnapshot();
+}
+
+export async function recordDailySnapshot(date = new Date()) {
+  const holdings = await getAll('holdings');
+  return putRecord('snapshots', snapshotFor(holdings, date));
+}
+
+export async function exportBackup() {
+  const stores = Object.fromEntries(await Promise.all(STORES.map(async (name) => [name, await getAll(name)])));
+  return { format: 'collectfolio-backup', version: 1, exportedAt: new Date().toISOString(), stores };
+}
+
+export async function importBackup(backup) {
+  if (!backup || backup.format !== 'collectfolio-backup' || backup.version !== 1 || typeof backup.stores !== 'object') {
+    throw new Error('This is not a valid CollectFolio interchange v1 backup.');
+  }
+  const db = await openDatabase();
+  for (const name of STORES) {
+    const records = Array.isArray(backup.stores[name]) ? backup.stores[name] : [];
+    if (!records.length) continue;
+    const transaction = db.transaction(name, 'readwrite');
+    const store = transaction.objectStore(name);
+    for (const record of records) {
+      if (record && typeof record === 'object') store.put(record);
+    }
+    await transactionDone(transaction);
+  }
+  await recordDailySnapshot();
+}
+
+export async function exportHoldingsCSV() {
+  const holdings = await getAll('holdings');
+  const headers = ['Name', 'Category', 'Game', 'Set', 'Number', 'Quantity', 'Condition', 'Grade company', 'Grade', 'Purchase price', 'Fees', 'Unit market value', 'Market value', 'Cost basis', 'Folder', 'Notes', 'Price source', 'Updated'];
+  const rows = holdings.map((holding) => {
+    const summary = portfolioSummary([holding]);
+    const unit = holding.manualMarketPrice !== '' && holding.manualMarketPrice != null ? Number(holding.manualMarketPrice) : Number(holding.item?.price) || 0;
+    return [holding.item?.name, holding.item?.category, holding.item?.game, holding.item?.setName, holding.item?.number, holding.quantity, holding.condition, holding.gradeCompany, holding.grade, holding.purchasePrice, holding.fees, unit, summary.marketValue, summary.costBasis, holding.folder, holding.notes, holding.item?.priceSource, holding.updatedAt];
+  });
+  return [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+}
+
+export async function clearLocalData() {
+  const db = await openDatabase();
+  const transaction = db.transaction(STORES, 'readwrite');
+  for (const store of STORES) transaction.objectStore(store).clear();
+  await transactionDone(transaction);
+}

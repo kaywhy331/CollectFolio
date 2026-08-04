@@ -1,0 +1,5 @@
+dist/
+.netlify/
+supabase/.temp/
+*.log
+.DS_Store
