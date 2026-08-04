@@ -5,6 +5,7 @@ import { getScryfallCard, searchScryfall } from './providers/scryfall.js';
 import { getYGOCard, searchYGOPRODeck } from './providers/ygoprodeck.js';
 
 const CACHE_MS = 30 * 60 * 1000;
+const CACHE_VERSION = 'v4';
 const providers = {
   pokemon: { category: 'pokemon', label: 'Pokémon TCG API', search: searchPokemon, detail: getPokemonCard },
   scryfall: { category: 'magic', label: 'Scryfall', search: searchScryfall, detail: getScryfallCard },
@@ -43,7 +44,7 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
   const selected = Object.entries(providers).filter(([key, config]) =>
     (provider === 'all' || provider === key) && (category === 'all' || category === config.category)
   );
-  const key = `catalog:${category}:${provider}:${normalized}`;
+  const key = `catalog:${CACHE_VERSION}:${category}:${provider}:${normalized}`;
   if (!bypassCache) {
     const cached = await getRecord('catalogCache', key).catch(() => null);
     if (cached?.expiresAt > Date.now()) return { ...cached.value, cached: true };

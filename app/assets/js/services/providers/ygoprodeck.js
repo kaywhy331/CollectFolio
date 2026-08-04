@@ -2,6 +2,10 @@ import { fetchJSON } from '../../core/utils.js';
 
 const endpoint = 'https://db.ygoprodeck.com/api/v7/cardinfo.php';
 
+function isNoMatch(error) {
+  return error?.status === 400 && /^No card matching your query was found/i.test(error?.payload?.error || '');
+}
+
 export function normalizeYGOCard(card) {
   const image = card.card_images?.[0] || {};
   const sets = card.card_sets?.length ? card.card_sets : [{ set_code: '', set_name: '', set_rarity: '', set_price: null }];
@@ -37,7 +41,13 @@ export function normalizeYGOCard(card) {
 export async function searchYGOPRODeck(query) {
   const url = new URL(endpoint);
   url.searchParams.set('fname', String(query).trim());
-  const payload = await fetchJSON(url);
+  let payload;
+  try {
+    payload = await fetchJSON(url);
+  } catch (error) {
+    if (isNoMatch(error)) return [];
+    throw error;
+  }
   return (payload.data || []).flatMap(normalizeYGOCard);
 }
 

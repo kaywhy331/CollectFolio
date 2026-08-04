@@ -90,6 +90,14 @@ The product is being delivered in a free-first sequence that protects the core i
 - Hosted cloud qualification passed with user A on two isolated browser contexts and user B on a third: create/pull sync passed, user B's row was invisible to user A, a cross-user write was rejected with HTTP 403, and a deletion tombstone removed the stale second-client copy without resurrection.
 - All temporary qualification users and rows were removed; the final residue audit returned zero QA users, QA holdings, orphaned deletion rows, and orphaned profiles.
 
+## Catalog and OCR regression qualification — August 4, 2026
+
+- Provider-defined Scryfall 404 and YGOPRODeck 400 no-match responses return empty result sets instead of false outage warnings; genuine upstream failures remain visible.
+- Pokémon search requests only the fields CollectFolio uses, follows pages of up to 250 cards with bounded transient retries, and falls back to the free TCGdex catalog when the primary provider exhausts those retries. Qualification returned the complete primary Pikachu set (177 cards) rather than the former 24-card cap; the fallback independently returned 204 image-backed Pikachu records during outage testing.
+- Visible catalog images load eagerly, retry their alternate provider URL, and fall back to a labeled placeholder only after both URLs fail. The CSP permits all provider image hosts for both browser images and service-worker fetches.
+- OCR permits WebAssembly compilation without enabling broad `unsafe-eval`, bounds image/script/recognition/worker operations, disables duplicate identification, and recovers interrupted persisted scans into a retryable error state.
+- `npm run check` passed validation, all 34 tests, and the production build. Immutable Netlify draft `6a721904ce193f1d29302c26` passed the hosted Playwright qualification twice (6/6): all-provider Pikachu coverage without false warnings, forced-outage TCGdex fallback, Pokémon/Scrydex/TCGdex/Scryfall/YGOPRODeck image loading, and a real two-card Tesseract run that left `Identifying` successfully.
+
 ## Pilot qualification checklist
 
 Before inviting testers:

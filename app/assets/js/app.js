@@ -1,10 +1,10 @@
 import { clearLocalData, exportBackup, exportHoldingsCSV, getAll, importBackup, putRecord, removeHolding, saveHolding } from './core/db.js';
 import { getState, setState, subscribe } from './core/store.js';
 import { closeModal, openModal, showToast } from './core/ui.js';
-import { createId, downloadFile, escapeAttribute, escapeHTML } from './core/utils.js';
+import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
-import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
+import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
 import { consumeAuthCallback, isSupabaseConfigured, loadSession, requestMagicLink, signIn, signOut, signUp, syncPortfolio } from './services/supabase.js';
 import { renderAdd } from './views/add.js';
@@ -17,6 +17,23 @@ import { renderScanReview } from './views/scan.js';
 const root = document.querySelector('#main-content');
 const defaults = { currency: 'USD', theme: 'dark' };
 let activeDraft = null;
+
+root.addEventListener('error', (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.matches('[data-external-image]')) return;
+  const fallback = safeImageUrl(image.dataset.fallbackSrc);
+  if (fallback && !image.dataset.fallbackAttempted && fallback !== image.src) {
+    image.dataset.fallbackAttempted = 'true';
+    image.src = fallback;
+    return;
+  }
+  const placeholder = document.createElement('div');
+  placeholder.className = image.className;
+  placeholder.classList.add('image-placeholder');
+  placeholder.setAttribute('aria-label', `${image.alt || 'Collectible'} image unavailable`);
+  placeholder.innerHTML = '<span>CF</span>';
+  image.replaceWith(placeholder);
+}, true);
 
 function render(state = getState()) {
   const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile, scan: () => renderScanReview(activeDraft) };
@@ -320,7 +337,10 @@ async function resumeScan() {
   const scans = (await getAll('scans')).filter((scan) => scan.status !== 'complete').sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   if (!scans.length) { showToast('No saved scan is waiting', 'warning'); return; }
   activeDraft = scans[0];
+  const recovered = recoverInterruptedIdentifications(activeDraft);
+  if (recovered) await saveScanDraft(activeDraft);
   navigate('scan');
+  if (recovered) showToast('Interrupted identification was reset for retry', 'warning');
 }
 
 function customCropForm(cropId) {

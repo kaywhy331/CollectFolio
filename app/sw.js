@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.1.1';
+const CACHE = 'collectfolio-shell-v0.1.4';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
@@ -15,10 +15,10 @@ const SHELL = [
   './assets/js/views/scan.js'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
-  'images.pokemontcg.io', 'cards.scryfall.io', 'images.ygoprodeck.com'
+  'images.pokemontcg.io', 'images.scrydex.com', 'assets.tcgdex.net', 'cards.scryfall.io', 'images.ygoprodeck.com'
 ]);
 const CATALOG_HOSTS = new Set([
-  'api.pokemontcg.io', 'api.scryfall.com', 'db.ygoprodeck.com'
+  'api.pokemontcg.io', 'api.tcgdex.net', 'api.scryfall.com', 'db.ygoprodeck.com'
 ]);
 
 self.addEventListener('install', (event) => {
@@ -36,7 +36,9 @@ async function cacheFirst(request, cacheName) {
   const cached = await cache.match(request);
   if (cached) return cached;
   const response = await fetch(request);
-  if (response.ok || response.type === 'opaque') await cache.put(request, response.clone());
+  if (response.ok || response.type === 'opaque') {
+    try { await cache.put(request, response.clone()); } catch { /* Never hide a usable image when browser storage is unavailable. */ }
+  }
   return response;
 }
 

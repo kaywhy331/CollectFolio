@@ -17,6 +17,17 @@ export async function saveScanDraft(draft) {
   return draft;
 }
 
+export function recoverInterruptedIdentifications(draft) {
+  let recovered = 0;
+  for (const crop of draft?.crops || []) {
+    if (crop.status !== 'identifying') continue;
+    crop.status = 'error';
+    crop.error = 'The previous identification was interrupted. Search again or enter a query manually.';
+    recovered++;
+  }
+  return recovered;
+}
+
 export async function identifyCrop(draft, cropId, editedQuery = '') {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');

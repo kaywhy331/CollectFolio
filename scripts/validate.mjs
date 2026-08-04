@@ -48,7 +48,7 @@ for (const reference of ['./manifest.webmanifest', './runtime-config.js', './ass
 for (const view of ['home', 'search', 'add', 'portfolio', 'profile']) if (!index.includes(`data-view="${view}"`)) errors.push(`index.html is missing ${view} navigation.`);
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.1.1'")) errors.push('Service worker cache name must be collectfolio-shell-v0.1.1.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.1.4'")) errors.push('Service worker cache name must be collectfolio-shell-v0.1.4.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
@@ -80,7 +80,11 @@ for (const table of ['profiles', 'holdings', 'holding_deletions', 'portfolio_sna
 
 const netlify = await readFile(resolve(root, 'netlify.toml'), 'utf8');
 for (const text of ['command = "npm run build"', 'publish = "dist"', 'NODE_VERSION = "22"', 'to = "/index.html"', 'for = "/sw.js"']) if (!netlify.includes(text)) errors.push(`netlify.toml missing ${text}`);
-if (/unsafe-eval/.test(netlify)) errors.push('Content Security Policy must not allow unsafe-eval.');
+if (netlify.includes("'unsafe-eval'")) errors.push('Content Security Policy must not allow unsafe-eval.');
+if (!netlify.includes("'wasm-unsafe-eval'")) errors.push('Content Security Policy must allow WebAssembly compilation for configured OCR.');
+for (const host of ['https://images.pokemontcg.io', 'https://images.scrydex.com', 'https://assets.tcgdex.net', 'https://cards.scryfall.io', 'https://images.ygoprodeck.com']) {
+  if (netlify.split(host).length < 3) errors.push(`Content Security Policy must allow ${host} for both provider images and service-worker fetches.`);
+}
 
 if (errors.length) {
   console.error(`Validation failed:\n- ${errors.join('\n- ')}`);

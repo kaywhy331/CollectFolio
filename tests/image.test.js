@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { connectedComponents, detectBoundaries, differenceHash, gridBoxes, hashSimilarity, mergeBoxes } from '../app/assets/js/services/image-algorithms.js';
-import { extractOCRQuery } from '../app/assets/js/services/image.js';
+import { extractOCRQuery, withTimeout } from '../app/assets/js/services/image.js';
 
 test('four-neighbor components keep diagonally separated shapes distinct', () => {
   const mask = new Uint8Array([
@@ -59,4 +59,12 @@ test('OCR query extraction favors distinctive words and number tokens', () => {
   assert.match(query, /Brilliant/);
   assert.match(query, /TG20\/TG30/);
   assert.doesNotMatch(query, /Copyright/i);
+});
+
+test('OCR deadlines resolve completed work and reject stalled work', async () => {
+  assert.equal(await withTimeout(Promise.resolve('done'), 50), 'done');
+  await assert.rejects(
+    withTimeout(new Promise(() => {}), 5, 'OCR deadline reached.'),
+    (error) => error.name === 'TimeoutError' && error.message === 'OCR deadline reached.'
+  );
 });

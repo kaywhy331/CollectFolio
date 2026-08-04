@@ -4,11 +4,13 @@ export function pageHeader(eyebrow, title, description = '', action = '') {
   return `<header class="page-header"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h1>${escapeHTML(title)}</h1>${description ? `<p class="lede">${escapeHTML(description)}</p>` : ''}</div>${action}</header>`;
 }
 
-export function externalImage(item, className = '') {
-  const url = safeImageUrl(item?.userImage || item?.imageSmall || item?.image);
+export function externalImage(item, className = '', { loading = 'lazy' } = {}) {
+  const sources = [...new Set([item?.userImage, item?.imageSmall, item?.image].map(safeImageUrl).filter(Boolean))];
+  const [url, fallback = ''] = sources;
   const label = item?.name || 'Collectible';
+  const loadingMode = loading === 'eager' ? 'eager' : 'lazy';
   return url
-    ? `<img class="${escapeAttribute(className)}" src="${escapeAttribute(url)}" alt="${escapeAttribute(label)}" loading="lazy" referrerpolicy="no-referrer">`
+    ? `<img class="${escapeAttribute(className)}" src="${escapeAttribute(url)}"${fallback ? ` data-fallback-src="${escapeAttribute(fallback)}"` : ''} data-external-image alt="${escapeAttribute(label)}" loading="${loadingMode}" decoding="async" referrerpolicy="no-referrer">`
     : `<div class="image-placeholder ${escapeAttribute(className)}" aria-label="No image available"><span>CF</span></div>`;
 }
 

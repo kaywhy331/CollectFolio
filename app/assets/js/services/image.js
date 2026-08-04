@@ -2,7 +2,21 @@ import { textSimilarity } from '../core/utils.js';
 import { differenceHash, hashSimilarity } from './image-algorithms.js';
 
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+const IMAGE_LOAD_TIMEOUT_MS = 10_000;
+const OCR_TIMEOUT_MS = 45_000;
 let tesseractPromise;
+
+export function withTimeout(promise, timeout, message = 'Operation timed out.') {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(message);
+      error.name = 'TimeoutError';
+      reject(error);
+    }, timeout);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
 
 export function extractOCRQuery(text = '') {
   const lines = String(text).normalize('NFKD').split(/\r?\n/).map((line) => line.replace(/[^\p{L}\p{N}#/' -]/gu, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
@@ -13,13 +27,25 @@ export function extractOCRQuery(text = '') {
   return (chosen.length ? chosen : tokens.slice(0, 6)).join(' ').slice(0, 160);
 }
 
-export function loadImage(source) {
+export function loadImage(source, timeout = IMAGE_LOAD_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.decoding = 'async';
     image.crossOrigin = 'anonymous';
-    image.addEventListener('load', () => resolve(image), { once: true });
-    image.addEventListener('error', () => reject(new Error('The image could not be decoded.')), { once: true });
+    const cleanup = () => {
+      clearTimeout(timer);
+      image.removeEventListener('load', onLoad);
+      image.removeEventListener('error', onError);
+    };
+    const onLoad = () => { cleanup(); resolve(image); };
+    const onError = () => { cleanup(); reject(new Error('The image could not be decoded.')); };
+    const timer = setTimeout(() => {
+      cleanup();
+      image.removeAttribute('src');
+      reject(new Error(`The image did not load within ${Math.ceil(timeout / 1000)} seconds.`));
+    }, timeout);
+    image.addEventListener('load', onLoad, { once: true });
+    image.addEventListener('error', onError, { once: true });
     image.src = source;
   });
 }
@@ -49,16 +75,30 @@ export function cropsFromBoxes(image, boxes) {
 async function loadTesseract() {
   if (window.Tesseract) return window.Tesseract;
   if (!window.COLLECTFOLIO_CONFIG?.ENABLE_TESSERACT) throw new Error('External OCR is disabled in runtime configuration.');
-  if (!tesseractPromise) tesseractPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = TESSERACT_URL;
-    script.crossOrigin = 'anonymous';
-    script.referrerPolicy = 'no-referrer';
-    script.addEventListener('load', () => resolve(window.Tesseract), { once: true });
-    script.addEventListener('error', () => reject(new Error('Tesseract.js could not be loaded. Enter a query manually.')), { once: true });
-    document.head.append(script);
-  });
-  return tesseractPromise;
+  if (!tesseractPromise) {
+    tesseractPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = TESSERACT_URL;
+      script.crossOrigin = 'anonymous';
+      script.referrerPolicy = 'no-referrer';
+      script.addEventListener('load', () => window.Tesseract
+        ? resolve(window.Tesseract)
+        : reject(new Error('Tesseract.js loaded without its browser API. Enter a query manually.')), { once: true });
+      script.addEventListener('error', () => reject(new Error('Tesseract.js could not be loaded. Enter a query manually.')), { once: true });
+      document.head.append(script);
+    }).catch((error) => {
+      tesseractPromise = null;
+      throw error;
+    });
+  }
+  try {
+    return await withTimeout(tesseractPromise, 15_000, 'Tesseract.js did not load within 15 seconds. Enter a query manually.');
+  } catch (error) {
+    // A stalled script never fires its own error event; clear the shared loader
+    // so the user's retry can create a fresh request.
+    tesseractPromise = null;
+    throw error;
+  }
 }
 
 export async function recognizeText(imageSource) {
@@ -73,7 +113,18 @@ export async function recognizeText(imageSource) {
     }
   }
   const tesseract = await loadTesseract();
-  const result = await tesseract.recognize(imageSource, 'eng');
+  let worker;
+  const recognition = (async () => {
+    if (!tesseract.createWorker) return tesseract.recognize(imageSource, 'eng');
+    worker = await tesseract.createWorker('eng');
+    return worker.recognize(imageSource);
+  })();
+  let result;
+  try {
+    result = await withTimeout(recognition, OCR_TIMEOUT_MS, 'OCR did not finish within 45 seconds. Enter a query manually or retry.');
+  } finally {
+    if (worker?.terminate) await withTimeout(Promise.resolve(worker.terminate()), 2_000).catch(() => {});
+  }
   const text = result?.data?.text || '';
   return { text, query: extractOCRQuery(text), engine: 'Tesseract.js' };
 }

@@ -60,15 +60,36 @@ export function textSimilarity(left = '', right = '') {
 }
 
 export async function fetchJSON(url, options = {}, timeout = 12000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { ...options, signal: options.signal || controller.signal });
-    if (!response.ok) throw new Error(`Request failed (${response.status})`);
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
+  const { retries = 1, retryDelay = 200, ...requestOptions } = options;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, { ...requestOptions, signal: requestOptions.signal || controller.signal });
+      if (!response.ok) {
+        let payload = null;
+        try { payload = await response.json(); } catch { /* Some upstream failures have an empty body. */ }
+        const error = new Error(`Request failed (${response.status})`);
+        error.name = 'HTTPError';
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+      }
+      return await response.json();
+    } catch (error) {
+      const normalized = error?.name === 'AbortError' && !requestOptions.signal
+        ? Object.assign(new Error(`Request timed out after ${Math.ceil(timeout / 1000)} seconds`), { name: 'TimeoutError' })
+        : error;
+      const retryable = attempt < retries && !requestOptions.signal && (
+        normalized?.name === 'TimeoutError' || normalized?.name === 'TypeError' || normalized?.status === 429 || normalized?.status >= 500
+      );
+      if (!retryable) throw normalized;
+      await new Promise((resolve) => setTimeout(resolve, retryDelay * (attempt + 1)));
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  throw new Error('Request failed after retry.');
 }
 
 export function createId() {

@@ -2,6 +2,11 @@ import { fetchJSON } from '../../core/utils.js';
 
 const cardsEndpoint = 'https://api.scryfall.com/cards';
 const endpoint = `${cardsEndpoint}/search`;
+const MAX_RESULTS = 500;
+
+function isNoMatch(error) {
+  return error?.status === 404 && error?.payload?.object === 'error' && error?.payload?.code === 'not_found';
+}
 
 export function normalizeScryfallCard(card) {
   const images = card.image_uris || card.card_faces?.find((face) => face.image_uris)?.image_uris || {};
@@ -38,8 +43,20 @@ export async function searchScryfall(query) {
   url.searchParams.set('q', query);
   url.searchParams.set('unique', 'prints');
   url.searchParams.set('order', 'name');
-  const payload = await fetchJSON(url, { headers: { Accept: 'application/json' } });
-  return (payload.data || []).map(normalizeScryfallCard);
+  const cards = [];
+  let nextPage = url.href;
+  while (nextPage && cards.length < MAX_RESULTS) {
+    let payload;
+    try {
+      payload = await fetchJSON(nextPage, { headers: { Accept: 'application/json' } });
+    } catch (error) {
+      if (isNoMatch(error)) break;
+      throw error;
+    }
+    cards.push(...(payload.data || []));
+    nextPage = payload.has_more ? payload.next_page : '';
+  }
+  return cards.slice(0, MAX_RESULTS).map(normalizeScryfallCard);
 }
 
 export async function getScryfallCard(externalId) {

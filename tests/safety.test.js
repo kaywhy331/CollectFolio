@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { eligibleApprovedCrops } from '../app/assets/js/services/scan-review.js';
+import { externalImage } from '../app/assets/js/core/components.js';
+import { eligibleApprovedCrops, recoverInterruptedIdentifications } from '../app/assets/js/services/scan-review.js';
 import { escapeHTML, safeImageUrl, textSimilarity } from '../app/assets/js/core/utils.js';
 
 test('batch eligibility excludes selected but unapproved and malformed crops', () => {
@@ -31,4 +32,34 @@ test('empty image sources remain placeholders in the browser', () => {
     if (previousLocation === undefined) delete globalThis.location;
     else globalThis.location = previousLocation;
   }
+});
+
+test('external card images eagerly load visible candidates and retain a fallback URL', () => {
+  const previousLocation = globalThis.location;
+  globalThis.location = { href: 'https://collectfolio.example/search' };
+  try {
+    const html = externalImage({
+      name: 'Pikachu',
+      imageSmall: 'https://images.pokemontcg.io/basep/P-001.png',
+      image: 'https://images.pokemontcg.io/basep/P-001_hires.png'
+    }, 'candidate-image', { loading: 'eager' });
+    assert.match(html, /data-external-image/);
+    assert.match(html, /loading="eager"/);
+    assert.match(html, /decoding="async"/);
+    assert.match(html, /data-fallback-src="https:\/\/images\.pokemontcg\.io\/basep\/P-001_hires\.png"/);
+  } finally {
+    if (previousLocation === undefined) delete globalThis.location;
+    else globalThis.location = previousLocation;
+  }
+});
+
+test('interrupted persisted identification is recoverable after reload', () => {
+  const draft = { crops: [
+    { id: 'stuck', status: 'identifying', error: '' },
+    { id: 'ready', status: 'matched', error: '' }
+  ] };
+  assert.equal(recoverInterruptedIdentifications(draft), 1);
+  assert.equal(draft.crops[0].status, 'error');
+  assert.match(draft.crops[0].error, /interrupted/i);
+  assert.equal(draft.crops[1].status, 'matched');
 });

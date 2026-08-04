@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectSettledProviders, prepareCatalogQuery, rankCatalogItems, refreshCatalogItem } from '../app/assets/js/services/catalog.js';
-import { buildPokemonQuery, getPokemonCard, normalizePokemonCard, searchPokemon } from '../app/assets/js/services/providers/pokemon.js';
-import { getScryfallCard, normalizeScryfallCard } from '../app/assets/js/services/providers/scryfall.js';
+import { buildPokemonQuery, getPokemonCard, normalizePokemonCard, normalizeTCGDexCard, searchPokemon } from '../app/assets/js/services/providers/pokemon.js';
+import { getScryfallCard, normalizeScryfallCard, searchScryfall } from '../app/assets/js/services/providers/scryfall.js';
 import { getYGOCard, normalizeYGOCard, searchYGOPRODeck } from '../app/assets/js/services/providers/ygoprodeck.js';
 
 test('Pokémon fixture normalizes finishes and market attribution', () => {
@@ -13,6 +13,15 @@ test('Pokémon fixture normalizes finishes and market attribution', () => {
   assert.match(item.priceSource, /Pokémon/);
   assert.equal(buildPokemonQuery('Charizard 4/102'), 'name:charizard number:4');
   assert.equal(buildPokemonQuery('Mr. Mime'), 'name:"mr mime"');
+});
+
+test('TCGdex fallback normalizes stable Pokémon identifiers and image variants', () => {
+  const item = normalizeTCGDexCard({ id: 'basep-1', localId: '1', name: 'Pikachu', image: 'https://assets.tcgdex.net/en/base/basep/1' });
+  assert.equal(item.id, 'pokemon:basep-1');
+  assert.equal(item.number, '1');
+  assert.equal(item.imageSmall, 'https://assets.tcgdex.net/en/base/basep/1/low.webp');
+  assert.equal(item.image, 'https://assets.tcgdex.net/en/base/basep/1/high.webp');
+  assert.equal(item.price, null);
 });
 
 test('Scryfall fixture keeps a printing distinct and exposes three finish prices', () => {
@@ -49,9 +58,113 @@ test('provider search preserves punctuation required by catalog APIs', async () 
   try {
     await searchPokemon('Charizard 4/102');
     assert.equal(requested.searchParams.get('q'), 'name:charizard number:4');
+    assert.equal(requested.searchParams.get('pageSize'), '250');
+    assert.equal(requested.searchParams.get('select'), 'id,name,number,rarity,set,images,tcgplayer');
     assert.equal(requested.searchParams.has('orderBy'), false);
     await searchYGOPRODeck('Blue-Eyes White Dragon');
     assert.equal(requested.searchParams.get('fname'), 'Blue-Eyes White Dragon');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('provider-defined no-match responses are empty results, not outage warnings', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.scryfall.com') return {
+      ok: false,
+      status: 404,
+      json: async () => ({ object: 'error', code: 'not_found', status: 404, details: 'No cards found' })
+    };
+    return {
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'No card matching your query was found in the database.' })
+    };
+  };
+  try {
+    assert.deepEqual(await searchScryfall('Pikachu'), []);
+    assert.deepEqual(await searchYGOPRODeck('Pikachu'), []);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Pokémon search tolerates several consecutive transient upstream failures', async () => {
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls < 4) return { ok: false, status: 500, json: async () => null };
+    return { ok: true, json: async () => ({ data: [], count: 0, totalCount: 0 }) };
+  };
+  try {
+    assert.deepEqual(await searchPokemon('Pikachu'), []);
+    assert.equal(calls, 4);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Pokémon search falls back to TCGdex after the primary exhausts bounded retries', async () => {
+  const previousFetch = globalThis.fetch;
+  let primaryCalls = 0;
+  let fallbackUrl;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.pokemontcg.io') {
+      primaryCalls++;
+      return { ok: false, status: 500, json: async () => null };
+    }
+    fallbackUrl = parsed;
+    return { ok: true, json: async () => [{ id: 'basep-1', localId: '1', name: 'Pikachu', image: 'https://assets.tcgdex.net/en/base/basep/1' }] };
+  };
+  try {
+    const results = await searchPokemon('Pikachu 1');
+    assert.equal(primaryCalls, 4);
+    assert.equal(fallbackUrl.hostname, 'api.tcgdex.net');
+    assert.equal(fallbackUrl.searchParams.get('name'), 'pikachu');
+    assert.equal(results[0].externalId, 'basep-1');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Pokémon and Scryfall searches follow provider pagination beyond the first page', async () => {
+  const previousFetch = globalThis.fetch;
+  const pokemonPages = [];
+  let scryfallCalls = 0;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.pokemontcg.io') {
+      const page = Number(parsed.searchParams.get('page'));
+      pokemonPages.push(page);
+      const size = page === 1 ? 250 : 27;
+      return {
+        ok: true,
+        json: async () => ({
+          page,
+          pageSize: 250,
+          count: size,
+          totalCount: 277,
+          data: Array.from({ length: size }, (_, index) => ({ id: `p${page}-${index}`, name: 'Pikachu', images: {} }))
+        })
+      };
+    }
+    scryfallCalls++;
+    return {
+      ok: true,
+      json: async () => scryfallCalls === 1
+        ? { data: [{ id: 's1', name: 'Lightning Bolt', prices: {} }], has_more: true, next_page: 'https://api.scryfall.com/cards/search?page=2&q=bolt' }
+        : { data: [{ id: 's2', name: 'Lightning Bolt', prices: {} }], has_more: false }
+    };
+  };
+  try {
+    assert.equal((await searchPokemon('Pikachu')).length, 277);
+    assert.deepEqual(pokemonPages, [1, 2]);
+    assert.deepEqual((await searchScryfall('Lightning Bolt')).map((item) => item.externalId), ['s1', 's2']);
+    assert.equal(scryfallCalls, 2);
   } finally {
     globalThis.fetch = previousFetch;
   }
