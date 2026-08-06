@@ -1,0 +1,131 @@
+{
+  "mode": "research_only",
+  "source": {
+    "id": "f24c78f8-d4b9-55a3-a8f7-b05d484c052e",
+    "termsReviewId": "3bc792cf-ad71-54d1-a2f6-d5d5d521fba5",
+    "currentTermsReviewId": "3bc792cf-ad71-54d1-a2f6-d5d5d521fba5",
+    "code": "tcgcsv-research",
+    "name": "TCGCSV research archive",
+    "termsUrl": "https://tcgcsv.com/docs",
+    "decision": "research_only",
+    "active": true,
+    "commercialUseAllowed": false,
+    "catalogMetadataAllowed": false,
+    "publicRawDisplayAllowed": false,
+    "publicDerivedDisplayAllowed": false,
+    "attributionRequired": false,
+    "attributionText": "",
+    "documentHash": "91d6e2d69c3b3593c0f61a9ee00e8647adf638349197911a8fb9297697618fb6",
+    "reviewedAt": "2026-08-05T20:30:00+00:00",
+    "expiresAt": "2026-11-03T20:30:00+00:00"
+  },
+  "tcgcsv": {
+    "baseUrl": "https://tcgcsv.com/",
+    "categoryId": 3,
+    "groupId": 23651,
+    "productIds": [590027],
+    "userAgent": "CollectFolio/0.1 research qualification (+https://github.com/kaywhy331/CollectFolio)"
+  },
+  "canonicalVariants": [
+    {
+      "game": "pokemon",
+      "language": "en",
+      "setCode": "sv08",
+      "setName": "Surging Sparks",
+      "series": "Scarlet & Violet",
+      "releaseDate": "2024-11-08",
+      "name": "Pikachu ex",
+      "number": "238/191",
+      "rarity": "Special Illustration Rare",
+      "artist": "",
+      "edition": "standard",
+      "finish": "holofoil",
+      "variantName": "",
+      "conditionClass": "raw"
+    }
+  ],
+  "mappingReview": {
+    "decision": "approved",
+    "scope": "research_only",
+    "reviewerLabel": "Codex-assisted operator identity review",
+    "reviewedAt": "2026-08-05T22:05:00+00:00",
+    "document": "docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md",
+    "documentHash": "bda5e441a1cb71929535abeaa24182ba0be25a3362df65a2acc94f7f052198a6"
+  },
+  "approvedMappings": [
+    {
+      "mappingId": "874f918c-8988-59f5-93ba-ff1ea961bd5a",
+      "externalProductId": "590027",
+      "externalVariantKey": "holofoil",
+      "variantId": "80b4934a-96db-5f4c-8641-f7c74e0eb949",
+      "mappingConfidence": 1.0,
+      "finish": "holofoil",
+      "conditionClass": "raw"
+    }
+  ],
+  "historicalResearch": {
+    "startDate": "2025-08-02",
+    "endDate": "2026-08-01",
+    "expectedIntervalDays": 7,
+    "availabilityLagDays": 1,
+    "maxReferenceLagDays": 7,
+    "ingestionRunId": "079384b7-7cb0-5efe-a721-3c3ee4d76cb2",
+    "trendAnalyticsRunId": "9c743cb9-c17c-5278-a92a-33e5e6f90eca",
+    "forecastAnalyticsRunId": "0b15367c-a212-5db1-857b-0c77a7bcd25a",
+    "trendSnapshotId": "7d0ab776-653b-5971-a7bc-9478bee6bdeb",
+    "featureCutoff": "2026-08-05T22:30:00+00:00",
+    "forecastOrigin": "2026-08-05T22:30:00+00:00",
+    "featureVersion": "tcgcsv-weekly-trends-v1",
+    "codeVersion": "collectfolio-price-intelligence-research-v1",
+    "model": {
+      "id": "8a41e6bf-8697-509c-a381-934d4e9cb7f2",
+      "key": "tcgcsv-weekly-damped-momentum",
+      "version": "research-v1",
+      "family": "damped_momentum_baseline",
+      "allowedHorizons": [7, 30, 90, 180, 365],
+      "config": {
+        "damping": 0.25,
+        "maxAbsLogReturn": 0.7,
+        "maxIntervalLogWidth": 1.5
+      }
+    }
+  },
+  "retrospectiveResearch": {
+    "expectedIntervalDays": 7,
+    "maxReferenceLagDays": 7,
+    "originSpacingDays": 30,
+    "featureVersion": "tcgcsv-weekly-trends-v1",
+    "codeVersion": "collectfolio-price-intelligence-research-v1",
+    "cohortKey": "tcgcsv_30d_origins_accepted_research_only_v2",
+    "promotionPolicy": {
+      "version": "research-promotion-v1",
+      "minimumCases": 30,
+      "minimumBaselineLift": 0.02,
+      "interval80CoverageMin": 0.72,
+      "interval80CoverageMax": 0.88,
+      "maximumBrierScore": 0.25,
+      "requiredBaselines": [
+        "no_change",
+        "damped_momentum",
+        "market_index",
+        "lifecycle_cohort",
+        "structural_convergence"
+      ]
+    },
+    "model": {
+      "key": "tcgcsv-weekly-damped-momentum-retrospective",
+      "version": "research-retrospective-v1",
+      "family": "damped_momentum_baseline",
+      "allowedHorizons": [7, 30, 90, 180, 365],
+      "config": {
+        "damping": 0.25,
+        "maxAbsLogReturn": 0.7,
+        "maxIntervalLogWidth": 1.5
+      }
+    }
+  },
+  "ingestionRunId": "2896cfa9-2ca7-5d94-9e65-fb0ab4f0901d",
+  "ingestedAt": "2026-08-05T22:30:00+00:00",
+  "mappingVersion": "tcgcsv-research-mapping-v1",
+  "actorLabel": "tcgcsv-research-adapter-v1"
+}

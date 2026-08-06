@@ -1,0 +1,54 @@
+name: Price intelligence research qualification
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: price-intelligence-research
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run analytics safety tests
+        run: PYTHONPATH=analytics/src python3 -m unittest discover -s analytics/tests -p 'test_*.py'
+      - name: Build non-publishing live research packet
+        run: >-
+          PYTHONPATH=analytics/src python3 -m collectfolio_analytics.operator_cli
+          analytics/manifests/tcgcsv-surging-sparks-research.json --pretty
+          --skip-history --output tcgcsv-research-packet.json
+      - name: Assert research gates remain closed
+        run: >-
+          jq -e '
+          .mode == "research_only" and
+          .gateStatus.sourceRights == "research_only" and
+          .gateStatus.mapping == "approved" and
+          .gateStatus.publicPublication == "blocked" and
+          .health.status == "healthy" and
+          .health.publicPublicationAllowed == false and
+          .sourcePermissionCheckedAt == .ingestion.ingestedAt and
+          .sourcePermissionCheckedAt == .health.evaluatedAt and
+          .health.metrics.termsExpiryDaysRemaining > 14 and
+          ((.sourcePermissionCheckedAt | sub("\\+00:00$"; "Z") | fromdateiso8601) >= now - 600) and
+          .operatorReviewRequired == false and
+          .observations.statusCounts.accepted == 1 and
+          (.historicalResearch | not)
+          ' tcgcsv-research-packet.json
+      - name: Upload operator review packet
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcgcsv-research-review-${{ github.run_id }}
+          path: tcgcsv-research-packet.json
+          if-no-files-found: error
+          retention-days: 30
