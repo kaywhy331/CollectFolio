@@ -5,12 +5,13 @@ import { buildPokemonQuery, clearPokemonSetCache, getPokemonCard, normalizePokem
 import { getScryfallCard, normalizeScryfallCard, searchScryfall } from '../app/assets/js/services/providers/scryfall.js';
 import { getYGOCard, normalizeYGOCard, searchYGOPRODeck } from '../app/assets/js/services/providers/ygoprodeck.js';
 
-test('Pokémon fixture normalizes finishes and market attribution', () => {
+test('Pokémon catalog normalization excludes unapproved downstream prices', () => {
   const item = normalizePokemonCard({ id: 'base1-4', name: 'Charizard', number: '4', rarity: 'Rare Holo', set: { name: 'Base', releaseDate: '1999-01-09' }, images: { small: 'https://images.pokemontcg.io/base1/4.png', large: 'https://images.pokemontcg.io/base1/4_hires.png' }, tcgplayer: { url: 'https://example.test/card', updatedAt: '2026/07/31', prices: { holofoil: { market: 350.25 }, reverseHolofoil: { market: 60 } } } });
   assert.equal(item.id, 'pokemon:base1-4');
-  assert.equal(item.price, 350.25);
-  assert.equal(item.priceOptions.length, 2);
-  assert.match(item.priceSource, /Pokémon/);
+  assert.equal(item.price, null);
+  assert.deepEqual(item.priceOptions, []);
+  assert.equal(item.priceSource, '');
+  assert.equal(item.priceUrl, '');
   assert.equal(buildPokemonQuery('Charizard 4/102'), 'name:charizard number:4');
   assert.equal(buildPokemonQuery('Mr. Mime'), 'name:"mr mime"');
 });
@@ -81,7 +82,7 @@ test('provider search preserves punctuation required by catalog APIs', async () 
     await searchPokemon('Charizard 4/102');
     assert.equal(requested.searchParams.get('q'), 'name:charizard number:4');
     assert.equal(requested.searchParams.get('pageSize'), '250');
-    assert.equal(requested.searchParams.get('select'), 'id,name,number,rarity,set,images,tcgplayer');
+    assert.equal(requested.searchParams.get('select'), 'id,name,number,rarity,set,images');
     assert.equal(requested.searchParams.has('orderBy'), false);
     await searchYGOPRODeck('Blue-Eyes White Dragon');
     assert.equal(requested.searchParams.get('fname'), 'Blue-Eyes White Dragon');

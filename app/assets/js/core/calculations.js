@@ -1,9 +1,11 @@
+import { catalogPriceForValuation, PRICING_POLICY_VERSION } from './pricing-policy.js';
+
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
 
 export function unitMarketValue(holding) {
   const manual = holding?.manualMarketPrice;
   if (manual !== '' && manual !== null && manual !== undefined && Number.isFinite(Number(manual))) return Math.max(0, Number(manual));
-  return Math.max(0, number(holding?.item?.price));
+  return catalogPriceForValuation(holding?.item) ?? 0;
 }
 
 export function holdingMarketValue(holding) {
@@ -66,6 +68,7 @@ export function snapshotFor(holdings = [], date = new Date()) {
   return {
     id: `portfolio:${day}`,
     date: day,
+    pricingPolicyVersion: PRICING_POLICY_VERSION,
     marketValue: summary.marketValue,
     costBasis: summary.costBasis,
     uniqueItems: summary.uniqueItems,

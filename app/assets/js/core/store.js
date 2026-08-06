@@ -4,10 +4,14 @@ let state = {
   activeView: 'home',
   holdings: [],
   snapshots: [],
+  watchlistItems: [],
+  alerts: [],
   settings: { currency: 'USD', theme: 'dark' },
   search: { query: '', category: 'all', provider: 'all', loading: false, results: [], warnings: [] },
-  portfolio: { query: '', category: 'all', sort: 'value-desc' },
-  auth: { session: null, syncing: false },
+  portfolio: { section: 'holdings', query: '', category: 'all', sort: 'value-desc' },
+  featureFlags: { watchlists: true, publicPriceIntelligence: false, loaded: false },
+  intelligence: { byVariant: {}, loading: false, error: '', lastRefresh: '' },
+  auth: { session: null, syncing: false, refreshingPrices: false },
   scanDraftCount: 0,
   ready: false
 };

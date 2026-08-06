@@ -1,4 +1,5 @@
 import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from './utils.js';
+import { catalogPriceDisclosure, catalogPriceForValuation } from './pricing-policy.js';
 
 export function pageHeader(eyebrow, title, description = '', action = '') {
   return `<header class="page-header"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h1>${escapeHTML(title)}</h1>${description ? `<p class="lede">${escapeHTML(description)}</p>` : ''}</div>${action}</header>`;
@@ -19,6 +20,10 @@ export function emptyState(title, detail, action = '') {
 }
 
 export function priceDisclosure(item, currency = 'USD') {
+  const restricted = catalogPriceDisclosure(item);
+  if (restricted) return `<span class="price-source">${escapeHTML(restricted)}</span>`;
   if (!item?.priceSource) return '<span class="muted">No provider price</span>';
-  return `<span class="price-source">${escapeHTML(formatCurrency(item.price, currency))} · ${escapeHTML(item.priceSource)} · ${escapeHTML(item.priceUpdatedAt ? new Date(item.priceUpdatedAt).toLocaleDateString() : 'date unavailable')}</span>`;
+  const price = catalogPriceForValuation(item);
+  if (price === null) return '<span class="muted">No provider price</span>';
+  return `<span class="price-source">${escapeHTML(formatCurrency(price, currency))} · ${escapeHTML(item.priceSource)} · ${escapeHTML(item.priceUpdatedAt ? new Date(item.priceUpdatedAt).toLocaleDateString() : 'date unavailable')}</span>`;
 }

@@ -1,12 +1,22 @@
 import { clearLocalData, exportBackup, exportHoldingsCSV, getAll, importBackup, putRecord, removeHolding, saveHolding } from './core/db.js';
+import { evaluateWatchlistAlerts } from './core/intelligence-alerts.js';
+import {
+  catalogPriceOptionsForDisplay,
+  currentPricingSnapshots,
+  isRestrictedCatalogPrice,
+  PRICING_POLICY_VERSION
+} from './core/pricing-policy.js';
 import { getState, setState, subscribe } from './core/store.js';
 import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
+import { intelligenceVariantIds, loadCachedIntelligence, refreshPublishedIntelligence } from './services/price-intelligence.js';
+import { requestPriceRefresh } from './services/justtcg-refresh.js';
 import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
-import { consumeAuthCallback, isSupabaseConfigured, loadSession, requestMagicLink, signIn, signOut, signUp, syncPortfolio } from './services/supabase.js';
+import { consumeAuthCallback, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
+import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js';
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
 import { renderPortfolio } from './views/portfolio.js';
@@ -36,7 +46,7 @@ root.addEventListener('error', (event) => {
 }, true);
 
 function render(state = getState()) {
-  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile, scan: () => renderScanReview(activeDraft) };
+  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile, scan: () => renderScanReview(activeDraft, state) };
   root.innerHTML = state.ready ? (views[state.activeView] || renderHome)(state) : '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>';
   document.querySelectorAll('.bottom-nav [data-view]').forEach((button) => {
     const selected = button.dataset.view === state.activeView;
@@ -45,13 +55,30 @@ function render(state = getState()) {
   });
 }
 
+function runtimePriceIntelligenceEnabled() {
+  const value = globalThis.window?.COLLECTFOLIO_CONFIG?.ENABLE_PRICE_INTELLIGENCE;
+  return value === undefined || !/^(0|false|no)$/i.test(String(value));
+}
+
 async function loadLocal() {
-  const [holdings, snapshots, settingsRecords, scans] = await Promise.all([
-    getAll('holdings'), getAll('snapshots'), getAll('settings'), getAll('scans')
+  const [holdings, snapshots, settingsRecords, scans, watchlistItems, alerts] = await Promise.all([
+    getAll('holdings'), getAll('snapshots'), getAll('settings'), getAll('scans'),
+    getAll('watchlistItems'), getAll('alerts')
   ]);
   const settings = { ...defaults, ...Object.fromEntries(settingsRecords.map((record) => [record.key, record.value])) };
   document.documentElement.dataset.theme = settings.theme;
-  setState({ holdings, snapshots: snapshots.sort((a, b) => a.date.localeCompare(b.date)), settings, scanDraftCount: scans.filter((scan) => scan.status !== 'complete').length, ready: true });
+  setState({
+    holdings,
+    snapshots: currentPricingSnapshots(snapshots).sort((a, b) => a.date.localeCompare(b.date)),
+    watchlistItems: watchlistItems.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))),
+    alerts: alerts.sort((a, b) => String(b.triggeredAt).localeCompare(String(a.triggeredAt))),
+    settings,
+    featureFlags: getState().featureFlags.loaded
+      ? getState().featureFlags
+      : { ...getState().featureFlags, watchlists: runtimePriceIntelligenceEnabled(), publicPriceIntelligence: false },
+    scanDraftCount: scans.filter((scan) => scan.status !== 'complete').length,
+    ready: true
+  });
 }
 
 function initializeAuth() {
@@ -63,6 +90,63 @@ function initializeAuth() {
     else if (callback.session && location.hash) showToast('Supabase sign-in completed');
   } catch (error) {
     showToast(error.message || 'Could not restore cloud session', 'error');
+  }
+}
+
+async function loadFeatureFlags() {
+  const runtimeEnabled = runtimePriceIntelligenceEnabled();
+  let remote = {};
+  if (runtimeEnabled) {
+    try { remote = await fetchPublicFeatureFlags(); } catch { /* Foundation migration may not be deployed yet. */ }
+  }
+  setState({ featureFlags: {
+    watchlists: runtimeEnabled && (remote.watchlists ?? true),
+    publicPriceIntelligence: runtimeEnabled && Boolean(remote.public_price_intelligence),
+    loaded: true
+  } });
+}
+
+let intelligenceHydrationId = 0;
+
+async function hydrateIntelligence() {
+  const hydrationId = ++intelligenceHydrationId;
+  const state = getState();
+  const variantIds = intelligenceVariantIds(state.holdings, state.watchlistItems);
+  if (!variantIds.length || !state.featureFlags.publicPriceIntelligence) {
+    setState({ intelligence: { ...state.intelligence, byVariant: {}, loading: false, error: '' } });
+    return;
+  }
+  const cached = await loadCachedIntelligence(variantIds);
+  if (hydrationId !== intelligenceHydrationId) return;
+  setState({ intelligence: { ...getState().intelligence, byVariant: cached, loading: true, error: '' } });
+  try {
+    const fresh = await refreshPublishedIntelligence(variantIds);
+    if (hydrationId !== intelligenceHydrationId) return;
+    const now = new Date().toISOString();
+    const current = getState();
+    const byVariant = { ...cached, ...fresh };
+    const evaluated = evaluateWatchlistAlerts(current.watchlistItems, byVariant, now);
+    const changedItems = evaluated.items.filter((entry, index) => entry !== current.watchlistItems[index]);
+    await Promise.all([
+      ...changedItems.map((entry) => putRecord('watchlistItems', entry)),
+      ...evaluated.alerts.map((entry) => putRecord('alerts', entry))
+    ]);
+    const alerts = [...new Map([...current.alerts, ...evaluated.alerts].map((entry) => [entry.id, entry])).values()]
+      .sort((left, right) => String(right.triggeredAt).localeCompare(String(left.triggeredAt)));
+    setState({ intelligence: {
+      byVariant,
+      loading: false,
+      error: '',
+      lastRefresh: now
+    }, watchlistItems: evaluated.items, alerts });
+    if (evaluated.alerts.length) showToast(`${evaluated.alerts.length} Watchlist alert${evaluated.alerts.length === 1 ? '' : 's'} triggered`);
+  } catch (error) {
+    if (hydrationId !== intelligenceHydrationId) return;
+    setState({ intelligence: {
+      ...getState().intelligence,
+      loading: false,
+      error: error.message || 'Price intelligence could not be refreshed.'
+    } });
   }
 }
 
@@ -79,6 +163,7 @@ function option(value, selected, label = value) {
 function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Approve custom holding', image = '', item: proposedItem = null } = {}) {
   const item = holding?.item || proposedItem || {};
   const category = item.category || 'other';
+  const visiblePriceOptions = catalogPriceOptionsForDisplay(item);
   const content = `<form id="holding-form">
     <div class="field-grid">
       <label class="span-all">Name<input name="name" required maxlength="160" value="${escapeAttribute(item.name || '')}" placeholder="e.g. 1989 Ken Griffey Jr. rookie"></label>
@@ -88,7 +173,7 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
       <label>Number / issue<input name="number" maxlength="50" value="${escapeAttribute(item.number || '')}"></label>
       <label>Variant / rarity<input name="variant" maxlength="100" value="${escapeAttribute(item.variant || '')}"></label>
       <label>Year<input name="year" inputmode="numeric" maxlength="4" value="${escapeAttribute(item.year || '')}"></label>
-      ${item.priceOptions?.length ? `<label class="span-all">Variant / finish and provider price<select name="finish">${item.priceOptions.map((entry, index) => `<option value="${index}" ${entry.finish === item.variant ? 'selected' : ''}>${escapeHTML(entry.finish)} — ${escapeHTML(String(entry.price))} ${escapeHTML(item.currency || 'USD')}</option>`).join('')}</select><span class="fine-print">Changing finish snapshots that price; the full provider options remain stored.</span></label>` : ''}
+      ${visiblePriceOptions.length ? `<label class="span-all">Variant / finish and provider price<select name="finish">${visiblePriceOptions.map((entry, index) => `<option value="${index}" ${entry.finish === item.variant ? 'selected' : ''}>${escapeHTML(entry.finish)} — ${escapeHTML(String(entry.price))} ${escapeHTML(item.currency || 'USD')}</option>`).join('')}</select><span class="fine-print">Changing finish snapshots that price; the full provider options remain stored.</span></label>` : ''}
       <label>Quantity<input name="quantity" type="number" min="1" step="1" value="${escapeAttribute(holding?.quantity || 1)}" required></label>
       <label>Condition<select name="condition">${['Mint','Near Mint','Excellent','Good','Played','Poor','Graded'].map((value) => option(value, holding?.condition || 'Near Mint')).join('')}</select></label>
       <label>Grade company<input name="gradeCompany" maxlength="40" value="${escapeAttribute(holding?.gradeCompany || '')}" placeholder="PSA, CGC, BGS"></label>
@@ -114,7 +199,7 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
         const file = form.elements.photo.files[0];
         const userImage = file ? await fileToPortfolioImage(file) : data.existingImage;
         const providerItem = holding?.item || proposedItem || {};
-        const finish = providerItem.priceOptions?.[Number(data.finish)];
+        const finish = isRestrictedCatalogPrice(providerItem) ? null : providerItem.priceOptions?.[Number(data.finish)];
         await saveHolding({
           ...holding,
           item: { ...providerItem, id: providerItem.id || createId(), externalId: providerItem.externalId || '', provider: providerItem.provider || 'custom', category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: finish?.finish || data.variant, rarity: providerItem.rarity || '', year: data.year, image: providerItem.image || '', imageSmall: providerItem.imageSmall || '', price: finish?.price ?? providerItem.price ?? null, priceOptions: providerItem.priceOptions || [], currency: providerItem.currency || 'USD', priceSource: providerItem.priceSource || '', priceUrl: providerItem.priceUrl || '', priceUpdatedAt: providerItem.priceUpdatedAt || '' },
@@ -124,6 +209,7 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
         });
         closeModal();
         await loadLocal();
+        await hydrateIntelligence();
         showToast(holding ? 'Holding updated' : `${data.name} added with your approval`);
       } catch (error) {
         showToast(error.message || 'Could not save holding', 'error');
@@ -147,6 +233,7 @@ async function confirmDelete(id) {
       await removeHolding(id);
       closeModal();
       await loadLocal();
+      await hydrateIntelligence();
       showToast('Holding deleted');
     });
   }});
@@ -163,6 +250,7 @@ async function importJSON(file) {
   try {
     await importBackup(JSON.parse(await file.text()));
     await loadLocal();
+    await hydrateIntelligence();
     showToast('Backup merged into this device');
   } catch (error) {
     showToast(error.message || 'Backup import failed', 'error');
@@ -187,7 +275,7 @@ async function loadDemo() {
     const date = new Date(now);
     date.setDate(date.getDate() - day * 20);
     const factor = 1 - day * 0.06;
-    await putRecord('snapshots', { id: `portfolio:${date.toISOString().slice(0, 10)}`, date: date.toISOString().slice(0, 10), marketValue: 1332 * factor, costBasis: day > 2 ? 585 : 860, uniqueItems: day > 2 ? 3 : 4, totalQuantity: day > 2 ? 3 : 4, updatedAt: date.toISOString() });
+    await putRecord('snapshots', { id: `portfolio:${date.toISOString().slice(0, 10)}`, date: date.toISOString().slice(0, 10), pricingPolicyVersion: PRICING_POLICY_VERSION, marketValue: 1332 * factor, costBasis: day > 2 ? 585 : 860, uniqueItems: day > 2 ? 3 : 4, totalQuantity: day > 2 ? 3 : 4, updatedAt: date.toISOString() });
   }
   await loadLocal();
   showToast('Demo collection loaded');
@@ -234,6 +322,7 @@ function confirmClear() {
       await clearLocalData();
       closeModal();
       await loadLocal();
+      await hydrateIntelligence();
       showToast('Local CollectFolio data cleared');
     });
   }});
@@ -274,14 +363,110 @@ function openAuth() {
 async function syncNow() {
   setState({ auth: { ...getState().auth, syncing: true } });
   try {
-    const result = await syncPortfolio();
+    const result = await syncAll();
     await loadLocal();
-    showToast(`Synced ${result.holdings} holdings and ${result.deletions} deletion tombstones${result.omittedImages ? `; ${result.omittedImages} large crops stayed local` : ''}`);
+    await hydrateIntelligence();
+    const watchlist = result.watchlist ? `, ${result.watchlist.items} watched cards, and ${result.watchlist.deletions} watch tombstones` : '';
+    showToast(`Synced ${result.holdings} holdings and ${result.deletions} deletion tombstones${watchlist}${result.omittedImages ? `; ${result.omittedImages} large crops stayed local` : ''}`);
+    if (result.watchlistError) showToast(`Portfolio synced; ${result.watchlistError}`, 'warning', 8000);
   } catch (error) {
     showToast(error.message || 'Cloud sync failed', 'error', 8000);
   } finally {
     setState({ auth: { ...getState().auth, syncing: false } });
   }
+}
+
+async function requestPriceRefreshAction() {
+  setState({ auth: { ...getState().auth, refreshingPrices: true } });
+  try {
+    const result = await requestPriceRefresh();
+    // Deliberately no loadLocal()/hydrateIntelligence() here: this request
+    // never writes anything local, and nothing about a displayed price
+    // changes — it only asks the private research collector to prioritize
+    // these cards on its next pass.
+    showToast(result.message, result.outcome === 'ok' ? 'success' : 'warning', 8000);
+  } catch (error) {
+    showToast(error.message || 'Price refresh request failed', 'error', 8000);
+  } finally {
+    setState({ auth: { ...getState().auth, refreshingPrices: false } });
+  }
+}
+
+async function toggleWatchedItem(item, options = {}) {
+  if (!item || getState().featureFlags.watchlists === false) return;
+  const existing = findWatchedItem(getState().watchlistItems, item, options);
+  if (existing) {
+    await unwatchItem(existing.watchKey);
+    showToast('Removed from Watchlist');
+  } else {
+    await watchItem(item, options);
+    showToast('Added to Watchlist');
+  }
+  await loadLocal();
+  await hydrateIntelligence();
+}
+
+async function chooseWatchVariant(item) {
+  const finishes = catalogPriceOptionsForDisplay(item);
+  if (finishes.length <= 1) {
+    await toggleWatchedItem(item);
+    return;
+  }
+  const options = finishes.map((finish, index) => {
+    const candidate = { ...item, variant: finish.finish, finish: finish.finish, price: finish.price };
+    const watching = Boolean(findWatchedItem(getState().watchlistItems, candidate));
+    return `<option value="${index}">${escapeHTML(finish.finish)} — ${escapeHTML(String(finish.price))} ${escapeHTML(item.currency || 'USD')}${watching ? ' · Watching' : ''}</option>`;
+  }).join('');
+  openModal({
+    title: 'Choose exact finish to watch',
+    content: `<form id="watch-finish-form"><label>Variant / finish<select name="finish">${options}</select></label><p class="fine-print">Each finish is tracked independently. Selecting one already watched will remove it.</p></form>`,
+    actions: '<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="watch-finish-form">Update Watchlist</button>',
+    onOpen(layer) {
+      layer.querySelector('#watch-finish-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const finish = finishes[Number(new FormData(event.currentTarget).get('finish'))];
+        if (!finish) return;
+        closeModal();
+        await toggleWatchedItem({ ...item, variant: finish.finish, finish: finish.finish, price: finish.price, priceSource: finish.source || item.priceSource });
+      });
+    }
+  });
+}
+
+function watchlistPreferencesForm(entry) {
+  const content = `<form id="watch-preferences-form"><div class="field-grid">
+    <label>Target price<input name="targetPrice" type="number" min="0" step="0.01" value="${escapeAttribute(entry.targetPrice ?? '')}"></label>
+    <label>Percent-change alert<input name="alertPercentChange" type="number" min="0" step="0.1" value="${escapeAttribute(entry.alertPercentChange ?? '')}"></label>
+    <label class="checkbox"><input name="alertTrendChange" type="checkbox" ${entry.alertTrendChange ? 'checked' : ''}> Trend changes</label>
+    <label class="checkbox"><input name="alertRangeChange" type="checkbox" ${entry.alertRangeChange ? 'checked' : ''}> Fair-value position changes</label>
+    <label class="checkbox"><input name="alertForecastChange" type="checkbox" ${entry.alertForecastChange ? 'checked' : ''}> Forecast changes</label>
+    <label class="span-all">Notes<textarea name="notes" maxlength="2000">${escapeHTML(entry.notes || '')}</textarea></label>
+  </div><p class="fine-print">Preferences are saved now. Signal alerts are evaluated only after approved intelligence data becomes available.</p></form>`;
+  openModal({
+    title: `Watch settings · ${entry.catalogRef?.name || 'Card'}`,
+    content,
+    actions: '<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="watch-preferences-form">Save preferences</button>',
+    onOpen(layer) {
+      layer.querySelector('#watch-preferences-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const data = Object.fromEntries(new FormData(form));
+        await watchItem({ ...entry.catalogRef, variant: entry.catalogRef.finish }, {
+          canonicalVariantId: entry.canonicalVariantId,
+          conditionClass: entry.catalogRef.conditionClass,
+          targetPrice: data.targetPrice,
+          alertPercentChange: data.alertPercentChange,
+          alertTrendChange: form.elements.alertTrendChange.checked,
+          alertRangeChange: form.elements.alertRangeChange.checked,
+          alertForecastChange: form.elements.alertForecastChange.checked,
+          notes: data.notes
+        });
+        closeModal();
+        await loadLocal();
+        showToast('Watch preferences saved');
+      });
+    }
+  });
 }
 
 function chooseScanImage(single) {
@@ -359,6 +544,11 @@ function customCropForm(cropId) {
 root.addEventListener('click', async (event) => {
   const go = event.target.closest('[data-go]');
   if (go) { navigate(go.dataset.go); return; }
+  const section = event.target.closest('[data-portfolio-section]');
+  if (section) {
+    setState({ portfolio: { ...getState().portfolio, section: section.dataset.portfolioSection } });
+    return;
+  }
   const action = event.target.closest('[data-action]');
   if (!action) return;
   const id = action.dataset.id;
@@ -369,6 +559,40 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'add-catalog') {
     const item = getState().search.results[Number(action.dataset.index)];
     if (item) holdingForm(null, { title: 'Review catalog match', item });
+  }
+  if (action.dataset.action === 'toggle-watch') {
+    let item = null;
+    let options = {};
+    let chooseFinish = false;
+    if (action.dataset.index !== undefined) {
+      item = getState().search.results[Number(action.dataset.index)];
+      chooseFinish = catalogPriceOptionsForDisplay(item).length > 1;
+    }
+    if (action.dataset.holdingId) {
+      const holding = getState().holdings.find((entry) => entry.id === action.dataset.holdingId);
+      item = holding?.item;
+      options = { canonicalVariantId: holding?.canonicalVariantId, conditionClass: holding?.grade ? 'graded' : 'raw' };
+    }
+    if (action.dataset.cropWatch && activeDraft) {
+      const crop = activeDraft.crops.find((entry) => entry.id === action.dataset.cropWatch);
+      item = crop?.customItem || crop?.candidates.find((candidate) => candidate.id === crop.selectedId);
+      chooseFinish = catalogPriceOptionsForDisplay(item).length > 1;
+    }
+    if (chooseFinish) await chooseWatchVariant(item); else await toggleWatchedItem(item, options);
+  }
+  if (action.dataset.action === 'remove-watch') {
+    await unwatchItem(action.dataset.watchKey);
+    await loadLocal();
+    await hydrateIntelligence();
+    showToast('Removed from Watchlist');
+  }
+  if (action.dataset.action === 'edit-watch') {
+    const watched = getState().watchlistItems.find((entry) => entry.watchKey === action.dataset.watchKey);
+    if (watched) watchlistPreferencesForm(watched);
+  }
+  if (action.dataset.action === 'add-watched') {
+    const watched = getState().watchlistItems.find((entry) => entry.watchKey === action.dataset.watchKey);
+    if (watched) holdingForm(null, { title: 'Add watched card to portfolio', item: { ...watched.catalogRef, variant: watched.catalogRef.finish, canonicalVariantId: watched.canonicalVariantId } });
   }
   if (action.dataset.action === 'edit-holding') holdingForm(getState().holdings.find((entry) => entry.id === id));
   if (action.dataset.action === 'delete-holding') confirmDelete(id);
@@ -383,6 +607,7 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'clear-data') confirmClear();
   if (action.dataset.action === 'open-auth') openAuth();
   if (action.dataset.action === 'sync-now') syncNow();
+  if (action.dataset.action === 'request-price-refresh') requestPriceRefreshAction();
   if (action.dataset.action === 'sign-out') { await signOut(); setState({ auth: { session: null, syncing: false } }); showToast('Signed out; local portfolio is unchanged'); }
   if (action.dataset.action === 'refresh-prices') refreshPrices();
   if (action.dataset.action === 'start-multi-scan') chooseScanImage(false);
@@ -408,6 +633,7 @@ root.addEventListener('click', async (event) => {
     const count = await batchAddApproved(activeDraft);
     activeDraft = null;
     await loadLocal();
+    await hydrateIntelligence();
     navigate('portfolio');
     showToast(`${count} explicitly approved crop${count === 1 ? '' : 's'} added`);
   }
@@ -454,7 +680,7 @@ document.querySelector('.bottom-nav').addEventListener('click', (event) => {
 subscribe(render);
 render();
 initializeAuth();
-loadLocal().catch((error) => {
+loadLocal().then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
   setState({ ready: true });
   showToast(error.message || 'Could not open local portfolio', 'error', 8000);
 });

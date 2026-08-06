@@ -1,5 +1,7 @@
 import { dataUrlBytes } from '../core/utils.js';
+import { isUUID } from '../core/catalog-identity.js';
 import { deleteRecord, getAll, putRecord, recordDailySnapshot } from '../core/db.js';
+import { mergeWatchlistItems, mergeWatchlistTombstones } from './watchlist.js';
 
 const SESSION_KEY = 'collectfolio:supabase-session';
 const INLINE_IMAGE_LIMIT = 180 * 1024;
@@ -10,6 +12,41 @@ function config() {
 
 export function isSupabaseConfigured() {
   return Boolean(config().SUPABASE_URL && config().SUPABASE_ANON_KEY);
+}
+
+export async function fetchPublicFeatureFlags() {
+  if (!isSupabaseConfigured()) return {};
+  const rows = await request('/rest/v1/product_feature_flags?select=key,enabled,updated_at');
+  return Object.fromEntries((rows || []).map((row) => [row.key, Boolean(row.enabled)]));
+}
+
+export function normalizeIntelligencePublication(row = {}) {
+  const payload = row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : {};
+  return {
+    variantId: row.catalog_variant_id || '',
+    supportTier: Math.max(0, Math.min(5, Number(row.support_tier) || 0)),
+    status: row.publication_status || 'unsupported',
+    reasonCodes: Array.isArray(row.reason_codes) ? row.reason_codes.map(String) : [],
+    payload,
+    sourceAttributions: Array.isArray(row.source_attributions) ? row.source_attributions : [],
+    sourcePolicyHash: row.source_policy_hash || '',
+    payloadHash: row.payload_hash || '',
+    publishedAt: row.published_at || '',
+    expiresAt: row.expires_at || ''
+  };
+}
+
+export async function fetchPublishedIntelligence(variantIds = []) {
+  if (!isSupabaseConfigured()) return [];
+  const ids = [...new Set(variantIds.filter(isUUID).map((id) => id.toLowerCase()))];
+  if (!ids.length) return [];
+  const rows = [];
+  for (let index = 0; index < ids.length; index += 50) {
+    const batch = ids.slice(index, index + 50).join(',');
+    const path = `/rest/v1/card_intelligence_publications?catalog_variant_id=in.(${encodeURIComponent(batch)})&select=catalog_variant_id,support_tier,publication_status,reason_codes,payload,source_attributions,source_policy_hash,payload_hash,published_at,expires_at`;
+    rows.push(...await request(path));
+  }
+  return rows.map(normalizeIntelligencePublication);
 }
 
 function requireConfig() {
@@ -123,6 +160,43 @@ function holdingRow(holding, userId) {
   return { id: holding.id, user_id: userId, data, user_image: includeImage ? holding.userImage : null, updated_at: holding.updatedAt };
 }
 
+export function remoteWatchlistItem(row) {
+  const catalogRef = row.catalog_snapshot || {};
+  return {
+    id: row.watch_key,
+    watchKey: row.watch_key,
+    canonicalVariantId: row.catalog_variant_id || catalogRef.canonicalVariantId || '',
+    catalogRef,
+    targetPrice: row.target_price === null || row.target_price === undefined ? '' : Number(row.target_price),
+    alertPercentChange: row.alert_percent_change === null || row.alert_percent_change === undefined ? '' : Number(row.alert_percent_change),
+    alertTrendChange: Boolean(row.alert_trend_change),
+    alertRangeChange: Boolean(row.alert_range_change),
+    alertForecastChange: Boolean(row.alert_forecast_change),
+    notes: row.notes || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    dirty: false
+  };
+}
+
+export function watchlistRow(entry, userId, watchlistId) {
+  return {
+    watchlist_id: watchlistId,
+    user_id: userId,
+    watch_key: entry.watchKey,
+    catalog_variant_id: isUUID(entry.canonicalVariantId) ? entry.canonicalVariantId : null,
+    catalog_snapshot: entry.catalogRef || {},
+    target_price: entry.targetPrice === '' || entry.targetPrice === null || entry.targetPrice === undefined ? null : Number(entry.targetPrice),
+    alert_percent_change: entry.alertPercentChange === '' || entry.alertPercentChange === null || entry.alertPercentChange === undefined ? null : Number(entry.alertPercentChange),
+    alert_trend_change: Boolean(entry.alertTrendChange),
+    alert_range_change: Boolean(entry.alertRangeChange),
+    alert_forecast_change: Boolean(entry.alertForecastChange),
+    notes: entry.notes || '',
+    created_at: entry.createdAt,
+    updated_at: entry.updatedAt
+  };
+}
+
 function jwtSubject(token) {
   const segment = token?.split('.')[1];
   if (!segment) throw new Error('Supabase session token is invalid. Sign in again.');
@@ -161,4 +235,70 @@ export async function syncPortfolio() {
   for (const tombstone of tombstones) await putRecord('deletions', { ...tombstone, dirty: false });
   await recordDailySnapshot();
   return { holdings: merged.length, deletions: tombstones.length, omittedImages: merged.filter((holding) => holding.userImage && dataUrlBytes(holding.userImage) > INLINE_IMAGE_LIMIT).length };
+}
+
+export async function syncWatchlist() {
+  const session = await validSession();
+  const userId = session.user?.id || jwtSubject(session.access_token);
+  const watchlistId = await request('/rest/v1/rpc/get_or_create_default_watchlist', {
+    method: 'POST', session, body: {}
+  });
+  if (!isUUID(watchlistId)) throw new Error('Cloud watchlist setup returned an invalid identifier.');
+
+  const encodedWatchlistId = encodeURIComponent(watchlistId);
+  const [localItems, localTombstones, remoteRows, remoteDeletionRows] = await Promise.all([
+    getAll('watchlistItems'),
+    getAll('watchlistDeletions'),
+    request(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at`, { session }),
+    request(`/rest/v1/watchlist_deletions?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,deleted_at`, { session })
+  ]);
+
+  const remoteItems = (remoteRows || []).map(remoteWatchlistItem);
+  const remoteTombstones = (remoteDeletionRows || []).map((row) => ({
+    id: row.watch_key, deletedAt: row.deleted_at, dirty: false
+  }));
+  const tombstones = mergeWatchlistTombstones(localTombstones, remoteTombstones);
+
+  if (tombstones.length) {
+    await request('/rest/v1/watchlist_deletions?on_conflict=watchlist_id,watch_key', {
+      method: 'POST', session,
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: tombstones.map((entry) => ({
+        watchlist_id: watchlistId,
+        user_id: userId,
+        watch_key: entry.id,
+        deleted_at: entry.deletedAt,
+        updated_at: entry.deletedAt
+      }))
+    });
+  }
+
+  const deletedKeys = new Set(tombstones.map((entry) => entry.id));
+  for (const watchKey of deletedKeys) {
+    await deleteRecord('watchlistItems', watchKey);
+    await request(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&watch_key=eq.${encodeURIComponent(watchKey)}`, {
+      method: 'DELETE', session, headers: { Prefer: 'return=minimal' }
+    });
+  }
+
+  const merged = mergeWatchlistItems(localItems, remoteItems, deletedKeys);
+  for (const entry of merged) await putRecord('watchlistItems', { ...entry, dirty: false });
+  if (merged.length) {
+    await request('/rest/v1/watchlist_items?on_conflict=watchlist_id,watch_key', {
+      method: 'POST', session,
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: merged.map((entry) => watchlistRow(entry, userId, watchlistId))
+    });
+  }
+  for (const tombstone of tombstones) await putRecord('watchlistDeletions', { ...tombstone, dirty: false });
+  return { items: merged.length, deletions: tombstones.length };
+}
+
+export async function syncAll() {
+  const portfolio = await syncPortfolio();
+  try {
+    return { ...portfolio, watchlist: await syncWatchlist(), watchlistError: '' };
+  } catch (error) {
+    return { ...portfolio, watchlist: null, watchlistError: error.message || 'Watchlist sync is not available.' };
+  }
 }

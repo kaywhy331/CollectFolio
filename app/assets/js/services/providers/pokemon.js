@@ -6,7 +6,10 @@ const fallbackEndpoint = 'https://api.tcgdex.net/v2/en/cards';
 const fallbackSetEndpoint = 'https://api.tcgdex.net/v2/en/sets';
 // Request only fields CollectFolio uses. The full card payload is large enough
 // to make otherwise valid broad searches intermittently fail at the provider.
-const SELECT_FIELDS = 'id,name,number,rarity,set,images,tcgplayer';
+// Pricing embedded by this catalog API is TCGplayer/Cardmarket-derived and is
+// not part of CollectFolio's approved publication plane. Keep catalog discovery
+// metadata-only; licensed values arrive through rights-gated publications.
+const SELECT_FIELDS = 'id,name,number,rarity,set,images';
 const PAGE_SIZE = 250;
 const MAX_RESULTS = 500;
 const FETCH_OPTIONS = { retries: 3, retryDelay: 250 };
@@ -205,13 +208,6 @@ export function clearPokemonSetCache() {
 }
 
 export function normalizePokemonCard(card) {
-  const priceOptions = Object.entries(card?.tcgplayer?.prices || {}).flatMap(([finish, fields]) => {
-    const price = fields?.market ?? fields?.mid ?? fields?.low ?? fields?.high;
-    return price !== null && price !== undefined && price !== '' && Number.isFinite(Number(price))
-      ? [{ finish, price: Number(price), source: 'TCGplayer market' }]
-      : [];
-  });
-  const preferred = priceOptions.find((option) => option.finish === 'normal') || priceOptions[0];
   return {
     id: `pokemon:${card.id}`,
     externalId: String(card.id),
@@ -221,17 +217,17 @@ export function normalizePokemonCard(card) {
     name: card.name || 'Unnamed Pokémon card',
     setName: card.set?.name || '',
     number: card.number || '',
-    variant: preferred?.finish || '',
+    variant: '',
     rarity: card.rarity || '',
     year: card.set?.releaseDate?.slice(0, 4) || '',
     image: card.images?.large || card.images?.small || '',
     imageSmall: card.images?.small || card.images?.large || '',
-    price: preferred?.price ?? null,
-    priceOptions,
+    price: null,
+    priceOptions: [],
     currency: 'USD',
-    priceSource: preferred ? 'Pokémon TCG API · TCGplayer market' : '',
-    priceUrl: card.tcgplayer?.url || '',
-    priceUpdatedAt: card.tcgplayer?.updatedAt || ''
+    priceSource: '',
+    priceUrl: '',
+    priceUpdatedAt: ''
   };
 }
 

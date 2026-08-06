@@ -41,6 +41,7 @@ The product is being delivered in a free-first sequence that protects the core i
 - [x] Local query cache.
 - [x] Variant/finish price selection.
 - [x] Explicit price source and update disclosure.
+- [x] Keep Pokémon catalog lookup metadata-only and exclude legacy TCGplayer/Cardmarket-derived values, finish selectors, and unversioned historical snapshots from display or valuation until a licensed publication exists.
 - [x] Manual universal entry for sports, comics, and other collectibles.
 
 ## Milestone 4 — image ingestion
@@ -131,9 +132,110 @@ Before inviting testers:
 12. Install the PWA on Android/Chrome and iOS/Safari.
 13. Confirm service worker update after incrementing its cache version.
 
+## Milestone 7 — price-intelligence foundation
+
+- [x] Preserve the five-action shell and add Holdings, Watchlist, and Forecasts inside Portfolio.
+- [x] Add offline exact-variant watch/unwatch from Search, holdings, and scan review.
+- [x] Upgrade IndexedDB to version 3 with tombstone-safe watchlists and version 2 backup export.
+- [x] Add provider-to-canonical identity bridge without rewriting existing holding IDs.
+- [x] Add cloud watchlist LWW synchronization with corrected composite-owner foreign keys and RLS.
+- [x] Add versioned source-rights governance and a narrow public publication boundary.
+- [x] Add cached rights-filtered publication hydration and reject malformed or over-tier payload layers in the browser.
+- [x] Add a dependency-free point-in-time analytics core with robust trends, required baselines, walk-forward leakage/evaluation gates, scarcity math, quantile gates, and `video_model_v0` audit reproduction.
+- [x] Add synthetic analytics regression tests and an isolated Python 3.12 CI workflow.
+- [x] Add runtime/server rollback flags and explicit unsupported/research-gated states.
+- [x] Review and apply migrations 0002 through 0004 to the hosted project.
+- [x] Add and apply migration 0005 for append-only private model, prediction, evaluation, scorecard, and promotion-review evidence.
+- [x] Implement migration 0006 governance hardening: server read kill switch, immutable reviews, versioned mapping correction, Scored/Unscorable evidence, exact scorecard membership/policy, authenticated model review, and rollback receipts.
+- [ ] Back up the hosted project, rehearse migration 0006, apply it, and verify the 36-table RLS/ACL inventory. Do not infer this gate from the checked-in SQL.
+- [x] Qualify two-account/two-client Watchlist RLS and tombstone behavior after migration.
+- [x] Qualify one exact-mapped TCGCSV cohort across 53 bounded weekly archives and retain accepted/outlier evidence privately.
+- [x] Build and persist a point-in-time private trend snapshot plus research-only baseline forecasts at all five horizons.
+- [x] Run 42 honest retrospective walk-forward origins, persist matured evaluations/scorecards after rollback rehearsal, and retain the model's negative result without promotion.
+- [ ] Approve a production market-history source before enabling public price intelligence.
+- [x] Select JustTCG paid API as the preferred production path and implement its bounded, credential-free test adapter.
+- [x] Add a private, user-triggered companion path (`justtcg-refresh`) that prioritizes a signed-in collector's own held/watched cards inside the same private Blobs boundary, self-limited and read-only against the scheduled crawl's own quota so it cannot drive it into a terminal exhausted state; unmapped cards fall through to zero-extra-cost candidate generation, never a fetch. See docs/JUSTTCG_ONDEMAND_REFRESH.md.
+- [ ] Purchase the paid plan, archive the accepted terms, activate an immutable approved review, and provision the server-side API secret.
+
 ## Recommended next build increment
 
-The highest-leverage next increment is **recognition benchmarking**, not more features. Create a controlled dataset of at least 100 images across:
+The private research and descriptive-trend implementation is code-complete and connected to one explicitly research-only source cohort. This does not make the source rights-cleared for public or commercial use:
+
+- [x] Deterministic canonical Pokémon set/card/finish identities and database packets.
+- [x] Exact source-to-variant mapping candidates with review and quarantine evidence.
+- [x] Private append-oriented observations, data-quality events, analytics runs, trend snapshots, and review ledgers in migration 0003.
+- [x] Explicit missing, late-arriving, invalid, stale, and MAD-outlier handling.
+- [x] 7/30/90/180/365-day descriptive trend metrics.
+- [x] Rights-gated Tier 0–2 publication candidates with no fair-value or forecast keys.
+- [x] End-to-end synthetic qualification and an operator runbook.
+- [x] Apply migrations 0002 through 0004 to the hosted project after backup and rollback rehearsal.
+- [x] Complete two-account/two-client Watchlist RLS and tombstone qualification.
+- [x] Add bounded live/current and 53-week archive adapters with artifact/snapshot hashes and point-in-time availability.
+- [x] Review the first exact product/finish identity and ingest its historical observation ledger with outlier evidence.
+- [x] Add private model/prediction/evaluation/scorecard tables and persist one uncalibrated baseline forecast origin.
+- [x] Add a separate `retrospective_walk_forward` model and persist point-in-time forecasts, matured targets, and scorecards without backdating or automatic review.
+- [x] Preregister future retrospective origins at 30-day spacing, require all five PRD baselines, persist exact evaluation membership/policy hashes, and emit immutable Unscorable rows.
+- [x] Identify JustTCG paid API as the preferred production market-history source and document its current display/derived/storage contract.
+- [ ] Independently activate the paid subscription and exact live permissions; the checked-in candidate review remains `pending`.
+- [x] Run the first real-source mapping/observation packet and review every initial mapping in the selected one-card cohort.
+- [ ] Qualify a real descriptive payload before separately enabling `public_price_intelligence`.
+
+Do not treat the private baseline as production forecasting. Scheduled no-secret research execution, monitoring, and local approved-publication alert evaluation are implemented, but licensed service-role data persistence is intentionally absent. The JustTCG adapter is ready for a paid/current approved source but has no key or scheduled write. Fair value remains unimplemented. The first real walk-forward evidence rejects or finds insufficient the current baseline and predates the new 30-day/five-baseline evidence contract. Forecast promotion now requires new prospective or properly held-out multi-card evidence, all five baseline comparisons, positive lift over no-change and the strongest challenger, adequate cases, calibrated intervals/probabilities, an authenticated operator model-card review, and independent source-rights approval.
+
+## Hosted price-intelligence qualification — August 5, 2026
+
+- Supabase project `agmjgyyvhfcivbwdlvzk` records migrations 0001 through 0005. Migrations 0002 through 0005 were rehearsed against the hosted PostgreSQL instance inside rollback transactions before application.
+- A read-only 0006 preflight found zero invalid terms-document hashes, zero missing required attributions, zero rights-bearing non-approved reviews, one legacy static model requiring the migration's digest-to-definition backfill, and one mapping row. `db push --dry-run` reports only 0006 pending; neither check executes or applies the migration.
+- The project reported WAL-G enabled but no physical backup and no PITR. Two permission-restricted logical backups were retained; they do not replace an Auth/storage-aware physical project backup.
+- All 34 public tables present before migration 0006 have Row Level Security enabled. Restricted browser grants remain zero, private forecast tables are service-role SELECT/INSERT only, and the forecast trigger helper is unavailable to every API role. This is historical hosted evidence, not proof of the pending 36-table post-0006 inventory.
+- Disposable Watchlist accounts passed the two-user/two-client isolation and tombstone qualification, then were removed with zero QA residue.
+- TCGCSV is active only under review `3bc792cf-ad71-54d1-a2f6-d5d5d521fba5`, decision `research_only`, expiry `2026-11-03T20:30:00Z`, with commercial/catalog/raw/derived public permissions all false. The exact reviewed cohort is product `590027` / Holofoil mapped to variant `80b4934a-96db-5f4c-8641-f7c74e0eb949`.
+- The initial guarded SQL transaction was executed with `ROLLBACK`, proved to leave zero target rows, then committed unchanged. The observation ledger contains 53 weekly rows (41 accepted, 12 outlier), the accepted current `$310.79` row, 12 quality events, one stable current snapshot, and five original research-only horizon predictions.
+- A second packet followed the same rollback/zero-residue/commit gate. Legacy packet `72df5fb8417786a83fcd480cff314c2565fa130f8976391e264ea4e6b9d89cf3` added separate model `0f5c8ed2-089e-5f76-844f-d89f77d040aa`, 43 analytics runs, 42 historical-origin snapshots, 210 explicitly retrospective predictions (200 research-only, 10 quarantined), 109 evaluations, and four scorecards. Timestamp and required-label violations are zero. It predates the 30-day origin, five-baseline, and immutable Unscorable/membership policy and is not promotion-eligible.
+- The 7-day scorecard has 36 eligible cases and recommends `reject`; its baseline-relative lift is `-1.24%` and 80% interval coverage is `55.56%`. The 30/90/180-day scorecards have 27/21/16 cases and are `insufficient`; all have negative lift and under-coverage. No scorecard is eligible for operator promotion review, and no `model_promotion_reviews` row was created.
+- No public row exists for the variant, `intelligence_publication_is_permitted(...)` is false, `watchlists=true`, and `public_price_intelligence=false`. No descriptive, fair-value, or predictive payload has been published.
+
+## On-demand JustTCG refresh — August 6, 2026
+
+- Added a second, user-triggered path onto the existing private JustTCG
+  collection: `netlify/functions/justtcg-refresh.mjs`, orchestrated by
+  `netlify/lib/justtcg-ondemand-collector.mjs`, storing only under a new
+  `ondemand/` prefix in the same `collectfolio-justtcg-private` Blobs store
+  the scheduled crawl already uses. No Supabase write path, no service-role
+  credential, and no change to `public_price_intelligence` anywhere in this
+  path — see docs/JUSTTCG_ONDEMAND_REFRESH.md for the full boundary.
+- Cards are identified by `(provider, externalId, language, finish,
+  conditionClass)` — the same tuple `catalog-identity.js` already uses for
+  its watch key — hashed before it ever reaches a Blobs key, since
+  `canonicalVariantId` is not populated anywhere yet and the raw identity
+  fields originate in client-controlled `jsonb` columns.
+- A card is only fetched directly against a private, operator-seeded
+  identifier ledger (never the real `external_card_mappings`/
+  `catalog_mapping_candidates` tables, which have no anon/authenticated
+  grants and whose insert paths require rows — an active JustTCG terms
+  review, a populated `catalog_variants` — that don't exist yet). Unmapped
+  cards only ever produce an explicitly-labeled, unreviewed candidate from a
+  zero-extra-API-cost scan of already-crawled pages; nothing is ever
+  auto-promoted or auto-fetched from a candidate.
+- Quota, per-minute, and per-user limits are reserved and released
+  atomically through one `control.json` object, and the feature reads (but
+  never writes) the scheduled crawl's own durable state as a reserve-floor
+  guard, because that crawl's `quota_exhausted`/`blocked` states are
+  permanently terminal — this path must yield headroom, not just track a
+  separate budget alongside it.
+- `npm run check` passes locally: validation (71 required files), the full
+  106-test Node suite (22 new tests covering the lookup adapter and
+  orchestrator — concurrent-claim exclusivity, quota/reserve-floor/per-user
+  limits, failure backoff without refund, candidate generation, and a
+  price-free response-shape guarantee — plus the pre-existing 84 unchanged),
+  the 106-test Python analytics suite, and the production build. This is
+  implementation and local qualification only — no deploy, no live JustTCG
+  request, and no hosted Blobs verification have been performed yet; the
+  same post-deploy checks documented for the scheduled collector in
+  docs/NETLIFY_DEPLOY.md still apply before this is considered
+  hosted-qualified.
+
+Recognition benchmarking remains valuable in parallel. Its controlled dataset should include:
 
 - single clean card;
 - multiple cards on contrasting and difficult backgrounds;

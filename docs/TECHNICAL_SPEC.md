@@ -1,8 +1,8 @@
 # CollectFolio Technical Specification
 
-**Version:** 0.1  
+**Version:** 0.4
 **Target:** Static Netlify PWA + optional Supabase  
-**Runtime:** Modern evergreen browsers; Node.js 20+ for build/test scripts
+**Runtime:** Modern evergreen browsers; Node.js 22+ and Python 3.11+ for complete checks
 
 ## 1. Architecture decision
 
@@ -31,6 +31,8 @@ Browser PWA
 
 No Netlify Function, Edge Function, server-side renderer, paid inference endpoint, or required application server exists in the MVP.
 
+The standard-library Python package under `analytics/` is research and CI infrastructure. It is not shipped to the browser, does not ingest live provider data, and cannot publish intelligence.
+
 ## 2. Repository layout
 
 ```text
@@ -45,6 +47,9 @@ app/
       app.js                  # orchestration and event handling
       core/
         calculations.js       # valuation formulas
+        catalog-identity.js   # exact source/canonical variant bridge
+        pricing-policy.js     # fail-closed local provider-price eligibility
+        intelligence-contract.js # support-tier and payload validation
         components.js         # shared render helpers
         db.js                 # IndexedDB gateway
         store.js              # in-memory observable state
@@ -57,6 +62,8 @@ app/
         scan-workbench.js     # boundary editor
         scan-review.js        # OCR/match/approval queue
         supabase.js           # optional Auth/PostgREST sync
+        watchlist.js          # local exact-variant watchlist and merge rules
+        price-intelligence.js # approved-publication cache/hydration
         providers/
       views/
 scripts/
@@ -64,6 +71,22 @@ scripts/
   dev.mjs
   validate.mjs
 supabase/migrations/
+analytics/
+  src/collectfolio_analytics/
+    catalog_mapping.py       # deterministic identity and quarantine packets
+    market_pipeline.py       # rights/mapping/outlier observation preparation
+    justtcg.py               # licensed fixed-origin current/history adapter
+    tcgcsv.py                # bounded current/archive research adapter
+    qualification.py         # private history/trend/forecast evidence packets
+    forecasting.py           # immutable research baseline predictions
+    private_sql.py           # guarded rollback-first hosted SQL export
+    walk_forward.py          # honest retrospective origins/evaluations/scorecards
+    walk_forward_cli.py      # bounded hosted-row export to mode-0600 packet
+    walk_forward_sql.py      # guarded retrospective rollback/commit SQL
+    monitoring.py            # deterministic operator health and alerts
+    publication.py           # reviewable Tier 0–2 candidate packets
+    trends.py                # point-in-time descriptive market features
+  tests/                      # synthetic leakage/formula tests
 tests/
 docs/
 ```
@@ -78,6 +101,7 @@ docs/
 | `SUPABASE_ANON_KEY` | No | Browser-safe public/publishable key; enables auth and sync |
 | `APP_VERSION` | No | Displayed and embedded version |
 | `ENABLE_TESSERACT` | No | Disables external OCR loading when set to `false` |
+| `ENABLE_PRICE_INTELLIGENCE` | No | Rollback switch for Watchlist/Forecasts UI; defaults to `true` |
 
 The supplied URL is `https://agmjgyyvhfcivbwdlvzk.supabase.co`. The public key is intentionally not committed.
 
@@ -89,9 +113,12 @@ The supplied URL is `https://agmjgyyvhfcivbwdlvzk.supabase.co`. The public key i
 
 - active view;
 - holdings and snapshots;
+- exact-variant watchlist items and local alerts;
 - settings;
 - search request/results/error;
-- portfolio filter/sort;
+- portfolio section/filter/sort;
+- server/runtime feature flags;
+- approved publication state indexed by canonical variant UUID;
 - auth session and sync state;
 - scan draft count.
 
@@ -99,16 +126,20 @@ The current view is rendered after state mutation. Complex modal workflows own t
 
 ### 4.2 IndexedDB
 
-Database: `collectfolio`, version 2. The backup interchange format remains version 1 for backward-compatible import/export.
+Database: `collectfolio`, version 3. New exports use interchange version 2; version 1 backups remain importable.
 
 | Store | Key | Contents |
 |---|---|---|
 | `holdings` | `id` | Catalog snapshot plus ownership metadata |
-| `snapshots` | `id` | Portfolio-level daily valuation snapshots |
+| `snapshots` | `id` | Portfolio-level daily valuation snapshots stamped with the active pricing-policy version |
 | `settings` | `key` | Currency, theme, and preferences |
 | `scans` | `id` | Draft crops and review progress |
 | `catalogCache` | `key` | Search responses with expiry timestamp |
 | `deletions` | `id` | Holding tombstones for deterministic cross-device deletion sync |
+| `watchlistItems` | `id` | Exact source or canonical variant snapshot plus alert preferences |
+| `watchlistDeletions` | `id` | Watch-key tombstones for deterministic cross-device deletion sync |
+| `intelligenceCache` | `key` | Last approved public intelligence payloads; no research data |
+| `alerts` | `id` | Local in-app alert state |
 
 Indexes on holdings include `catalogId` and `updatedAt`.
 
@@ -117,7 +148,9 @@ Indexes on holdings include `catalogId` and `updatedAt`.
 ```js
 {
   id,                    // app UUID
-  catalogId,             // provider-independent reference string
+  catalogId,             // provider-scoped legacy reference string
+  catalogKey,            // exact source variant/finish/condition bridge
+  canonicalVariantId,    // approved catalog UUID when mapping exists
   item: {
     id, externalId, provider, category, game,
     name, setName, number, variant, rarity, year,
@@ -142,17 +175,17 @@ Indexes on holdings include `catalogId` and `updatedAt`.
 }
 ```
 
-Provider data is snapshotted inside the holding so a provider outage does not remove identity or last-known value.
+Provider identity data is snapshotted inside the holding so an outage does not remove the collectible reference. Existing holdings are not destructively rewritten: `catalogKey` supplies an exact provider-level bridge, while `canonicalVariantId` remains empty until an approved mapping exists. A legacy provider value remains in the user's record for provenance but cannot enter valuation or display when the source policy marks that route restricted.
 
 ## 5. Valuation rules
 
-- Unit value = `manualMarketPrice` when set; otherwise `item.price`; otherwise 0.
+- Unit value = `manualMarketPrice` when set; otherwise a locally permitted `item.price`; otherwise 0. Pokémon/TCGplayer catalog prices are restricted until a licensed publication exists.
 - Holding market value = unit value × quantity.
 - Holding cost basis = purchase price × quantity + fees.
 - Unrealized gain = market value − cost basis.
 - Return percentage = gain ÷ cost basis × 100 when cost basis is positive.
 - Portfolio summary is the sum of holding values and costs.
-- Daily snapshot IDs use `portfolio:YYYY-MM-DD`; subsequent changes on the same day replace that day’s point.
+- Daily snapshot IDs use `portfolio:YYYY-MM-DD`; subsequent changes on the same day replace that day’s point. Only snapshots stamped with the current rights-aware pricing-policy version are charted, so an older TCGplayer/Cardmarket-derived total cannot survive the source-policy transition through historical charts.
 
 Market and cost lines are drawn separately so adding a collectible is not visually represented as pure market appreciation.
 
@@ -168,7 +201,7 @@ Every provider normalizes into the internal item shape. The app never stores a p
 - Query parsing prefers the longest contiguous exact set-name match, removes those tokens, and combines the remaining card name and number with the resolved set ID. Thus a set name searches the full set while `card name + set name` searches their intersection; numeric set names such as `Base Set 2` are resolved before card-number parsing.
 - Set metadata is cached in browser storage for 24 hours. A failed primary set-ID lookup has a short backoff and falls through to a set-name clause instead of blocking discovery.
 - If the primary card provider fails or has no cards for a recognized set, TCGdex set detail supplies the complete set and applies remaining name/number filters locally. An empty result from that complete set is authoritative rather than reported as a provider outage.
-- Price options are derived from returned TCGplayer finish fields.
+- Requests are metadata-only (`id,name,number,rarity,set,images`). Embedded TCGplayer/Cardmarket prices are not requested or normalized.
 - The browser build intentionally uses the unauthenticated tier so no private/provider API key is exposed in client code.
 
 ### Magic: The Gathering
@@ -290,6 +323,16 @@ Migration `0001_initial.sql` creates:
 - user-profile creation trigger;
 - complete per-user RLS policies.
 
+Migration `0002_price_intelligence_foundation.sql` is intentionally a separately reviewed operator step. It adds versioned source-terms reviews, a private canonical catalog, a nullable existing-holding bridge, exact-key watchlists and tombstones, runtime product flags, and the only anonymous intelligence publication table. Raw catalog/source tables have no anon or authenticated grants. Public publication RLS re-evaluates every lineage source against its current approved terms review and expiration.
+
+Migration `0003_price_intelligence_research_pipeline.sql` adds private append-oriented mapping candidates/reviews, exact-mapping price observations, data-quality events, analytics runs/source lineage, trend snapshots, descriptive publication candidates/reviews, and immutable promotion receipts. Composite foreign keys bind every observation to its exact source, terms review, approved mapping, variant, and ingestion run. All research tables have RLS with no anon/authenticated grants.
+
+Migration `0004_price_intelligence_function_acl_hardening.sql` removes Supabase default function execution from browser roles and leaves descriptive publication service-role-only. Migration `0005_private_forecast_research_ledgers.sql` adds append-only model versions, research predictions, matured evaluations, scorecards, and promotion-review evidence. Forecast tables are private; predictions are schema-limited to `research_only` or `quarantined`, and the evaluation-lineage trigger helper is unavailable to API roles.
+
+Pending migration `0006_price_intelligence_governance_hardening.sql` makes the database `public_price_intelligence` flag and exact source attribution part of the public RLS predicate; terms-review rows become append-only. Mapping corrections use a one-to-one supersession RPC that preserves referenced versions. Model records distinguish static definitions, nullable training datasets, and code artifacts. Every matured outcome is `scored` or `unscorable`, while scorecards persist a complete case partition, exact membership/hash, and versioned policy/hash. Direct service-role model-review inserts are revoked: an authenticated JWT with server-managed `app_metadata.price_intelligence_operator=true` must use `review_model_promotion`. Descriptive publication and per-card quarantine remain separate service-role RPCs, and disable actions append control receipts. This migration adds two RLS-protected tables, bringing the expected hosted inventory from 34 to 36 only after it is actually applied.
+
+The service-role-only `publish_descriptive_intelligence` function accepts only a latest approved candidate review with source-rights and mapping attestations. It rechecks current commercial, attribution, and per-usage permissions, rejects non-published or above-Tier-2 payloads and any `fairValue`/`forecasts` key, then atomically replaces the public payload and lineage. It does not change the public feature flag. The flag remains a separate global operator decision; `disable_public_intelligence` is the append-receip per-card rollback path.
+
 The service-role key is never used or exposed in the browser.
 
 ### 9.3 Sync algorithm
@@ -304,7 +347,23 @@ The service-role key is never used or exposed in the browser.
 8. Write merged holdings to IndexedDB and upsert them to Supabase with `on_conflict=id`.
 9. Mark synchronized local rows clean.
 
+The watchlist follows the same deletion-first/LWW pattern using its exact `watchKey`. A default cloud watchlist is obtained through an invoker-secured RPC. Failure of the optional watchlist schema does not roll back an otherwise successful holdings sync; the user receives a migration-required warning and local watchlist data stays intact.
+
 This is deterministic last-write-wins at holding granularity with persistent deletion tombstones. It does not merge individual fields. Clearing all browser data is intentionally different from deleting holdings inside the app: a browser reset does not issue cloud deletions, while an explicit holding deletion records a tombstone and propagates on the next sync.
+
+### 9.4 Publication hydration and analytics isolation
+
+The browser requests publications only for deduplicated canonical UUIDs represented in Holdings or Watchlist, in batches of 50. IndexedDB cache entries expire at the earlier of six hours or the publication's own expiry. A hydration generation prevents an older in-flight response from restoring intelligence after its last mapped card is removed.
+
+The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Support tiers are layered: Tier 1 observed market, Tier 2 trends, Tier 3 fair value, and Tier 4 forecasts. Invalid or above-tier layers are omitted rather than repaired or guessed.
+
+The Python analytics core requires exact series identity plus `observed_at` and `available_at`; only accepted records knowable at the feature cutoff enter a snapshot. Outliers remain in the immutable ledger and its audit hash but never become features or realized targets. It implements deterministic canonical rows, conservative mapping candidates, rights-gated observation packets, descriptive features, no-change/damped-momentum baselines, quantile validation, pull-scarcity formulas, and the research-only legacy formula. Evaluation uses the seven-day maturity median and reports point, direction, probability, interval, and baseline-relative metrics.
+
+The retrospective builder creates a separate static-baseline model version and selects eligible historical origins at preregistered 30-day spacing. Each origin gets a run/snapshot, an exact feature-dataset hash, and horizon predictions; the model stores a definition hash and current Python code-artifact hash. Deterministic evaluation/scorecard IDs and explicit `retrospective_walk_forward` plus `not_prospectively_generated` reason codes prevent historical simulations from masquerading as prospective outputs. Historical origins are feature cutoffs only: model creation, analytics execution, and evaluation timestamps use the actual generation instant. Rights are checked at that instant and again when guarded SQL executes.
+
+Every matured prediction receives an immutable outcome. A trailing-window target with accepted observations is `scored`; one without them is `unscorable` with null metrics, zero observations, the exact target window, and a reason. Quarantined predictions may still receive outcomes for completeness but are counted separately and excluded from comparable metric slices. Each scorecard stores matured/scored/unscorable/excluded counts, exact evaluation membership, and the full promotion policy. No-change, damped momentum, market index, lifecycle cohort, and structural convergence are required comparisons; absent data makes the result `insufficient`. The SQL exporter recomputes config, evaluation, policy, membership, packet, code-artifact, and per-origin dataset contracts before emitting rollback-first SQL. Promotion remains a separate authenticated human event and the research packet structurally requires empty promotion-review and public-candidate arrays.
+
+The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one current consistency window, and at most 53 exact-weekly PPMd archives. Packet CLIs have no Supabase credential; the operator explicitly supplies a bounded hosted-row export. A scheduled no-secret workflow runs qualification and monitoring without database writes. There is no production trainer or automatic promotion path.
 
 ## 10. Privacy and security
 
@@ -313,6 +372,7 @@ This is deterministic last-write-wins at holding granularity with persistent del
 - Cloud sync includes an inline user image only when under 180 KB; the database enforces a 220 KB ceiling.
 - Netlify receives only static deploy artifacts.
 - Supabase public keys are safe to expose only because RLS is mandatory.
+- Raw price/model/source tables are not browser-readable; only an unexpired, rights-approved publication payload can pass public RLS.
 - Netlify headers disable framing, sniffing, geolocation, microphone, and cross-origin camera use.
 - External images use `referrerpolicy="no-referrer"`.
 - User-entered strings are escaped before HTML insertion.
@@ -343,10 +403,11 @@ Because filenames are currently stable, browser assets use short revalidation he
 `npm run check` executes:
 
 1. custom validation for required files, unsafe placeholders, insecure URLs, missing index references, service-worker shell references, relative import resolution, and JavaScript syntax;
-2. Node built-in tests for valuation, sorting, OCR query extraction, similarity, image components/grids/merges, and provider normalization;
-3. production build into `dist/`.
+2. Node built-in tests for valuation, sorting, OCR query extraction, similarity, image components/grids/merges, provider normalization, watchlist behavior, publication contracts, and migration-governance markers;
+3. Python standard-library tests for point-in-time leakage, robust trends, baselines, five-baseline promotion blocking, Scored/Unscorable outcomes, exact scorecard membership/hash lineage, quantiles, scarcity, and `video_model_v0` reproduction;
+4. production build into `dist/`.
 
-CI runs the same command on pushes and pull requests.
+CI runs the same command on pushes and pull requests. A path-filtered Python 3.12 workflow independently protects the analytics package.
 
 ## 14. Known limitations and next engineering work
 
@@ -359,3 +420,7 @@ CI runs the same command on pushes and pull requests.
 - Remote snapshot and saved-scan synchronization are schema-ready but not implemented in the client; holdings and explicit deletions are synchronized.
 - Portfolio snapshots are currently local; remote snapshot sync is schema-ready but not implemented in the client.
 - Stable asset filenames require release discipline around service-worker cache versioning.
+- One TCGCSV identity and 53-week cohort are qualified for research only; no public/commercial TCGplayer-derived permission exists. JustTCG's paid contract is the preferred licensed alternative and its bounded adapter is implemented, but no paid account, API secret, or live approved review exists, so public price intelligence remains disabled.
+- Migrations 0002 through 0005 are hosted and security-qualified. Migration 0006 is implemented and statically/parser-validated but remains pending a restorable backup, database rehearsal, application, and 36-table RLS/ACL verification. The project has WAL-G without PITR or a physical backup; retained logical dumps do not replace a restorable Auth/storage-aware backup.
+- Trend thresholds and interval widths remain configurable research defaults and failed the first real walk-forward calibration gate.
+- The August 5 legacy retrospective evidence contains 109 stored evaluations. The 7-day scorecard rejects the damped-momentum baseline; 30/90/180-day slices are insufficient; all scored horizons have negative no-change-relative lift and under-covered 80% intervals. It predates the 30-day/five-baseline/Unscorable evidence contract and cannot support promotion. Human model promotion remains intentionally empty.
