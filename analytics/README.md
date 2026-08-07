@@ -23,6 +23,7 @@ Included primitives:
 - DB-ready private trend/model/prediction evidence with immutable lineage and structurally empty public-candidate output; and
 - honest retrospective walk-forward origins with deterministic private evaluations, exact scorecard membership/policy hashes, and operator-gated scorecards; and
 - guarded SQL export that defaults to a rollback rehearsal and refuses rights-open, backdated, unlabeled, lineage/hash-tampered, public-candidate, automatically promoted, or already-published packets.
+- first-party demand-velocity and acceleration features (watchlist, search, portfolio-add, view) built only from privacy-threshold-met `aggregate_demand_snapshots` periods ending at or before the feature cutoff, so a below-threshold or future period can never enter a windowed rate.
 
 Run the suite from the repository root:
 

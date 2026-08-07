@@ -2,6 +2,7 @@ import { createId } from '../core/utils.js';
 import { putRecord, saveHolding } from '../core/db.js';
 import { searchCatalog } from './catalog.js';
 import { recognizeText, rerankCandidates } from './image.js';
+import { recordDemandEvent } from './demand-events.js';
 
 export function createScanDraft(crops, mode = 'multi') {
   const now = new Date().toISOString();
@@ -101,7 +102,9 @@ export async function batchAddApproved(draft) {
   for (const crop of approved) {
     const item = crop.customItem || crop.candidates.find((candidate) => candidate.id === crop.selectedId);
     if (!item) continue;
-    await saveHolding({ catalogId: item.provider === 'custom' ? `custom:${item.id}` : item.id, item, quantity: 1, condition: 'Near Mint', purchasePrice: '', fees: '', manualMarketPrice: '', userImage: crop.image, folder: '', notes: `Added from scan ${draft.id}` });
+    const holding = await saveHolding({ catalogId: item.provider === 'custom' ? `custom:${item.id}` : item.id, item, quantity: 1, condition: 'Near Mint', purchasePrice: '', fees: '', manualMarketPrice: '', userImage: crop.image, folder: '', notes: `Added from scan ${draft.id}` });
+    recordDemandEvent(holding.canonicalVariantId, 'portfolio_add').catch(() => {});
+    recordDemandEvent(holding.canonicalVariantId, 'scan_confirm').catch(() => {});
   }
   draft.status = 'complete';
   draft.completedAt = new Date().toISOString();

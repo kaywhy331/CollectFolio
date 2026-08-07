@@ -54,7 +54,7 @@ function requireConfig() {
   return { url: String(config().SUPABASE_URL).replace(/\/$/, ''), key: config().SUPABASE_ANON_KEY };
 }
 
-async function request(path, { method = 'GET', body, session, headers = {} } = {}) {
+export async function request(path, { method = 'GET', body, session, headers = {} } = {}) {
   const { url, key } = requireConfig();
   const response = await fetch(`${url}${path}`, {
     method,
@@ -292,6 +292,34 @@ export async function syncWatchlist() {
   }
   for (const tombstone of tombstones) await putRecord('watchlistDeletions', { ...tombstone, dirty: false });
   return { items: merged.length, deletions: tombstones.length };
+}
+
+/** Best-effort push of the demand-analytics opt-out to the user's own
+ * profiles row so the server-side aggregation job can honor it (migration
+ * 0007). Callers treat failure as retryable, never blocking. */
+export async function pushDemandAnalyticsOptOut(optedOut) {
+  const session = await validSession();
+  const userId = session.user?.id || jwtSubject(session.access_token);
+  await request(`/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    session,
+    headers: { Prefer: 'return=minimal' },
+    body: { demand_analytics_opt_out: Boolean(optedOut) }
+  });
+}
+
+/** Returns the server-side opt-out flag, or null when unknowable (signed
+ * out, migration not applied yet, network failure). RLS limits the read to
+ * the user's own row. */
+export async function fetchDemandAnalyticsOptOut() {
+  try {
+    const session = await validSession();
+    const rows = await request('/rest/v1/profiles?select=demand_analytics_opt_out', { session });
+    if (!Array.isArray(rows) || !rows.length) return null;
+    return Boolean(rows[0].demand_analytics_opt_out);
+  } catch {
+    return null;
+  }
 }
 
 export async function syncAll() {

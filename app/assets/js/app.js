@@ -13,9 +13,10 @@ import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
+import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
 import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
-import { consumeAuthCallback, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
+import { consumeAuthCallback, fetchDemandAnalyticsOptOut, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, pushDemandAnalyticsOptOut, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
 import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js';
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
@@ -25,7 +26,7 @@ import { renderSearch } from './views/search.js';
 import { renderScanReview } from './views/scan.js';
 
 const root = document.querySelector('#main-content');
-const defaults = { currency: 'USD', theme: 'dark' };
+const defaults = { currency: 'USD', theme: 'dark', demandAnalyticsOptOut: false };
 let activeDraft = null;
 
 root.addEventListener('error', (event) => {
@@ -200,13 +201,14 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
         const userImage = file ? await fileToPortfolioImage(file) : data.existingImage;
         const providerItem = holding?.item || proposedItem || {};
         const finish = isRestrictedCatalogPrice(providerItem) ? null : providerItem.priceOptions?.[Number(data.finish)];
-        await saveHolding({
+        const saved = await saveHolding({
           ...holding,
           item: { ...providerItem, id: providerItem.id || createId(), externalId: providerItem.externalId || '', provider: providerItem.provider || 'custom', category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: finish?.finish || data.variant, rarity: providerItem.rarity || '', year: data.year, image: providerItem.image || '', imageSmall: providerItem.imageSmall || '', price: finish?.price ?? providerItem.price ?? null, priceOptions: providerItem.priceOptions || [], currency: providerItem.currency || 'USD', priceSource: providerItem.priceSource || '', priceUrl: providerItem.priceUrl || '', priceUpdatedAt: providerItem.priceUpdatedAt || '' },
           quantity: data.quantity, condition: data.condition, gradeCompany: data.gradeCompany, grade: data.grade,
           purchasePrice: data.purchasePrice, purchaseDate: data.purchaseDate, fees: data.fees,
           manualMarketPrice: data.manualMarketPrice, folder: data.folder, notes: data.notes, userImage
         });
+        if (!holding) recordDemandEvent(saved.canonicalVariantId, 'portfolio_add').catch(() => {});
         closeModal();
         await loadLocal();
         await hydrateIntelligence();
@@ -360,10 +362,26 @@ function openAuth() {
   }});
 }
 
+// Privacy-safe cross-device reconciliation: adopt a remote opt-out locally,
+// re-push a local opt-out the server lost, and never let a remote opt-IN
+// silently re-enable recording on this device (see mergeDemandOptOut).
+async function reconcileDemandOptOut() {
+  const local = Boolean(getState().settings.demandAnalyticsOptOut);
+  const remote = await fetchDemandAnalyticsOptOut();
+  const decision = mergeDemandOptOut(local, remote);
+  if (decision.adoptLocalOptOut) {
+    await putRecord('settings', { key: 'demandAnalyticsOptOut', value: true });
+    setState({ settings: { ...getState().settings, demandAnalyticsOptOut: true } });
+  }
+  if (decision.pushOptOut) await pushDemandAnalyticsOptOut(true).catch(() => {});
+}
+
 async function syncNow() {
   setState({ auth: { ...getState().auth, syncing: true } });
   try {
     const result = await syncAll();
+    await reconcileDemandOptOut().catch(() => {});
+    await syncDemandEvents().catch(() => {});
     await loadLocal();
     await hydrateIntelligence();
     const watchlist = result.watchlist ? `, ${result.watchlist.items} watched cards, and ${result.watchlist.deletions} watch tombstones` : '';
@@ -397,9 +415,11 @@ async function toggleWatchedItem(item, options = {}) {
   const existing = findWatchedItem(getState().watchlistItems, item, options);
   if (existing) {
     await unwatchItem(existing.watchKey);
+    recordDemandEvent(existing.canonicalVariantId, 'watch_remove').catch(() => {});
     showToast('Removed from Watchlist');
   } else {
-    await watchItem(item, options);
+    const saved = await watchItem(item, options);
+    recordDemandEvent(saved.canonicalVariantId, 'watch_add').catch(() => {});
     showToast('Added to Watchlist');
   }
   await loadLocal();
@@ -451,6 +471,9 @@ function watchlistPreferencesForm(entry) {
         event.preventDefault();
         const form = event.currentTarget;
         const data = Object.fromEntries(new FormData(form));
+        const anyAlertEnabled = Boolean(data.targetPrice) || Boolean(data.alertPercentChange)
+          || form.elements.alertTrendChange.checked || form.elements.alertRangeChange.checked
+          || form.elements.alertForecastChange.checked;
         await watchItem({ ...entry.catalogRef, variant: entry.catalogRef.finish }, {
           canonicalVariantId: entry.canonicalVariantId,
           conditionClass: entry.catalogRef.conditionClass,
@@ -461,6 +484,7 @@ function watchlistPreferencesForm(entry) {
           alertForecastChange: form.elements.alertForecastChange.checked,
           notes: data.notes
         });
+        if (anyAlertEnabled) recordDemandEvent(entry.canonicalVariantId, 'alert_create').catch(() => {});
         closeModal();
         await loadLocal();
         showToast('Watch preferences saved');
@@ -664,6 +688,18 @@ root.addEventListener('change', async (event) => {
     await putRecord('settings', { key, value });
     if (key === 'theme') document.documentElement.dataset.theme = value;
     setState({ settings: { ...getState().settings, [key]: value } });
+    showToast('Setting saved');
+  }
+  if (event.target.matches('[data-setting-toggle]')) {
+    const key = event.target.dataset.settingToggle;
+    const value = event.target.checked;
+    await putRecord('settings', { key, value });
+    setState({ settings: { ...getState().settings, [key]: value } });
+    if (key === 'demandAnalyticsOptOut' && getState().auth.session) {
+      // Best-effort immediate push so the server-side aggregation exclusion
+      // takes effect without waiting for the next manual sync.
+      pushDemandAnalyticsOptOut(value).catch(() => {});
+    }
     showToast('Setting saved');
   }
   if (event.target.matches('#backup-file')) {

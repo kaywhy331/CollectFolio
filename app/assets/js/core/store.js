@@ -6,7 +6,7 @@ let state = {
   snapshots: [],
   watchlistItems: [],
   alerts: [],
-  settings: { currency: 'USD', theme: 'dark' },
+  settings: { currency: 'USD', theme: 'dark', demandAnalyticsOptOut: false },
   search: { query: '', category: 'all', provider: 'all', loading: false, results: [], warnings: [] },
   portfolio: { section: 'holdings', query: '', category: 'all', sort: 'value-desc' },
   featureFlags: { watchlists: true, publicPriceIntelligence: false, loaded: false },
