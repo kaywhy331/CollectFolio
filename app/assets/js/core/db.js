@@ -160,8 +160,14 @@ export async function recordDailySnapshot(date = new Date()) {
   return putRecord('snapshots', snapshotFor(holdings, date));
 }
 
+// The demand outbox is a private, limited-retention telemetry queue tied to a
+// signed-in user ID; a portable interchange file must not carry it between
+// devices or users, and imports must not be able to inject events into it.
+export const BACKUP_EXCLUDED_STORES = Object.freeze(['demandEventsQueue']);
+
 export async function exportBackup() {
-  const stores = Object.fromEntries(await Promise.all(STORES.map(async (name) => [name, await getAll(name)])));
+  const included = STORES.filter((name) => !BACKUP_EXCLUDED_STORES.includes(name));
+  const stores = Object.fromEntries(await Promise.all(included.map(async (name) => [name, await getAll(name)])));
   return { format: 'collectfolio-backup', version: 2, exportedAt: new Date().toISOString(), stores };
 }
 
@@ -170,7 +176,7 @@ export async function importBackup(backup) {
     throw new Error('This is not a valid CollectFolio interchange backup.');
   }
   const db = await openDatabase();
-  for (const name of STORES) {
+  for (const name of STORES.filter((store) => !BACKUP_EXCLUDED_STORES.includes(store))) {
     const records = Array.isArray(backup.stores[name]) ? backup.stores[name] : [];
     if (!records.length) continue;
     const transaction = db.transaction(name, 'readwrite');

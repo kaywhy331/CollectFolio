@@ -94,12 +94,45 @@ export async function recordDemandEvent(canonicalVariantId, eventType, { occurre
   return record;
 }
 
-/** Flushes queued demand events to Supabase. Best-effort: entries that fail
- * to sync stay queued for the next attempt (limited local retention — Sec
- * 15.7 "Private, user-linked event stream with limited retention"). */
+export const DEMAND_QUEUE_MAX_AGE_DAYS = 30;
+
+/** Entries past local retention (or with unparseable timestamps), which are
+ * dropped instead of synced — Sec 15.7 "limited retention" applies to the
+ * local outbox too, so a permanently signed-out device cannot accumulate an
+ * unbounded private event history. */
+export function staleDemandQueueEntries(entries = [], nowMs = Date.now(), maxAgeDays = DEMAND_QUEUE_MAX_AGE_DAYS) {
+  const cutoff = nowMs - maxAgeDays * 86_400_000;
+  return entries.filter((entry) => !(Date.parse(entry?.occurredAt) > cutoff));
+}
+
+/**
+ * Reconciliation rule between the local opt-out setting and the server-side
+ * profiles flag. Deliberately asymmetric in the privacy-safe direction:
+ * a remote opt-out is adopted locally, but a remote opt-IN never silently
+ * re-enables recording on a device whose user opted out — that device
+ * instead re-pushes its opt-out. Opting back in only propagates through an
+ * explicit toggle on each device.
+ */
+export function mergeDemandOptOut(localOptedOut, remoteOptedOut) {
+  if (remoteOptedOut === null || remoteOptedOut === undefined) return { adoptLocalOptOut: false, pushOptOut: false };
+  if (remoteOptedOut && !localOptedOut) return { adoptLocalOptOut: true, pushOptOut: false };
+  if (!remoteOptedOut && localOptedOut) return { adoptLocalOptOut: false, pushOptOut: true };
+  return { adoptLocalOptOut: false, pushOptOut: false };
+}
+
+/** Flushes queued demand events to Supabase after pruning stale entries.
+ * Best-effort: entries that fail to sync stay queued for the next attempt
+ * (limited local retention — Sec 15.7 "Private, user-linked event stream
+ * with limited retention"). */
 export async function syncDemandEvents() {
   if (!isSupabaseConfigured()) return { synced: 0 };
-  const queued = (await getAll('demandEventsQueue')).filter((entry) => !entry.synced);
+  const all = await getAll('demandEventsQueue');
+  const stale = staleDemandQueueEntries(all);
+  for (const entry of stale) {
+    if (entry?.id) await deleteRecord('demandEventsQueue', entry.id).catch(() => {});
+  }
+  const staleIds = new Set(stale.map((entry) => entry?.id));
+  const queued = all.filter((entry) => !entry.synced && !staleIds.has(entry.id));
   if (!queued.length) return { synced: 0 };
   let session;
   try {

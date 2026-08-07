@@ -13,10 +13,10 @@ import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
-import { recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
+import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
 import { batchAddApproved, createScanDraft, deleteCrop, identifyCrop, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
-import { consumeAuthCallback, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
+import { consumeAuthCallback, fetchDemandAnalyticsOptOut, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, pushDemandAnalyticsOptOut, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
 import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js';
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
@@ -362,10 +362,25 @@ function openAuth() {
   }});
 }
 
+// Privacy-safe cross-device reconciliation: adopt a remote opt-out locally,
+// re-push a local opt-out the server lost, and never let a remote opt-IN
+// silently re-enable recording on this device (see mergeDemandOptOut).
+async function reconcileDemandOptOut() {
+  const local = Boolean(getState().settings.demandAnalyticsOptOut);
+  const remote = await fetchDemandAnalyticsOptOut();
+  const decision = mergeDemandOptOut(local, remote);
+  if (decision.adoptLocalOptOut) {
+    await putRecord('settings', { key: 'demandAnalyticsOptOut', value: true });
+    setState({ settings: { ...getState().settings, demandAnalyticsOptOut: true } });
+  }
+  if (decision.pushOptOut) await pushDemandAnalyticsOptOut(true).catch(() => {});
+}
+
 async function syncNow() {
   setState({ auth: { ...getState().auth, syncing: true } });
   try {
     const result = await syncAll();
+    await reconcileDemandOptOut().catch(() => {});
     await syncDemandEvents().catch(() => {});
     await loadLocal();
     await hydrateIntelligence();
@@ -680,6 +695,11 @@ root.addEventListener('change', async (event) => {
     const value = event.target.checked;
     await putRecord('settings', { key, value });
     setState({ settings: { ...getState().settings, [key]: value } });
+    if (key === 'demandAnalyticsOptOut' && getState().auth.session) {
+      // Best-effort immediate push so the server-side aggregation exclusion
+      // takes effect without waiting for the next manual sync.
+      pushDemandAnalyticsOptOut(value).catch(() => {});
+    }
     showToast('Setting saved');
   }
   if (event.target.matches('#backup-file')) {

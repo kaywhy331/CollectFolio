@@ -75,7 +75,10 @@ create table public.aggregate_demand_snapshots (
 );
 
 -- Recomputes one period from the raw ledger, excluding operator/test
--- accounts, and gates public readability on a minimum distinct-user count.
+-- accounts and users who opted out of demand analytics (Sec 29.2: opt-out
+-- must hold server-side even against a buggy or hostile client, and it
+-- retroactively removes the user's history from future aggregation runs),
+-- and gates public readability on a minimum distinct-user count.
 -- Restricted to service_role below; intended to run from a scheduled job,
 -- never from the browser (Sec 21, Sec 29.2).
 create or replace function public.rebuild_aggregate_demand_snapshots(
@@ -106,6 +109,7 @@ begin
     from public.demand_events event
     join public.profiles author on author.id = event.user_id
     where author.is_operator = false
+      and author.demand_analytics_opt_out = false
       and event.occurred_at >= target_period_start::timestamptz
       and event.occurred_at < (target_period_end + 1)::timestamptz
   ),

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { demandEventEligible, demandEventId, demandEventRow, DEMAND_EVENT_TYPES, hourBucket } from '../app/assets/js/services/demand-events.js';
+import { demandEventEligible, demandEventId, demandEventRow, DEMAND_EVENT_TYPES, DEMAND_QUEUE_MAX_AGE_DAYS, hourBucket, mergeDemandOptOut, staleDemandQueueEntries } from '../app/assets/js/services/demand-events.js';
+import { BACKUP_EXCLUDED_STORES, STORES } from '../app/assets/js/core/db.js';
 
 const canonicalVariantId = '123e4567-e89b-42d3-a456-426614174000';
 
@@ -55,6 +56,42 @@ test('signed-out usage is never eligible, matching the local-only architecture b
     demandEventEligible({ eventType: 'watch_add', canonicalVariantId, optedOut: false, signedIn: false }),
     false
   );
+});
+
+test('queue retention prunes entries past the age limit and keeps fresh ones', () => {
+  const nowMs = Date.parse('2026-08-07T00:00:00.000Z');
+  const fresh = { id: 'fresh', occurredAt: '2026-08-01T00:00:00.000Z' };
+  const boundary = { id: 'boundary', occurredAt: new Date(nowMs - (DEMAND_QUEUE_MAX_AGE_DAYS * 86_400_000) + 1000).toISOString() };
+  const stale = { id: 'stale', occurredAt: '2026-01-01T00:00:00.000Z' };
+  const pruned = staleDemandQueueEntries([fresh, boundary, stale], nowMs);
+  assert.deepEqual(pruned.map((entry) => entry.id), ['stale']);
+});
+
+test('queue retention treats unparseable timestamps as stale rather than immortal', () => {
+  const nowMs = Date.parse('2026-08-07T00:00:00.000Z');
+  const malformed = { id: 'bad', occurredAt: 'not-a-date' };
+  const missing = { id: 'none' };
+  assert.deepEqual(staleDemandQueueEntries([malformed, missing], nowMs).map((entry) => entry.id), ['bad', 'none']);
+});
+
+test('opt-out merge adopts a remote opt-out locally', () => {
+  assert.deepEqual(mergeDemandOptOut(false, true), { adoptLocalOptOut: true, pushOptOut: false });
+});
+
+test('opt-out merge re-pushes a local opt-out the server lost, never re-enabling locally', () => {
+  assert.deepEqual(mergeDemandOptOut(true, false), { adoptLocalOptOut: false, pushOptOut: true });
+});
+
+test('opt-out merge is a no-op when states agree or the server is unknowable', () => {
+  assert.deepEqual(mergeDemandOptOut(true, true), { adoptLocalOptOut: false, pushOptOut: false });
+  assert.deepEqual(mergeDemandOptOut(false, false), { adoptLocalOptOut: false, pushOptOut: false });
+  assert.deepEqual(mergeDemandOptOut(false, null), { adoptLocalOptOut: false, pushOptOut: false });
+  assert.deepEqual(mergeDemandOptOut(true, null), { adoptLocalOptOut: false, pushOptOut: false });
+});
+
+test('the demand outbox exists as a store but is excluded from portable backups', () => {
+  assert.ok(STORES.includes('demandEventsQueue'));
+  assert.ok(BACKUP_EXCLUDED_STORES.includes('demandEventsQueue'));
 });
 
 test('demand event row shapes the exact PostgREST payload the migration expects', () => {
