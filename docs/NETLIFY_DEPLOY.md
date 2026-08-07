@@ -31,7 +31,10 @@ SUPABASE_URL=https://agmjgyyvhfcivbwdlvzk.supabase.co
 SUPABASE_ANON_KEY=<your Supabase publishable/anon key>
 APP_VERSION=0.1.0
 ENABLE_TESSERACT=true
+JUSTTCG_API_KEY=<server-only JustTCG key>
 ```
+
+`JUSTTCG_API_KEY` is consumed only by the scheduled server function and must never be added to a public runtime variable. With only that variable present, the collector expects the Free plan and stages all priced games. Optional server-only controls are `JUSTTCG_GAME=pokemon`, `JUSTTCG_EXPECTED_PLAN=Free`, and `JUSTTCG_COLLECTION_ID=catalog-v1`. Changing the collection ID starts a separate cursor and must not be done until the provider quota cycle and intended scope have been checked.
 
 5. Deploy the site.
 
@@ -55,6 +58,9 @@ After Netlify assigns a URL:
 - Confirm another account cannot read that row.
 - Delete the holding on one signed-in browser, sync, then sync a second browser and confirm it remains deleted.
 - Install the PWA and launch it from the home screen.
+- On a published deploy, open **Functions → justtcg-catalog** and confirm it has a Scheduled badge with a five-minute UTC schedule.
+- Confirm the `collectfolio-justtcg-private` Blob store contains a query-scoped `state.json` and immutable offset page after the first successful run. Logs may show offsets/counts only; they must not contain the API key or response bodies.
+- Confirm the state stops outbound calls at 100 attempts in one UTC day and resumes after 00:00 UTC. Do not manually change `nextOffset` or delete only the state blob; crash recovery depends on the state/page pair.
 
 ## 6. Release discipline
 

@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/*.test.js",
-    "check": "node scripts/validate.mjs && node --test tests/*.test.js && node scripts/build.mjs"
+    "test": "node --test tests/*.test.js && npm run test:analytics",
+    "test:analytics": "PYTHONPATH=analytics/src python3 -m unittest discover -s analytics/tests -p 'test_*.py'",
+    "qualify:research": "PYTHONPATH=analytics/src python3 -m collectfolio_analytics.operator_cli analytics/manifests/tcgcsv-surging-sparks-research.json --pretty",
+    "check": "node scripts/validate.mjs && npm test && node scripts/build.mjs"
   },
   "engines": {
     "node": ">=22"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@netlify/blobs": "10.7.12"
+  },
   "devDependencies": {}
 }

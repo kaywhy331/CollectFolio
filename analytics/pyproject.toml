@@ -1,0 +1,10 @@
+[project]
+name = "collectfolio-analytics"
+version = "0.1.0"
+description = "Rights-gated, point-in-time analytics primitives for CollectFolio"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.collectfolio]
+publication-mode = "research-only"
+

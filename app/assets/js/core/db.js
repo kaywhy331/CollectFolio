@@ -1,9 +1,23 @@
-import { portfolioSummary, snapshotFor } from './calculations.js';
+import { portfolioSummary, snapshotFor, unitMarketValue } from './calculations.js';
+import { catalogReferenceForItem } from './catalog-identity.js';
+import { catalogPriceDisclosure } from './pricing-policy.js';
 import { createId, csvCell } from './utils.js';
 
 const NAME = 'collectfolio';
-const VERSION = 2;
-export const STORES = ['holdings', 'snapshots', 'settings', 'scans', 'catalogCache', 'deletions'];
+const VERSION = 3;
+const STORE_CONFIG = {
+  holdings: { keyPath: 'id' },
+  snapshots: { keyPath: 'id' },
+  settings: { keyPath: 'key' },
+  scans: { keyPath: 'id' },
+  catalogCache: { keyPath: 'key' },
+  deletions: { keyPath: 'id' },
+  watchlistItems: { keyPath: 'id' },
+  watchlistDeletions: { keyPath: 'id' },
+  intelligenceCache: { keyPath: 'key' },
+  alerts: { keyPath: 'id' }
+};
+export const STORES = Object.keys(STORE_CONFIG);
 let databasePromise;
 
 function requestResult(request) {
@@ -38,8 +52,14 @@ export function openDatabase() {
         if (!holdings.indexNames.contains('updatedAt')) holdings.createIndex('updatedAt', 'updatedAt', { unique: false });
       }
       for (const store of STORES.filter((name) => name !== 'holdings')) {
-        if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, { keyPath: store === 'settings' || store === 'catalogCache' ? 'key' : 'id' });
+        if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, STORE_CONFIG[store]);
       }
+      const watchlist = request.transaction.objectStore('watchlistItems');
+      if (!watchlist.indexNames.contains('watchKey')) watchlist.createIndex('watchKey', 'watchKey', { unique: true });
+      if (!watchlist.indexNames.contains('updatedAt')) watchlist.createIndex('updatedAt', 'updatedAt', { unique: false });
+      if (!watchlist.indexNames.contains('canonicalVariantId')) watchlist.createIndex('canonicalVariantId', 'canonicalVariantId', { unique: false });
+      const alerts = request.transaction.objectStore('alerts');
+      if (!alerts.indexNames.contains('triggeredAt')) alerts.createIndex('triggeredAt', 'triggeredAt', { unique: false });
     });
     request.addEventListener('success', () => resolve(request.result), { once: true });
     request.addEventListener('error', () => reject(request.error), { once: true });
@@ -65,6 +85,15 @@ export async function putRecord(storeName, value) {
   return value;
 }
 
+export async function putRecordClearingTombstone(storeName, tombstoneStoreName, value) {
+  const db = await openDatabase();
+  const transaction = db.transaction([storeName, tombstoneStoreName], 'readwrite');
+  transaction.objectStore(storeName).put(value);
+  transaction.objectStore(tombstoneStoreName).delete(value.id);
+  await transactionDone(transaction);
+  return value;
+}
+
 export async function deleteRecord(storeName, key) {
   const db = await openDatabase();
   const transaction = db.transaction(storeName, 'readwrite');
@@ -72,11 +101,25 @@ export async function deleteRecord(storeName, key) {
   await transactionDone(transaction);
 }
 
+export async function deleteRecordWithTombstone(storeName, tombstoneStoreName, key, deletedAt = new Date().toISOString()) {
+  const db = await openDatabase();
+  const transaction = db.transaction([storeName, tombstoneStoreName], 'readwrite');
+  transaction.objectStore(storeName).delete(key);
+  transaction.objectStore(tombstoneStoreName).put({ id: key, deletedAt, dirty: true });
+  await transactionDone(transaction);
+}
+
 export async function saveHolding(input) {
   const now = new Date().toISOString();
+  const catalogRef = catalogReferenceForItem(input.item, {
+    canonicalVariantId: input.canonicalVariantId || input.catalogVariantId,
+    conditionClass: input.grade ? 'graded' : 'raw'
+  });
   const holding = {
     id: input.id || createId(),
     catalogId: input.catalogId || `${input.item?.provider || 'custom'}:${input.item?.externalId || createId()}`,
+    catalogKey: input.catalogKey || catalogRef.watchKey,
+    canonicalVariantId: catalogRef.canonicalVariantId,
     item: { ...input.item },
     quantity: Math.max(1, Number(input.quantity) || 1),
     condition: input.condition || 'Near Mint',
@@ -116,12 +159,12 @@ export async function recordDailySnapshot(date = new Date()) {
 
 export async function exportBackup() {
   const stores = Object.fromEntries(await Promise.all(STORES.map(async (name) => [name, await getAll(name)])));
-  return { format: 'collectfolio-backup', version: 1, exportedAt: new Date().toISOString(), stores };
+  return { format: 'collectfolio-backup', version: 2, exportedAt: new Date().toISOString(), stores };
 }
 
 export async function importBackup(backup) {
-  if (!backup || backup.format !== 'collectfolio-backup' || backup.version !== 1 || typeof backup.stores !== 'object') {
-    throw new Error('This is not a valid CollectFolio interchange v1 backup.');
+  if (!backup || backup.format !== 'collectfolio-backup' || ![1, 2].includes(backup.version) || typeof backup.stores !== 'object') {
+    throw new Error('This is not a valid CollectFolio interchange backup.');
   }
   const db = await openDatabase();
   for (const name of STORES) {
@@ -142,8 +185,11 @@ export async function exportHoldingsCSV() {
   const headers = ['Name', 'Category', 'Game', 'Set', 'Number', 'Quantity', 'Condition', 'Grade company', 'Grade', 'Purchase price', 'Fees', 'Unit market value', 'Market value', 'Cost basis', 'Folder', 'Notes', 'Price source', 'Updated'];
   const rows = holdings.map((holding) => {
     const summary = portfolioSummary([holding]);
-    const unit = holding.manualMarketPrice !== '' && holding.manualMarketPrice != null ? Number(holding.manualMarketPrice) : Number(holding.item?.price) || 0;
-    return [holding.item?.name, holding.item?.category, holding.item?.game, holding.item?.setName, holding.item?.number, holding.quantity, holding.condition, holding.gradeCompany, holding.grade, holding.purchasePrice, holding.fees, unit, summary.marketValue, summary.costBasis, holding.folder, holding.notes, holding.item?.priceSource, holding.updatedAt];
+    const unit = unitMarketValue(holding);
+    const source = holding.manualMarketPrice !== '' && holding.manualMarketPrice != null
+      ? 'Manual value'
+      : catalogPriceDisclosure(holding.item) || holding.item?.priceSource;
+    return [holding.item?.name, holding.item?.category, holding.item?.game, holding.item?.setName, holding.item?.number, holding.quantity, holding.condition, holding.gradeCompany, holding.grade, holding.purchasePrice, holding.fees, unit, summary.marketValue, summary.costBasis, holding.folder, holding.notes, source, holding.updatedAt];
   });
   return [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
 }

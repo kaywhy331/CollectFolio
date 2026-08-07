@@ -1,4 +1,6 @@
 import { externalImage, pageHeader, priceDisclosure } from '../core/components.js';
+import { watchKeyForItem } from '../core/catalog-identity.js';
+import { catalogPriceForValuation, catalogPriceOptionsForDisplay } from '../core/pricing-policy.js';
 import { escapeAttribute, escapeHTML, formatCurrency } from '../core/utils.js';
 
 export function renderSearch(state) {
@@ -11,7 +13,7 @@ export function renderSearch(state) {
     </form>
     ${search.cached ? '<p class="fine-print">Showing the local 30-minute query cache.</p>' : ''}
     ${search.warnings.length ? `<div class="card" role="status"><p class="eyebrow">Partial results</p>${search.warnings.map((warning) => `<p class="muted">${escapeHTML(warning)}</p>`).join('')}</div>` : ''}
-    ${manualCategory ? `<section class="empty-state"><span class="empty-symbol">+</span><h2>Use a custom holding</h2><p>${escapeHTML(search.category)} catalogs do not have universal free pricing in this MVP. Your photo can be the canonical image.</p><button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create ${escapeHTML(search.category)} item</button></section>` : results(search.results, state.settings.currency)}`;
+    ${manualCategory ? `<section class="empty-state"><span class="empty-symbol">+</span><h2>Use a custom holding</h2><p>${escapeHTML(search.category)} catalogs do not have universal free pricing in this MVP. Your photo can be the canonical image.</p><button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create ${escapeHTML(search.category)} item</button></section>` : results(search.results, state.settings.currency, state.watchlistItems, state.featureFlags?.watchlists !== false)}`;
 }
 
 function categoryOptions(selected) {
@@ -19,7 +21,13 @@ function categoryOptions(selected) {
     .map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
 }
 
-function results(items, currency) {
+function results(items, currency, watchlistItems, watchlistsEnabled) {
   if (!items.length) return '<section class="empty-state"><span class="empty-symbol">⌕</span><h2>Find an exact printing</h2><p>Results include image, set, number, rarity or variant, selectable finish prices, source, and match score.</p></section>';
-  return `<div class="section-heading"><div><p class="eyebrow">${items.length} results</p><h2>Catalog candidates</h2></div></div><div class="result-list">${items.map((item, index) => `<article class="result-card">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}<div><h3>${escapeHTML(item.name)}</h3><p class="item-meta">${escapeHTML([item.game, item.setName, item.number, item.rarity || item.variant].filter(Boolean).join(' · '))}</p><p class="item-price">${item.price == null ? 'Price unavailable' : escapeHTML(formatCurrency(item.price, item.currency || currency))}</p>${priceDisclosure(item, item.currency || currency)}<div class="pill-row"><span class="pill">${escapeHTML(item.provider)}</span><span class="pill">${Math.round((item.matchScore || 0) * 100)}% text match</span>${item.priceOptions?.length > 1 ? `<span class="pill">${item.priceOptions.length} finishes</span>` : ''}</div><div class="item-actions"><button class="button small" type="button" data-action="add-catalog" data-index="${index}">Review and add</button></div></div></article>`).join('')}</div>`;
+  return `<div class="section-heading"><div><p class="eyebrow">${items.length} results</p><h2>Catalog candidates</h2></div></div><div class="result-list">${items.map((item, index) => {
+    const watching = watchlistItems.some((entry) => entry.watchKey === watchKeyForItem(item));
+    const visiblePriceOptions = catalogPriceOptionsForDisplay(item);
+    const price = catalogPriceForValuation(item);
+    const watchLabel = visiblePriceOptions.length > 1 ? `☆ Choose finish` : watching ? '★ Watching' : '☆ Watch';
+    return `<article class="result-card">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}<div><h3>${escapeHTML(item.name)}</h3><p class="item-meta">${escapeHTML([item.game, item.setName, item.number, item.rarity || item.variant].filter(Boolean).join(' · '))}</p><p class="item-price">${price === null ? 'Price unavailable' : escapeHTML(formatCurrency(price, item.currency || currency))}</p>${priceDisclosure(item, item.currency || currency)}<div class="pill-row"><span class="pill">${escapeHTML(item.provider)}</span><span class="pill">${Math.round((item.matchScore || 0) * 100)}% text match</span>${visiblePriceOptions.length > 1 ? `<span class="pill">${visiblePriceOptions.length} finishes</span>` : ''}</div><div class="item-actions"><button class="button small" type="button" data-action="add-catalog" data-index="${index}">Review and add</button>${watchlistsEnabled ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-index="${index}">${watchLabel}</button>` : ''}</div></div></article>`;
+  }).join('')}</div>`;
 }

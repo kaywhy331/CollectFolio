@@ -4,6 +4,7 @@ import {
   filterAndSortHoldings, holdingCostBasis, holdingMarketValue,
   portfolioSummary, snapshotFor, unitMarketValue
 } from '../app/assets/js/core/calculations.js';
+import { PRICING_POLICY_VERSION } from '../app/assets/js/core/pricing-policy.js';
 
 const holding = (overrides = {}) => ({
   id: overrides.id || 'one',
@@ -26,6 +27,17 @@ test('valuation separates provider price, manual override, quantity, and fees', 
   assert.equal(holdingMarketValue(manual), 40);
 });
 
+test('legacy unlicensed Pokémon prices do not enter valuation, while manual values still do', () => {
+  const restricted = holding();
+  restricted.item.provider = 'pokemon';
+  restricted.item.priceSource = 'Pokémon TCG API · TCGplayer market';
+  assert.equal(unitMarketValue(restricted), 0);
+  assert.equal(holdingMarketValue(restricted), 0);
+  restricted.manualMarketPrice = 18;
+  assert.equal(unitMarketValue(restricted), 18);
+  assert.equal(holdingMarketValue(restricted), 36);
+});
+
 test('portfolio summary uses exact cost and gain rules', () => {
   const summary = portfolioSummary([holding(), holding({ id: 'two', price: 5, quantity: 1, purchasePrice: 10, fees: 0 })]);
   assert.deepEqual({ market: summary.marketValue, cost: summary.costBasis, gain: summary.gain, quantity: summary.totalQuantity }, { market: 29, cost: 27, gain: 2, quantity: 3 });
@@ -43,6 +55,7 @@ test('holdings filter and sort by value, gain, name, and recency', () => {
 test('daily snapshot uses a stable replaceable portfolio ID', () => {
   const snapshot = snapshotFor([holding()], new Date('2026-07-31T12:00:00.000Z'));
   assert.equal(snapshot.id, 'portfolio:2026-07-31');
+  assert.equal(snapshot.pricingPolicyVersion, PRICING_POLICY_VERSION);
   assert.equal(snapshot.marketValue, 24);
   assert.equal(snapshot.costBasis, 17);
 });

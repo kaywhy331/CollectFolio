@@ -1,0 +1,30 @@
+name: Analytics check
+
+on:
+  pull_request:
+    paths:
+      - "analytics/**"
+      - "package.json"
+      - ".github/workflows/analytics-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "analytics/**"
+      - "package.json"
+      - ".github/workflows/analytics-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  analytics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run dependency-free analytics tests
+        run: PYTHONPATH=analytics/src python3 -m unittest discover -s analytics/tests -p 'test_*.py'
+

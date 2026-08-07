@@ -1,5 +1,9 @@
 dist/
 .netlify/
+node_modules/
 supabase/.temp/
 *.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
 .DS_Store
