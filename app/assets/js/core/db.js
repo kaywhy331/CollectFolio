@@ -4,7 +4,7 @@ import { catalogPriceDisclosure } from './pricing-policy.js';
 import { createId, csvCell } from './utils.js';
 
 const NAME = 'collectfolio';
-const VERSION = 3;
+const VERSION = 4;
 const STORE_CONFIG = {
   holdings: { keyPath: 'id' },
   snapshots: { keyPath: 'id' },
@@ -15,7 +15,10 @@ const STORE_CONFIG = {
   watchlistItems: { keyPath: 'id' },
   watchlistDeletions: { keyPath: 'id' },
   intelligenceCache: { keyPath: 'key' },
-  alerts: { keyPath: 'id' }
+  alerts: { keyPath: 'id' },
+  // Private, limited-retention outbox for first-party demand signals
+  // (PRD Sec 15.7). Entries are deleted locally once synced.
+  demandEventsQueue: { keyPath: 'id' }
 };
 export const STORES = Object.keys(STORE_CONFIG);
 let databasePromise;

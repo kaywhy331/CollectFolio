@@ -54,7 +54,7 @@ function requireConfig() {
   return { url: String(config().SUPABASE_URL).replace(/\/$/, ''), key: config().SUPABASE_ANON_KEY };
 }
 
-async function request(path, { method = 'GET', body, session, headers = {} } = {}) {
+export async function request(path, { method = 'GET', body, session, headers = {} } = {}) {
   const { url, key } = requireConfig();
   const response = await fetch(`${url}${path}`, {
     method,

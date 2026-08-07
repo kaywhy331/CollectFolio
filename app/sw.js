@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.2.4';
+const CACHE = 'collectfolio-shell-v0.2.5';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
@@ -16,6 +16,7 @@ const SHELL = [
   './assets/js/services/scan-review.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
   './assets/js/services/price-intelligence.js',
   './assets/js/services/justtcg-refresh.js',
+  './assets/js/services/demand-events.js',
   './assets/js/views/scan.js'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
