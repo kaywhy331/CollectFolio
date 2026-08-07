@@ -401,7 +401,10 @@ alter table public.model_scorecards
   add column matured_count integer,
   add column unscorable_count integer not null default 0,
   add column excluded_count integer not null default 0,
-  add column promotion_policy jsonb not null default '{"version":"legacy-unversioned"}'::jsonb,
+  -- jsonb_build_object instead of a quoted JSON literal: the Supabase CLI
+  -- statement splitter desyncs on double quotes inside single-quoted
+  -- strings and truncates a later statement mid-push. Same value exactly.
+  add column promotion_policy jsonb not null default jsonb_build_object('version', 'legacy-unversioned'),
   add column promotion_policy_hash text not null default repeat('0', 64),
   add column evaluation_membership_hash text not null default repeat('0', 64);
 update public.model_scorecards
@@ -646,7 +649,13 @@ begin
     end if;
 
     if coalesce(jsonb_array_length(policy->'requiredBaselines'), 0) <> 5
-       or not policy @> '{"requiredBaselines":["no_change","damped_momentum","market_index","lifecycle_cohort","structural_convergence"]}'::jsonb
+       -- jsonb_build_object/array instead of a quoted JSON literal: keeps
+       -- the Supabase CLI statement splitter away from double quotes inside
+       -- single-quoted strings. Same containment check exactly.
+       or not policy @> jsonb_build_object(
+         'requiredBaselines',
+         jsonb_build_array('no_change', 'damped_momentum', 'market_index', 'lifecycle_cohort', 'structural_convergence')
+       )
        or scorecard_metrics->'missingRequiredBaselines' is distinct from '[]'::jsonb
        or jsonb_typeof(policy->'minimumCases') is distinct from 'number'
        or jsonb_typeof(policy->'minimumBaselineLift') is distinct from 'number'
