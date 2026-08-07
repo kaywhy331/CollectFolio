@@ -21,13 +21,16 @@ import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
 import { renderPortfolio } from './views/portfolio.js';
+import { renderPriceIntelligenceDetail } from './views/price-intelligence-detail.js';
 import { renderProfile } from './views/profile.js';
 import { renderSearch } from './views/search.js';
 import { renderScanReview } from './views/scan.js';
+import { catalogReferenceForItem } from './core/catalog-identity.js';
 
 const root = document.querySelector('#main-content');
 const defaults = { currency: 'USD', theme: 'dark', demandAnalyticsOptOut: false };
 let activeDraft = null;
+let activeDetail = null;
 
 root.addEventListener('error', (event) => {
   const image = event.target;
@@ -47,7 +50,7 @@ root.addEventListener('error', (event) => {
 }, true);
 
 function render(state = getState()) {
-  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile, scan: () => renderScanReview(activeDraft, state) };
+  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile, scan: () => renderScanReview(activeDraft, state), detail: () => renderPriceIntelligenceDetail(activeDetail, state) };
   root.innerHTML = state.ready ? (views[state.activeView] || renderHome)(state) : '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>';
   document.querySelectorAll('.bottom-nav [data-view]').forEach((button) => {
     const selected = button.dataset.view === state.activeView;
@@ -493,6 +496,21 @@ function watchlistPreferencesForm(entry) {
   });
 }
 
+// Opens the price-intelligence detail view for an item resolved from search,
+// a holding, or a watchlist entry. card_view (and search_view when arriving
+// from search) demand events are recorded here — both are no-ops for
+// unmapped items, opted-out users, and signed-out sessions.
+function openDetail(detail) {
+  const catalogRef = catalogReferenceForItem(detail.item, {
+    canonicalVariantId: detail.holding?.canonicalVariantId || detail.watched?.canonicalVariantId,
+    conditionClass: detail.holding?.grade ? 'graded' : detail.watched?.catalogRef?.conditionClass
+  });
+  activeDetail = { ...detail, catalogRef };
+  recordDemandEvent(catalogRef.canonicalVariantId, 'card_view').catch(() => {});
+  if (detail.origin === 'search') recordDemandEvent(catalogRef.canonicalVariantId, 'search_view').catch(() => {});
+  navigate('detail');
+}
+
 function chooseScanImage(single) {
   openModal({ title: single ? 'Scan one item' : 'Scan multiple items', content: `<p>Choose a camera or library image. Detection, cropping, and OCR run in this browser.</p><label>Source photo<input id="scan-source" type="file" accept="image/*" capture="environment"></label><p class="fine-print">The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelector('#scan-source').addEventListener('change', async (event) => {
@@ -584,6 +602,26 @@ root.addEventListener('click', async (event) => {
     const item = getState().search.results[Number(action.dataset.index)];
     if (item) holdingForm(null, { title: 'Review catalog match', item });
   }
+  if (action.dataset.action === 'open-detail') {
+    if (action.dataset.index !== undefined) {
+      const item = getState().search.results[Number(action.dataset.index)];
+      if (item) openDetail({ origin: 'search', item });
+    } else if (action.dataset.holdingId) {
+      const holding = getState().holdings.find((entry) => entry.id === action.dataset.holdingId);
+      if (holding) openDetail({ origin: 'portfolio', item: holding.item, holding });
+    } else if (action.dataset.watchKey) {
+      const watched = getState().watchlistItems.find((entry) => entry.watchKey === action.dataset.watchKey);
+      if (watched) openDetail({ origin: 'portfolio', item: { ...watched.catalogRef, variant: watched.catalogRef.finish }, watched });
+    }
+  }
+  if (action.dataset.action === 'close-detail') {
+    const origin = activeDetail?.origin === 'search' ? 'search' : 'portfolio';
+    activeDetail = null;
+    navigate(origin);
+  }
+  if (action.dataset.action === 'add-from-detail' && activeDetail) {
+    holdingForm(null, { title: 'Add card to portfolio', item: { ...activeDetail.item, canonicalVariantId: activeDetail.catalogRef.canonicalVariantId } });
+  }
   if (action.dataset.action === 'toggle-watch') {
     let item = null;
     let options = {};
@@ -591,6 +629,13 @@ root.addEventListener('click', async (event) => {
     if (action.dataset.index !== undefined) {
       item = getState().search.results[Number(action.dataset.index)];
       chooseFinish = catalogPriceOptionsForDisplay(item).length > 1;
+    }
+    if (action.dataset.detailWatch && activeDetail) {
+      item = activeDetail.item;
+      options = {
+        canonicalVariantId: activeDetail.catalogRef.canonicalVariantId,
+        conditionClass: activeDetail.catalogRef.conditionClass
+      };
     }
     if (action.dataset.holdingId) {
       const holding = getState().holdings.find((entry) => entry.id === action.dataset.holdingId);
