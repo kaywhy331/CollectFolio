@@ -1,0 +1,62 @@
+# Catalog seed validation — deliberately manual-only.
+#
+# There is NO schedule here on purpose: bulk catalog ingestion stays parked
+# behind the PRD Sec 36.4 rights review of pokemon-tcg-data/TCGdex. This
+# workflow only proves the parsing/packet pipeline stays healthy; it has no
+# secrets, performs no network fetches beyond checkout, and writes to no
+# database. Activation (a schedule plus an operator-applied SQL step) is a
+# separate, explicitly reviewed change.
+name: Catalog seed validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run catalog seed unit tests
+        run: PYTHONPATH=analytics/src python3 -m unittest analytics.tests.test_catalog_seed -v
+      - name: Build a fixture packet end-to-end
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/seed/cards
+          cat > /tmp/seed/sets.json <<'JSON'
+          [{"id": "demo1", "name": "Demo Expansion", "series": "Demo", "releaseDate": "2026/01/01"}]
+          JSON
+          cat > /tmp/seed/cards/demo1.json <<'JSON'
+          [{"name": "Demo Card", "number": "1", "rarity": "Common"}]
+          JSON
+          cat > /tmp/seed/manifest.json <<'JSON'
+          {
+            "rights": {
+              "source_code": "workflow_fixture",
+              "terms_url": "https://example.test/terms",
+              "review_decision": "research_only",
+              "catalog_metadata_allowed": true,
+              "reviewed_at": "2026-08-07T00:00:00Z",
+              "document_hash": "fixture"
+            },
+            "sets_path": "sets.json",
+            "cards_dir": "cards",
+            "set_ids": ["demo1"]
+          }
+          JSON
+          PYTHONPATH=analytics/src python3 -m collectfolio_analytics.catalog_seed_cli /tmp/seed/manifest.json /tmp/seed/packet.json
+          python3 - <<'PY'
+          import json
+          packet = json.load(open("/tmp/seed/packet.json"))
+          assert packet["mode"] == "research_only_catalog_seed", packet["mode"]
+          assert packet["review_required"] is True
+          assert packet["public_display_candidates"] == []
+          assert packet["counts"] == {"sets": 1, "cards": 1, "variants": 1}
+          print("fixture packet OK:", packet["packet_hash"])
+          PY
