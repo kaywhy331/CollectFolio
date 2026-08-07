@@ -473,6 +473,7 @@ declare
   scorecard_horizon integer;
   scorecard_model uuid;
   scorecard_run uuid;
+  expected_reason_codes text[];
   scorecard_origin_start timestamptz;
   scorecard_origin_end timestamptz;
 begin
@@ -518,13 +519,22 @@ begin
      and stored_status = 'scored' then
     raise exception 'Eligible scored evaluation must enter scorecard metrics';
   end if;
-  if not new.included_in_metrics and new.reason_codes <> case
+  -- The CASE is hoisted into a variable so its terminating keyword is
+  -- followed by a semicolon: Supabase's server-side SQL handling truncates
+  -- a statement when a CASE expression sits directly inside an IF
+  -- condition (its terminator immediately preceding the IF's own keyword),
+  -- failing the migration with a syntax error at end-of-input. Reproduced
+  -- and bisected against the hosted project; identifiers merely ending in
+  -- _end, and a CASE terminator followed by a comma or semicolon, are all
+  -- unaffected. Behavior is identical.
+  expected_reason_codes := case
     when prediction_status = 'quarantined'
       then array['quarantined_prediction_excluded']
     when stored_status = 'unscorable'
       then array['unscorable_target_excluded']
     else array[]::text[]
-  end then
+  end;
+  if not new.included_in_metrics and new.reason_codes <> expected_reason_codes then
     raise exception 'Excluded scorecard membership reason is inconsistent';
   end if;
   return new;
