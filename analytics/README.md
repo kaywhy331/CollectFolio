@@ -24,6 +24,9 @@ Included primitives:
 - honest retrospective walk-forward origins with deterministic private evaluations, exact scorecard membership/policy hashes, and operator-gated scorecards; and
 - guarded SQL export that defaults to a rollback rehearsal and refuses rights-open, backdated, unlabeled, lineage/hash-tampered, public-candidate, automatically promoted, or already-published packets.
 - first-party demand-velocity and acceleration features (watchlist, search, portfolio-add, view) built only from privacy-threshold-met `aggregate_demand_snapshots` periods ending at or before the feature cutoff, so a below-threshold or future period can never enter a windowed rate.
+- a rights-gated catalog seed (`catalog_seed.py` + `catalog_seed_cli.py`) that parses operator-downloaded pokemon-tcg-data-shaped exports into deterministic canonical set/card rows plus unspecified-finish placeholder variants, refuses to run without an explicit research-only/approved review acknowledgment with catalog-metadata permission, ingests no imagery, and emits a reviewable no-write packet. Its `catalog-sync.yml` workflow is deliberately `workflow_dispatch`-only until the PRD Sec 36.4 rights review completes.
+- bounded Wikimedia per-article daily pageview ingestion (`wikimedia.py`) with a mandatory identifying User-Agent/Api-User-Agent, operator-curated character-to-article mappings, redirect refusal, response-size and window bounds, and `available_at` stamped with the retrieval instant so a backfill can never claim historical availability.
+- a curated pull-rate registry validator (`pull_rates.py`) that checks published one-in-packs figures against the PRD scarcity formulas within a rounding tolerance, requires confidence intervals to bracket the point estimate, derives card-specific probabilities only under the explicit equal-distribution acknowledgment, and emits versioned, review-gated rows for the append-only migration-0009 tables.
 
 Run the suite from the repository root:
 
