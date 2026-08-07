@@ -72,6 +72,10 @@ export function normalizeIntelligencePayload(publication = {}) {
     };
   }
 
+  const scorecards = Array.isArray(input.scorecards)
+    ? input.scorecards.map(normalizeModelScorecard).filter(Boolean).slice(0, 5)
+    : [];
+
   const drivers = input.drivers && typeof input.drivers === 'object' ? {
     supporting: Array.isArray(input.drivers.supporting) ? input.drivers.supporting.slice(0, 5).map((entry) => text(entry, 240)).filter(Boolean) : [],
     limiting: Array.isArray(input.drivers.limiting) ? input.drivers.limiting.slice(0, 5).map((entry) => text(entry, 240)).filter(Boolean) : []
@@ -84,6 +88,9 @@ export function normalizeIntelligencePayload(publication = {}) {
     trend: supportTier >= 2 ? trend : { return7d: null, return30d: null, return90d: null, return180d: null, return365d: null, status: 'insufficient', volatility: null, confidence: null, historyDensity: null },
     fairValue: supportTier >= 3 ? fairValue : null,
     forecasts: supportTier >= 4 ? forecasts : {},
+    // Tier 5 is "Fully evaluated" (PRD Sec 12): scorecards require matured,
+    // held-out prediction history and never appear below that tier.
+    scorecards: supportTier >= 5 ? scorecards : [],
     drivers,
     reasonCodes: Array.isArray(publication.reasonCodes) ? publication.reasonCodes.map((entry) => text(entry, 80)).filter(Boolean) : [],
     sourceAttributions: Array.isArray(publication.sourceAttributions) ? publication.sourceAttributions.slice(0, 10).map((entry) => ({
@@ -93,6 +100,36 @@ export function normalizeIntelligencePayload(publication = {}) {
     })).filter((entry) => entry.name) : [],
     publishedAt: publication.publishedAt || '',
     expiresAt: publication.expiresAt || ''
+  };
+}
+
+/** Validates one PRD Sec 14.6 model scorecard entry. Returns null rather
+ * than a partially trusted object when any required field is missing or out
+ * of range — public model claims must come from complete held-out results,
+ * never a reconstructed fragment. */
+export function normalizeModelScorecard(input = {}) {
+  if (!input || typeof input !== 'object') return null;
+  const modelVersion = text(input.modelVersion, 120);
+  const cohort = text(input.cohort, 160);
+  const horizon = Number(input.horizonDays);
+  const matured = Number(input.maturedForecasts);
+  const medianAbsoluteErrorPct = nonNegative(input.medianAbsoluteErrorPct);
+  const directionAccuracy = bounded(input.directionAccuracy, 0, 1);
+  const interval80Coverage = bounded(input.interval80Coverage, 0, 1);
+  const baselineErrorPct = nonNegative(input.baselineErrorPct);
+  if (!modelVersion || !cohort || !HORIZONS.has(horizon)) return null;
+  if (!Number.isInteger(matured) || matured < 1) return null;
+  if (medianAbsoluteErrorPct === null || directionAccuracy === null || interval80Coverage === null || baselineErrorPct === null) return null;
+  return {
+    modelVersion,
+    cohort,
+    horizonDays: horizon,
+    maturedForecasts: matured,
+    medianAbsoluteErrorPct,
+    directionAccuracy,
+    interval80Coverage,
+    baselineErrorPct,
+    lastTrained: text(input.lastTrained, 40)
   };
 }
 

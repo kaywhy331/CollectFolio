@@ -9,6 +9,7 @@ let state = {
   settings: { currency: 'USD', theme: 'dark', demandAnalyticsOptOut: false },
   search: { query: '', category: 'all', provider: 'all', loading: false, results: [], warnings: [] },
   portfolio: { section: 'holdings', query: '', category: 'all', sort: 'value-desc' },
+  compare: [],
   featureFlags: { watchlists: true, publicPriceIntelligence: false, loaded: false },
   intelligence: { byVariant: {}, loading: false, error: '', lastRefresh: '' },
   auth: { session: null, syncing: false, refreshingPrices: false },

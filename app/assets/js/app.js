@@ -26,6 +26,7 @@ import { renderProfile } from './views/profile.js';
 import { renderSearch } from './views/search.js';
 import { renderScanReview } from './views/scan.js';
 import { catalogReferenceForItem } from './core/catalog-identity.js';
+import { buildComparison, COMPARE_LIMIT, toggleCompareSelection } from './core/compare.js';
 
 const root = document.querySelector('#main-content');
 const defaults = { currency: 'USD', theme: 'dark', demandAnalyticsOptOut: false };
@@ -75,6 +76,7 @@ async function loadLocal() {
     holdings,
     snapshots: currentPricingSnapshots(snapshots).sort((a, b) => a.date.localeCompare(b.date)),
     watchlistItems: watchlistItems.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))),
+    compare: (getState().compare || []).filter((key) => watchlistItems.some((entry) => entry.watchKey === key)),
     alerts: alerts.sort((a, b) => String(b.triggeredAt).localeCompare(String(a.triggeredAt))),
     settings,
     featureFlags: getState().featureFlags.loaded
@@ -511,6 +513,30 @@ function openDetail(detail) {
   navigate('detail');
 }
 
+// PRD Sec 11.4: side-by-side comparison of up to four watched cards. The
+// modal shows each column's evidence confidence and refuses to present
+// mixed-confidence columns as like-for-like without saying so.
+function openCompareModal() {
+  const state = getState();
+  const comparison = buildComparison(state.compare, state.watchlistItems, state.intelligence?.byVariant || {}, state.settings.currency);
+  if (comparison.columns.length < 2) { showToast('Select at least two watched cards to compare', 'warning'); return; }
+  const rows = [
+    ['Current price', (column) => column.price],
+    ['30-day return', (column) => column.return30d],
+    ['90-day return', (column) => column.return90d],
+    ['1-year return', (column) => column.return365d],
+    ['Trend', (column) => column.trendStatus],
+    ['Volatility', (column) => column.volatility],
+    ['Fair-value position', (column) => column.fairValuePosition],
+    ['1Y probability of gain', (column) => column.probabilityUp],
+    ['Evidence confidence', (column) => column.confidenceLabel]
+  ];
+  const content = `<div class="compare-scroll"><table class="compare-table"><thead><tr><th scope="col"></th>${comparison.columns.map((column) => `<th scope="col">${escapeHTML(column.name)}<span class="fine-print">${escapeHTML(column.meta)}</span><span class="support-badge ${column.supportTier >= 4 ? 'supported' : column.supportTier >= 2 ? 'partial' : 'unsupported'}">Tier ${column.supportTier}</span></th>`).join('')}</tr></thead><tbody>${rows.map(([label, cell]) => `<tr><th scope="row">${escapeHTML(label)}</th>${comparison.columns.map((column) => `<td>${escapeHTML(cell(column))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+    ${comparison.confidenceDiffers ? '<p class="fine-print negative" role="status">Evidence confidence differs across these cards — the columns are not like-for-like comparisons.</p>' : ''}
+    <p class="fine-print">Unavailable values show a dash instead of an invented number.</p>`;
+  openModal({ title: 'Compare watched cards', content, actions: '<button class="button" type="button" data-close-modal>Close</button>' });
+}
+
 function chooseScanImage(single) {
   openModal({ title: single ? 'Scan one item' : 'Scan multiple items', content: `<p>Choose a camera or library image. Detection, cropping, and OCR run in this browser.</p><label>Source photo<input id="scan-source" type="file" accept="image/*" capture="environment"></label><p class="fine-print">The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelector('#scan-source').addEventListener('change', async (event) => {
@@ -602,6 +628,17 @@ root.addEventListener('click', async (event) => {
     const item = getState().search.results[Number(action.dataset.index)];
     if (item) holdingForm(null, { title: 'Review catalog match', item });
   }
+  if (action.dataset.action === 'toggle-compare') {
+    const before = getState().compare || [];
+    const after = toggleCompareSelection(before, action.dataset.watchKey);
+    if (after === before && !before.includes(action.dataset.watchKey)) {
+      showToast(`Compare holds at most ${COMPARE_LIMIT} cards`, 'warning');
+    } else {
+      setState({ compare: after });
+    }
+  }
+  if (action.dataset.action === 'clear-compare') setState({ compare: [] });
+  if (action.dataset.action === 'open-compare') openCompareModal();
   if (action.dataset.action === 'open-detail') {
     if (action.dataset.index !== undefined) {
       const item = getState().search.results[Number(action.dataset.index)];

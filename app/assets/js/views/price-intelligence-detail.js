@@ -68,7 +68,24 @@ function intelligenceSections(intelligence, fallbackCurrency) {
   return `${trendSection(intelligence)}
     ${fairValueSection(intelligence, currency)}
     ${forecastSection(intelligence, currency)}
+    ${scorecardSection(intelligence)}
     ${driverSection(intelligence)}`;
+}
+
+// PRD Sec 14.6. Rendered only from tier-5 publications — the contract strips
+// scorecards below "Fully evaluated", so this section simply disappears for
+// cards without matured, held-out prediction history.
+function scorecardSection(intelligence) {
+  if (!intelligence.scorecards.length) return '';
+  return intelligence.scorecards.map((card) => `<section class="card"><div class="section-heading"><div><p class="eyebrow">${card.horizonDays}-day model · ${escapeHTML(card.cohort)}</p><h2>Model scorecard</h2></div></div>
+    <div class="forecast-grid">
+      <div><span>Matured forecasts</span><strong>${card.maturedForecasts}</strong></div>
+      <div><span>Median absolute error</span><strong>${escapeHTML(formatPercent(card.medianAbsoluteErrorPct))}</strong></div>
+      <div><span>Direction accuracy</span><strong>${escapeHTML(formatPercent(card.directionAccuracy * 100))}</strong></div>
+      <div><span>80% interval coverage</span><strong>${escapeHTML(formatPercent(card.interval80Coverage * 100))}</strong></div>
+      <div><span>No-change baseline error</span><strong>${escapeHTML(formatPercent(card.baselineErrorPct))}</strong></div>
+    </div>
+    <p class="fine-print">Model ${escapeHTML(card.modelVersion)}${card.lastTrained ? ` · Last trained ${escapeHTML(card.lastTrained.slice(0, 10))}` : ''} · Held-out or prospective results only.</p></section>`).join('');
 }
 
 function trendSection(intelligence) {
