@@ -1,0 +1,69 @@
+{
+  "mode": "research_only",
+  "source": {
+    "id": "f24c78f8-d4b9-55a3-a8f7-b05d484c052e",
+    "termsReviewId": "3bc792cf-ad71-54d1-a2f6-d5d5d521fba5",
+    "currentTermsReviewId": "3bc792cf-ad71-54d1-a2f6-d5d5d521fba5",
+    "code": "tcgcsv-research",
+    "name": "TCGCSV research archive",
+    "termsUrl": "https://tcgcsv.com/docs",
+    "decision": "research_only",
+    "active": true,
+    "commercialUseAllowed": false,
+    "catalogMetadataAllowed": false,
+    "publicRawDisplayAllowed": false,
+    "publicDerivedDisplayAllowed": false,
+    "attributionRequired": false,
+    "attributionText": "",
+    "documentHash": "91d6e2d69c3b3593c0f61a9ee00e8647adf638349197911a8fb9297697618fb6",
+    "reviewedAt": "2026-08-05T20:30:00+00:00",
+    "expiresAt": "2026-11-03T20:30:00+00:00"
+  },
+  "tcgcsv": {
+    "baseUrl": "https://tcgcsv.com/",
+    "categoryId": 3,
+    "groupId": 23651,
+    "productIds": [590027],
+    "userAgent": "CollectFolio/0.1 research qualification (+https://github.com/kaywhy331/CollectFolio)"
+  },
+  "canonicalVariants": [
+    {
+      "game": "pokemon",
+      "language": "en",
+      "setCode": "sv8",
+      "setName": "Surging Sparks",
+      "series": "Scarlet & Violet",
+      "releaseDate": "2024-11-08",
+      "name": "Pikachu ex",
+      "number": "238",
+      "rarity": "Special Illustration Rare",
+      "artist": "",
+      "edition": "standard",
+      "finish": "holofoil",
+      "variantName": "",
+      "conditionClass": "raw"
+    }
+  ],
+  "mappingReview": {
+    "decision": "approved",
+    "scope": "research_only",
+    "reviewerLabel": "Codex-assisted operator identity correction",
+    "reviewedAt": "2026-08-08T16:36:22+00:00",
+    "document": "docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md",
+    "documentHash": "90affc83a1341382185c42f63f2767c6a6bc38014477cddc5a1d1a777f78750a"
+  },
+  "approvedMappings": [
+    {
+      "mappingId": "649be0ee-0893-459a-bad6-331a218e069b",
+      "externalProductId": "590027",
+      "externalVariantKey": "holofoil",
+      "variantId": "af796afb-d8d3-5b4b-a95a-417e39e77b0a",
+      "mappingConfidence": 1.0,
+      "finish": "holofoil",
+      "conditionClass": "raw"
+    }
+  ],
+  "ingestionRunId": "a64773a6-7ff8-5c32-a4ed-6116d0a1ec83",
+  "mappingVersion": "tcgcsv-research-mapping-v2",
+  "actorLabel": "tcgcsv-research-adapter-v2"
+}

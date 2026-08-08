@@ -1,0 +1,433 @@
+{
+  "mode": "research_only_pull_rate_curation",
+  "generated_at": "2026-08-08T16:00:00Z",
+  "source_review": {
+    "decision": "research_only",
+    "document_path": "docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md",
+    "document_sha256": "f0ed16a3d2f83cff1c97e0d98b5a61b8c15ac538a8309ce33f9ceb24bdaf5b78"
+  },
+  "source_defaults": {
+    "publisher": "TCGplayer",
+    "retrieved_at": "2026-08-08T15:56:23Z",
+    "sample_size_kind": "reported_lower_bound",
+    "region": "us",
+    "language": "en",
+    "methodology": "Authentication Center pack-opening study; the article reports per-pack rarity estimates, 95% confidence intervals, and rounded one-in-pack communication values."
+  },
+  "default_collation_notes": "Published point estimate, 95% margin, and rounded one-in figure are transcribed from the article's overall rarity table. When eligible_count is present, specific values are CollectFolio PRD derivations under the article's stated equal-population assumption, not guaranteed-hit figures.",
+  "target_sets": [
+    {"set_code": "sv1", "name": "Scarlet & Violet", "series": "Scarlet & Violet", "release_date": "2023-03-31"},
+    {"set_code": "sv2", "name": "Paldea Evolved", "series": "Scarlet & Violet", "release_date": "2023-06-09"},
+    {"set_code": "sv3", "name": "Obsidian Flames", "series": "Scarlet & Violet", "release_date": "2023-08-11"},
+    {"set_code": "sv3pt5", "name": "151", "series": "Scarlet & Violet", "release_date": "2023-09-22"},
+    {"set_code": "sv4", "name": "Paradox Rift", "series": "Scarlet & Violet", "release_date": "2023-11-03"},
+    {"set_code": "sv4pt5", "name": "Paldean Fates", "series": "Scarlet & Violet", "release_date": "2024-01-26"},
+    {"set_code": "sv5", "name": "Temporal Forces", "series": "Scarlet & Violet", "release_date": "2024-03-22"},
+    {"set_code": "sv6", "name": "Twilight Masquerade", "series": "Scarlet & Violet", "release_date": "2024-05-24"},
+    {"set_code": "sv6pt5", "name": "Shrouded Fable", "series": "Scarlet & Violet", "release_date": "2024-08-02"},
+    {"set_code": "sv7", "name": "Stellar Crown", "series": "Scarlet & Violet", "release_date": "2024-09-13"},
+    {"set_code": "sv8", "name": "Surging Sparks", "series": "Scarlet & Violet", "release_date": "2024-11-08"},
+    {"set_code": "sv8pt5", "name": "Prismatic Evolutions", "series": "Scarlet & Violet", "release_date": "2025-01-17"},
+    {"set_code": "sv9", "name": "Journey Together", "series": "Scarlet & Violet", "release_date": "2025-03-28"},
+    {"set_code": "sv10", "name": "Destined Rivals", "series": "Scarlet & Violet", "release_date": "2025-05-30"},
+    {"set_code": "zsv10pt5", "name": "Black Bolt", "series": "Scarlet & Violet", "release_date": "2025-07-18"},
+    {"set_code": "rsv10pt5", "name": "White Flare", "series": "Scarlet & Violet", "release_date": "2025-07-18"},
+    {"set_code": "me1", "name": "Mega Evolution", "series": "Mega Evolution", "release_date": "2025-09-26"},
+    {"set_code": "me2", "name": "Phantasmal Flames", "series": "Mega Evolution", "release_date": "2025-11-14"},
+    {"set_code": "me2pt5", "name": "Ascended Heroes", "series": "Mega Evolution", "release_date": "2026-01-30"},
+    {"set_code": "me3", "name": "Perfect Order", "series": "Mega Evolution", "release_date": "2026-03-27"},
+    {"set_code": "me4", "name": "Chaos Rising", "series": "Mega Evolution", "release_date": "2026-05-22"},
+    {"set_code": "me5", "name": "Pitch Black", "series": "Mega Evolution", "release_date": "2026-07-17"}
+  ],
+  "studies": [
+    {
+      "source": {
+        "title": "Pokémon TCG: Scarlet & Violet Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Scarlet-Violet-Pull-Rates/a7702fce-dd64-4a58-beb1-0f871c853215/",
+        "article_id": "a7702fce-dd64-4a58-beb1-0f871c853215",
+        "published_at": "2023-03-31",
+        "article_updated_at": "2025-02-27T19:33:12Z",
+        "article_body_sha256": "9179aaa10afe75913630ae9050cbbc8a83ddfa92cc2c59de3e97c8886aa14dc6",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "collation_notes": "Specific fields are omitted because the article does not explicitly state an equal-population assumption.",
+      "entries": [
+        {"set_code": "sv1", "rarity_slot": "double-rare", "published_probability_percent": 13.76, "published_ci_margin_percentage_points": 0.73, "one_in_packs": 7, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv1", "rarity_slot": "ultra-rare", "published_probability_percent": 6.57, "published_ci_margin_percentage_points": 0.52, "one_in_packs": 15, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv1", "rarity_slot": "illustration-rare", "published_probability_percent": 7.67, "published_ci_margin_percentage_points": 0.56, "one_in_packs": 13, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv1", "rarity_slot": "special-illustration-rare", "published_probability_percent": 3.15, "published_ci_margin_percentage_points": 0.37, "one_in_packs": 32, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv1", "rarity_slot": "hyper-rare", "published_probability_percent": 1.85, "published_ci_margin_percentage_points": 0.28, "one_in_packs": 54, "eligible_count": null, "equal_distribution_assumed": false}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Paldea Evolved Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Paldea-Evolved-Pull-Rates/1b7d3e70-9542-4a50-8692-1661e2316521/",
+        "article_id": "1b7d3e70-9542-4a50-8692-1661e2316521",
+        "published_at": "2023-06-09",
+        "article_updated_at": "2025-02-27T19:31:27Z",
+        "article_body_sha256": "79146128fc7ba8213bb9126b224df247bd6d151ab2a6153a75ed2e6debca9a1e",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "collation_notes": "Specific fields are omitted because the article does not explicitly state an equal-population assumption.",
+      "entries": [
+        {"set_code": "sv2", "rarity_slot": "double-rare", "published_probability_percent": 13.72, "published_ci_margin_percentage_points": 0.73, "one_in_packs": 7, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv2", "rarity_slot": "ultra-rare", "published_probability_percent": 6.64, "published_ci_margin_percentage_points": 0.53, "one_in_packs": 15, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv2", "rarity_slot": "illustration-rare", "published_probability_percent": 7.70, "published_ci_margin_percentage_points": 0.56, "one_in_packs": 13, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv2", "rarity_slot": "special-illustration-rare", "published_probability_percent": 3.17, "published_ci_margin_percentage_points": 0.37, "one_in_packs": 32, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv2", "rarity_slot": "hyper-rare", "published_probability_percent": 1.76, "published_ci_margin_percentage_points": 0.28, "one_in_packs": 57, "eligible_count": null, "equal_distribution_assumed": false}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Obsidian Flames Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Obsidian-Flames-Pull-Rates/e2a66999-a7b5-4621-9765-c9a132e04bd2/",
+        "article_id": "e2a66999-a7b5-4621-9765-c9a132e04bd2",
+        "published_at": "2023-08-11",
+        "article_updated_at": "2025-02-27T19:29:50Z",
+        "article_body_sha256": "57420aba87aaa8439aa3e8d635708a4bda5ca82d76251ca5f21ccb6032db69fd",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "collation_notes": "Specific fields are omitted because the article does not explicitly state an equal-population assumption.",
+      "entries": [
+        {"set_code": "sv3", "rarity_slot": "double-rare", "published_probability_percent": 13.61, "published_ci_margin_percentage_points": 0.72, "one_in_packs": 7, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv3", "rarity_slot": "ultra-rare", "published_probability_percent": 6.63, "published_ci_margin_percentage_points": 0.52, "one_in_packs": 15, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv3", "rarity_slot": "illustration-rare", "published_probability_percent": 7.60, "published_ci_margin_percentage_points": 0.56, "one_in_packs": 13, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv3", "rarity_slot": "special-illustration-rare", "published_probability_percent": 3.13, "published_ci_margin_percentage_points": 0.37, "one_in_packs": 32, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "sv3", "rarity_slot": "hyper-rare", "published_probability_percent": 1.92, "published_ci_margin_percentage_points": 0.29, "one_in_packs": 52, "eligible_count": null, "equal_distribution_assumed": false}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Scarlet & Violet—151 Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Scarlet-Violet%E2%80%94151-Pull-Rates/b237df74-fbb0-40d0-9e13-d69ee6e804d9/",
+        "article_id": "b237df74-fbb0-40d0-9e13-d69ee6e804d9",
+        "published_at": "2023-09-22",
+        "article_updated_at": "2025-02-27T19:27:46Z",
+        "article_body_sha256": "db330505d3dfcd53ed72ef74f85bd1da23ac7bd8a199bef89a9903400292e299",
+        "sample_size": 1500,
+        "confidence_grade": "low"
+      },
+      "entries": [
+        {"set_code": "sv3pt5", "rarity_slot": "foil-energy", "published_probability_percent": 24.83, "published_ci_margin_percentage_points": 2.00, "one_in_packs": 4, "eligible_count": 8, "equal_distribution_assumed": true},
+        {"set_code": "sv3pt5", "rarity_slot": "double-rare", "published_probability_percent": 13.28, "published_ci_margin_percentage_points": 1.57, "one_in_packs": 8, "eligible_count": 12, "equal_distribution_assumed": true},
+        {"set_code": "sv3pt5", "rarity_slot": "ultra-rare", "published_probability_percent": 6.44, "published_ci_margin_percentage_points": 1.13, "one_in_packs": 16, "eligible_count": 16, "equal_distribution_assumed": true},
+        {"set_code": "sv3pt5", "rarity_slot": "illustration-rare", "published_probability_percent": 8.50, "published_ci_margin_percentage_points": 1.29, "one_in_packs": 12, "eligible_count": 16, "equal_distribution_assumed": true},
+        {"set_code": "sv3pt5", "rarity_slot": "special-illustration-rare", "published_probability_percent": 3.11, "published_ci_margin_percentage_points": 0.80, "one_in_packs": 32, "eligible_count": 7, "equal_distribution_assumed": true},
+        {"set_code": "sv3pt5", "rarity_slot": "hyper-rare", "published_probability_percent": 1.94, "published_ci_margin_percentage_points": 0.64, "one_in_packs": 51, "eligible_count": 3, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Paradox Rift Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Paradox-Rift-Pull-Rates/0b5fb648-38fc-4f61-a6af-57c2737b4a48/",
+        "article_id": "0b5fb648-38fc-4f61-a6af-57c2737b4a48",
+        "published_at": "2023-11-04",
+        "article_updated_at": "2025-02-27T19:26:21Z",
+        "article_body_sha256": "80d489af55b2af897c2cd749023000e4551ee74a0d185d755b0f5002cc43f040",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "sv4", "rarity_slot": "double-rare", "published_probability_percent": 15.57, "published_ci_margin_percentage_points": 0.76, "one_in_packs": 6, "eligible_count": 20, "equal_distribution_assumed": true},
+        {"set_code": "sv4", "rarity_slot": "ultra-rare", "published_probability_percent": 6.64, "published_ci_margin_percentage_points": 0.53, "one_in_packs": 15, "eligible_count": 28, "equal_distribution_assumed": true},
+        {"set_code": "sv4", "rarity_slot": "illustration-rare", "published_probability_percent": 7.70, "published_ci_margin_percentage_points": 0.56, "one_in_packs": 13, "eligible_count": 34, "equal_distribution_assumed": true},
+        {"set_code": "sv4", "rarity_slot": "special-illustration-rare", "published_probability_percent": 2.11, "published_ci_margin_percentage_points": 0.30, "one_in_packs": 47, "eligible_count": 15, "equal_distribution_assumed": true},
+        {"set_code": "sv4", "rarity_slot": "hyper-rare", "published_probability_percent": 1.22, "published_ci_margin_percentage_points": 0.23, "one_in_packs": 82, "eligible_count": 7, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Paldean Fates Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Paldean-Fates-Pull-Rates/23de3e93-0d0f-4ae0-abc4-13664f3001a3/",
+        "article_id": "23de3e93-0d0f-4ae0-abc4-13664f3001a3",
+        "published_at": "2024-01-26",
+        "article_updated_at": "2025-02-27T19:23:34Z",
+        "article_body_sha256": "7fa4f1a68162c62aa9572b24de378088f54370a943c3891e6977d92c56290102",
+        "sample_size": 1500,
+        "confidence_grade": "low"
+      },
+      "entries": [
+        {"set_code": "sv4pt5", "rarity_slot": "double-rare", "published_probability_percent": 15.89, "published_ci_margin_percentage_points": 1.69, "one_in_packs": 6, "eligible_count": 10, "equal_distribution_assumed": true},
+        {"set_code": "sv4pt5", "rarity_slot": "ultra-rare", "published_probability_percent": 6.61, "published_ci_margin_percentage_points": 1.15, "one_in_packs": 15, "eligible_count": 5, "equal_distribution_assumed": true},
+        {"set_code": "sv4pt5", "rarity_slot": "shiny-rare", "published_probability_percent": 25.44, "published_ci_margin_percentage_points": 2.01, "one_in_packs": 4, "eligible_count": 120, "equal_distribution_assumed": true},
+        {"set_code": "sv4pt5", "rarity_slot": "shiny-ultra-rare", "published_probability_percent": 7.72, "published_ci_margin_percentage_points": 1.23, "one_in_packs": 13, "eligible_count": 12, "equal_distribution_assumed": true},
+        {"set_code": "sv4pt5", "rarity_slot": "illustration-rare", "published_probability_percent": 7.22, "published_ci_margin_percentage_points": 1.20, "one_in_packs": 14, "eligible_count": 3, "equal_distribution_assumed": true},
+        {"set_code": "sv4pt5", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.72, "published_ci_margin_percentage_points": 0.60, "one_in_packs": 58, "eligible_count": 8, "equal_distribution_assumed": true},
+        {"set_code": "sv4pt5", "rarity_slot": "hyper-rare", "published_probability_percent": 1.61, "published_ci_margin_percentage_points": 0.58, "one_in_packs": 62, "eligible_count": 6, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Temporal Forces Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Temporal-Forces-Pull-Rates/28c0ad22-00a4-428f-b22d-e7fee9ec50bc/",
+        "article_id": "28c0ad22-00a4-428f-b22d-e7fee9ec50bc",
+        "published_at": "2024-03-22",
+        "article_updated_at": "2025-02-27T19:20:51Z",
+        "article_body_sha256": "dc194d497fa4b21299b8f0157691458caa2a9fb5bb8075fbe48c1ef6ac74e2b2",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "sv5", "rarity_slot": "double-rare", "published_probability_percent": 16.83, "published_ci_margin_percentage_points": 0.79, "one_in_packs": 6, "eligible_count": 15, "equal_distribution_assumed": true},
+        {"set_code": "sv5", "rarity_slot": "ultra-rare", "published_probability_percent": 6.67, "published_ci_margin_percentage_points": 0.53, "one_in_packs": 15, "eligible_count": 18, "equal_distribution_assumed": true},
+        {"set_code": "sv5", "rarity_slot": "ace-spec-rare", "published_probability_percent": 5.00, "published_ci_margin_percentage_points": 0.46, "one_in_packs": 20, "eligible_count": 7, "equal_distribution_assumed": true},
+        {"set_code": "sv5", "rarity_slot": "illustration-rare", "published_probability_percent": 7.72, "published_ci_margin_percentage_points": 0.56, "one_in_packs": 13, "eligible_count": 22, "equal_distribution_assumed": true},
+        {"set_code": "sv5", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.17, "published_ci_margin_percentage_points": 0.23, "one_in_packs": 86, "eligible_count": 10, "equal_distribution_assumed": true},
+        {"set_code": "sv5", "rarity_slot": "hyper-rare", "published_probability_percent": 0.72, "published_ci_margin_percentage_points": 0.18, "one_in_packs": 139, "eligible_count": 6, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Twilight Masquerade Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Twilight-Masquerade-Pull-Rates/f3eea967-e5fb-4108-8655-bb1c89587628/",
+        "article_id": "f3eea967-e5fb-4108-8655-bb1c89587628",
+        "published_at": "2024-05-24",
+        "article_updated_at": "2025-02-27T19:19:39Z",
+        "article_body_sha256": "45cd69ad9ec6b37438494fdcc0b51e9a897fbfd485d5d5218b0f8a2ddc43b17f",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "sv6", "rarity_slot": "double-rare", "published_probability_percent": 16.93, "published_ci_margin_percentage_points": 0.79, "one_in_packs": 6, "eligible_count": 14, "equal_distribution_assumed": true},
+        {"set_code": "sv6", "rarity_slot": "ultra-rare", "published_probability_percent": 6.61, "published_ci_margin_percentage_points": 0.52, "one_in_packs": 15, "eligible_count": 21, "equal_distribution_assumed": true},
+        {"set_code": "sv6", "rarity_slot": "ace-spec-rare", "published_probability_percent": 5.06, "published_ci_margin_percentage_points": 0.46, "one_in_packs": 20, "eligible_count": 6, "equal_distribution_assumed": true},
+        {"set_code": "sv6", "rarity_slot": "illustration-rare", "published_probability_percent": 7.73, "published_ci_margin_percentage_points": 0.56, "one_in_packs": 13, "eligible_count": 21, "equal_distribution_assumed": true},
+        {"set_code": "sv6", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.17, "published_ci_margin_percentage_points": 0.23, "one_in_packs": 86, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "sv6", "rarity_slot": "hyper-rare", "published_probability_percent": 0.68, "published_ci_margin_percentage_points": 0.17, "one_in_packs": 146, "eligible_count": 6, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Stellar Crown Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Stellar-Crown-Pull-Rates/2c0743dd-dbd0-4504-9ff8-be5a72dd04d1/",
+        "article_id": "2c0743dd-dbd0-4504-9ff8-be5a72dd04d1",
+        "published_at": "2024-09-13",
+        "article_updated_at": "2025-02-27T19:17:25Z",
+        "article_body_sha256": "94a9939ab7b5dd0d27d6be0a5200416fcdb5738ecdf5e0035730f2089a4c986a",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "sv7", "rarity_slot": "double-rare", "published_probability_percent": 16.90, "published_ci_margin_percentage_points": 0.79, "one_in_packs": 6, "eligible_count": 14, "equal_distribution_assumed": true},
+        {"set_code": "sv7", "rarity_slot": "ultra-rare", "published_probability_percent": 6.75, "published_ci_margin_percentage_points": 0.53, "one_in_packs": 15, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "sv7", "rarity_slot": "ace-spec-rare", "published_probability_percent": 4.94, "published_ci_margin_percentage_points": 0.46, "one_in_packs": 20, "eligible_count": 3, "equal_distribution_assumed": true},
+        {"set_code": "sv7", "rarity_slot": "illustration-rare", "published_probability_percent": 7.79, "published_ci_margin_percentage_points": 0.57, "one_in_packs": 13, "eligible_count": 13, "equal_distribution_assumed": true},
+        {"set_code": "sv7", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.11, "published_ci_margin_percentage_points": 0.22, "one_in_packs": 90, "eligible_count": 6, "equal_distribution_assumed": true},
+        {"set_code": "sv7", "rarity_slot": "hyper-rare", "published_probability_percent": 0.73, "published_ci_margin_percentage_points": 0.18, "one_in_packs": 137, "eligible_count": 3, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Surging Sparks Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Surging-Sparks-Pull-Rates/6ccfb6ab-f26a-4ce8-bab5-5f91c85ec70e/",
+        "article_id": "6ccfb6ab-f26a-4ce8-bab5-5f91c85ec70e",
+        "published_at": "2024-11-08",
+        "article_updated_at": "2025-02-27T19:15:26Z",
+        "article_body_sha256": "cc1e92aa5d39444b2dde12116fcd4b69fb9ceccadde651e2d680f68b08f7855d",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "sv8", "rarity_slot": "double-rare", "published_probability_percent": 16.94, "published_ci_margin_percentage_points": 0.79, "one_in_packs": 6, "eligible_count": 18, "equal_distribution_assumed": true},
+        {"set_code": "sv8", "rarity_slot": "ultra-rare", "published_probability_percent": 6.74, "published_ci_margin_percentage_points": 0.53, "one_in_packs": 15, "eligible_count": 21, "equal_distribution_assumed": true},
+        {"set_code": "sv8", "rarity_slot": "ace-spec-rare", "published_probability_percent": 5.03, "published_ci_margin_percentage_points": 0.46, "one_in_packs": 20, "eligible_count": 8, "equal_distribution_assumed": true},
+        {"set_code": "sv8", "rarity_slot": "illustration-rare", "published_probability_percent": 7.67, "published_ci_margin_percentage_points": 0.56, "one_in_packs": 13, "eligible_count": 23, "equal_distribution_assumed": true},
+        {"set_code": "sv8", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.15, "published_ci_margin_percentage_points": 0.22, "one_in_packs": 87, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "sv8", "rarity_slot": "hyper-rare", "published_probability_percent": 0.53, "published_ci_margin_percentage_points": 0.15, "one_in_packs": 188, "eligible_count": 6, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Prismatic Evolutions Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Prismatic-Evolutions-Pull-Rates/d94889ea-f76a-4a13-b74d-5b0b071220a7/",
+        "article_id": "d94889ea-f76a-4a13-b74d-5b0b071220a7",
+        "published_at": "2025-01-17",
+        "article_updated_at": "2025-02-27T19:14:19Z",
+        "article_body_sha256": "3625b121137d3e4d1096d5a2a7588e5d494dcfffb6e65e9b0c442e8931fd245a",
+        "sample_size": 1200,
+        "confidence_grade": "low"
+      },
+      "entries": [
+        {"set_code": "sv8pt5", "rarity_slot": "poke-ball-foil", "published_probability_percent": 33.10, "published_ci_margin_percentage_points": 2.60, "one_in_packs": 3, "eligible_count": 100, "equal_distribution_assumed": true},
+        {"set_code": "sv8pt5", "rarity_slot": "double-rare", "published_probability_percent": 16.51, "published_ci_margin_percentage_points": 2.05, "one_in_packs": 6, "eligible_count": 25, "equal_distribution_assumed": true, "collation_notes": "The article's later specific-card subtable conflicts with the overall point estimate and source-declared 25-card count; the registry ignores that copied specific subtable and applies the PRD formula."},
+        {"set_code": "sv8pt5", "rarity_slot": "ultra-rare", "published_probability_percent": 7.46, "published_ci_margin_percentage_points": 1.45, "one_in_packs": 13, "eligible_count": 12, "equal_distribution_assumed": true, "collation_notes": "The source cell omits the percent sign after 7.46; the percent-table header, interval, narrative, and 1-in-13 value make the unit unambiguous."},
+        {"set_code": "sv8pt5", "rarity_slot": "ace-spec-rare", "published_probability_percent": 4.68, "published_ci_margin_percentage_points": 1.17, "one_in_packs": 21, "eligible_count": 6, "equal_distribution_assumed": true},
+        {"set_code": "sv8pt5", "rarity_slot": "master-ball-foil", "published_probability_percent": 4.92, "published_ci_margin_percentage_points": 1.19, "one_in_packs": 20, "eligible_count": 67, "equal_distribution_assumed": true},
+        {"set_code": "sv8pt5", "rarity_slot": "special-illustration-rare", "published_probability_percent": 2.22, "published_ci_margin_percentage_points": 0.81, "one_in_packs": 45, "eligible_count": 32, "equal_distribution_assumed": true, "collation_notes": "Because Demigod packs can contain three SIRs, the article identifies 2.22% as average SIR cards per pack, not the share of packs containing at least one SIR."},
+        {"set_code": "sv8pt5", "rarity_slot": "hyper-rare", "published_probability_percent": 0.56, "published_ci_margin_percentage_points": 0.41, "one_in_packs": 180, "eligible_count": 5, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Journey Together Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Journey-Together-Pull-Rates/1b9f379f-97cb-45cc-b6f6-a1a070a422cd/",
+        "article_id": "1b9f379f-97cb-45cc-b6f6-a1a070a422cd",
+        "published_at": "2025-03-28",
+        "article_updated_at": "2025-05-29T18:35:43Z",
+        "article_body_sha256": "e0dc771feee2e612b673c4c4bb87308f6e010643fbeb4b718ee2634f8c482b56",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "sv9", "rarity_slot": "double-rare", "published_probability_percent": 20.29, "published_ci_margin_percentage_points": 0.85, "one_in_packs": 5, "eligible_count": 16, "equal_distribution_assumed": true},
+        {"set_code": "sv9", "rarity_slot": "ultra-rare", "published_probability_percent": 6.54, "published_ci_margin_percentage_points": 0.52, "one_in_packs": 15, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "sv9", "rarity_slot": "illustration-rare", "published_probability_percent": 8.50, "published_ci_margin_percentage_points": 0.59, "one_in_packs": 12, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "sv9", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.16, "published_ci_margin_percentage_points": 0.23, "one_in_packs": 86, "eligible_count": 6, "equal_distribution_assumed": true},
+        {"set_code": "sv9", "rarity_slot": "hyper-rare", "published_probability_percent": 0.73, "published_ci_margin_percentage_points": 0.18, "one_in_packs": 137, "eligible_count": 3, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Destined Rivals Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Destined-Rivals-Pull-Rates/43ba832e-44c9-45a4-ae2e-594df2defdda/",
+        "article_id": "43ba832e-44c9-45a4-ae2e-594df2defdda",
+        "published_at": "2025-05-30",
+        "article_updated_at": "2025-05-30T12:23:51Z",
+        "article_body_sha256": "96fb26a5b2dcf233d0741a3552c49028638d835356dbbc3547413b7c8b1d19a0",
+        "sample_size": 8000,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "sv10", "rarity_slot": "double-rare", "published_probability_percent": 19.83, "published_ci_margin_percentage_points": 0.84, "one_in_packs": 5, "eligible_count": 17, "equal_distribution_assumed": true},
+        {"set_code": "sv10", "rarity_slot": "ultra-rare", "published_probability_percent": 6.39, "published_ci_margin_percentage_points": 0.52, "one_in_packs": 16, "eligible_count": 22, "equal_distribution_assumed": true},
+        {"set_code": "sv10", "rarity_slot": "illustration-rare", "published_probability_percent": 8.29, "published_ci_margin_percentage_points": 0.58, "one_in_packs": 12, "eligible_count": 23, "equal_distribution_assumed": true},
+        {"set_code": "sv10", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.06, "published_ci_margin_percentage_points": 0.22, "one_in_packs": 94, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "sv10", "rarity_slot": "hyper-rare", "published_probability_percent": 0.67, "published_ci_margin_percentage_points": 0.17, "one_in_packs": 149, "eligible_count": 6, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Black Bolt and White Flare Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Black-Bolt-and-White-Flare-Pull-Rates/bac92199-a2a7-4668-b4a4-2647a111776f/",
+        "article_id": "bac92199-a2a7-4668-b4a4-2647a111776f",
+        "published_at": "2025-07-21",
+        "article_updated_at": "2025-10-07T19:25:49Z",
+        "article_body_sha256": "740d564b46e408f29579b0a27ff6c251e90e9cb6f2da70c9d12c5236e79ab4f6",
+        "sample_size": 700,
+        "confidence_grade": "low",
+        "methodology": "The eBay Authentication Center opened more than 350 Black Bolt and more than 350 White Flare packs; the article pools both samples and assumes the two sets have the same or nearly the same rates. It reports 95% normal-approximation intervals and rounded one-in-pack values."
+      },
+      "collation_notes": "The pooled study is attached to each set under its explicit equal-set-rate assumption. Specific fields are omitted because the article's specific-card calculations pool two distinct set checklists.",
+      "entries": [
+        {"set_code": "zsv10pt5", "rarity_slot": "poke-ball-foil", "published_probability_percent": 30.56, "published_ci_margin_percentage_points": 3.36, "one_in_packs": 3, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "zsv10pt5", "rarity_slot": "double-rare", "published_probability_percent": 21.11, "published_ci_margin_percentage_points": 2.98, "one_in_packs": 5, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "zsv10pt5", "rarity_slot": "ultra-rare", "published_probability_percent": 5.83, "published_ci_margin_percentage_points": 1.71, "one_in_packs": 17, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "zsv10pt5", "rarity_slot": "illustration-rare", "published_probability_percent": 16.39, "published_ci_margin_percentage_points": 2.70, "one_in_packs": 6, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "zsv10pt5", "rarity_slot": "master-ball-foil", "published_probability_percent": 5.14, "published_ci_margin_percentage_points": 1.61, "one_in_packs": 19, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "zsv10pt5", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.25, "published_ci_margin_percentage_points": 0.81, "one_in_packs": 80, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "rsv10pt5", "rarity_slot": "poke-ball-foil", "published_probability_percent": 30.56, "published_ci_margin_percentage_points": 3.36, "one_in_packs": 3, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "rsv10pt5", "rarity_slot": "double-rare", "published_probability_percent": 21.11, "published_ci_margin_percentage_points": 2.98, "one_in_packs": 5, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "rsv10pt5", "rarity_slot": "ultra-rare", "published_probability_percent": 5.83, "published_ci_margin_percentage_points": 1.71, "one_in_packs": 17, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "rsv10pt5", "rarity_slot": "illustration-rare", "published_probability_percent": 16.39, "published_ci_margin_percentage_points": 2.70, "one_in_packs": 6, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "rsv10pt5", "rarity_slot": "master-ball-foil", "published_probability_percent": 5.14, "published_ci_margin_percentage_points": 1.61, "one_in_packs": 19, "eligible_count": null, "equal_distribution_assumed": false},
+        {"set_code": "rsv10pt5", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.25, "published_ci_margin_percentage_points": 0.81, "one_in_packs": 80, "eligible_count": null, "equal_distribution_assumed": false}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Mega Evolution Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Mega-Evolution-Pull-Rates/40cbeedc-21ce-473b-aef1-74e3969d9f91/",
+        "article_id": "40cbeedc-21ce-473b-aef1-74e3969d9f91",
+        "published_at": "2025-09-30",
+        "article_updated_at": "2025-10-07T19:24:57Z",
+        "article_body_sha256": "53e612cf84495daf46407230fcfc9f14a34f65fa06593102dab0ad1b1d1de5c0",
+        "sample_size": 5000,
+        "confidence_grade": "medium"
+      },
+      "entries": [
+        {"set_code": "me1", "rarity_slot": "double-rare", "published_probability_percent": 20.91, "published_ci_margin_percentage_points": 1.12, "one_in_packs": 5, "eligible_count": 10, "equal_distribution_assumed": true},
+        {"set_code": "me1", "rarity_slot": "ultra-rare", "published_probability_percent": 8.23, "published_ci_margin_percentage_points": 0.76, "one_in_packs": 12, "eligible_count": 22, "equal_distribution_assumed": true},
+        {"set_code": "me1", "rarity_slot": "illustration-rare", "published_probability_percent": 10.89, "published_ci_margin_percentage_points": 0.86, "one_in_packs": 9, "eligible_count": 22, "equal_distribution_assumed": true},
+        {"set_code": "me1", "rarity_slot": "special-illustration-rare", "published_probability_percent": 0.99, "published_ci_margin_percentage_points": 0.27, "one_in_packs": 101, "eligible_count": 10, "equal_distribution_assumed": true},
+        {"set_code": "me1", "rarity_slot": "mega-hyper-rare", "published_probability_percent": 0.08, "published_ci_margin_percentage_points": 0.08, "one_in_packs": 1260, "eligible_count": 2, "equal_distribution_assumed": true, "ci_omission_reason": "the published normal-approximation lower bound is zero, while the deployed registry requires a positive lower bound"}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Phantasmal Flames Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Phantasmal-Flames-Pull-Rates/9abae60d-b7fb-448f-874e-176f78d6a6ca/",
+        "article_id": "9abae60d-b7fb-448f-874e-176f78d6a6ca",
+        "published_at": "2025-11-15",
+        "article_updated_at": "2026-02-24T14:05:10Z",
+        "article_body_sha256": "01970561f507ca2198a6989b07f4299360eeefcf3f3d5c0245512f14959894c7",
+        "sample_size": 5000,
+        "confidence_grade": "medium"
+      },
+      "entries": [
+        {"set_code": "me2", "rarity_slot": "double-rare", "published_probability_percent": 20.77, "published_ci_margin_percentage_points": 1.12, "one_in_packs": 5, "eligible_count": 10, "equal_distribution_assumed": true},
+        {"set_code": "me2", "rarity_slot": "ultra-rare", "published_probability_percent": 8.06, "published_ci_margin_percentage_points": 0.75, "one_in_packs": 12, "eligible_count": 17, "equal_distribution_assumed": true},
+        {"set_code": "me2", "rarity_slot": "illustration-rare", "published_probability_percent": 10.97, "published_ci_margin_percentage_points": 0.86, "one_in_packs": 9, "eligible_count": 13, "equal_distribution_assumed": true},
+        {"set_code": "me2", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.25, "published_ci_margin_percentage_points": 0.31, "one_in_packs": 80, "eligible_count": 5, "equal_distribution_assumed": true},
+        {"set_code": "me2", "rarity_slot": "mega-hyper-rare", "published_probability_percent": 0.08, "published_ci_margin_percentage_points": 0.08, "one_in_packs": 1260, "eligible_count": 1, "equal_distribution_assumed": true, "ci_omission_reason": "the published normal-approximation lower bound is zero, while the deployed registry requires a positive lower bound"}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Ascended Heroes Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Ascended-Heroes-Pull-Rates/60143d94-88a7-42ce-8e73-babd7b3fabd6/",
+        "article_id": "60143d94-88a7-42ce-8e73-babd7b3fabd6",
+        "published_at": "2026-02-24",
+        "article_updated_at": "2026-02-25T13:43:54Z",
+        "article_body_sha256": "239e5f4904810f32169d3d801bde929137d4df51116f077b574d58c5a91afa20",
+        "sample_size": 2000,
+        "confidence_grade": "low"
+      },
+      "entries": [
+        {"set_code": "me2pt5", "rarity_slot": "double-rare", "published_probability_percent": 20.37, "published_ci_margin_percentage_points": 1.70, "one_in_packs": 5, "eligible_count": 39, "equal_distribution_assumed": true},
+        {"set_code": "me2pt5", "rarity_slot": "ultra-rare", "published_probability_percent": 4.81, "published_ci_margin_percentage_points": 0.90, "one_in_packs": 21, "eligible_count": 14, "equal_distribution_assumed": true, "collation_notes": "The detailed 'Any Ultra Rare' row says 20.77%, which conflicts with the overall 4.81%, 1-in-21, and specific-card row; the registry uses the overall table."},
+        {"set_code": "me2pt5", "rarity_slot": "mega-attack-rare", "published_probability_percent": 3.47, "published_ci_margin_percentage_points": 0.77, "one_in_packs": 29, "eligible_count": 7, "equal_distribution_assumed": true},
+        {"set_code": "me2pt5", "rarity_slot": "illustration-rare", "published_probability_percent": 11.25, "published_ci_margin_percentage_points": 1.33, "one_in_packs": 9, "eligible_count": 33, "equal_distribution_assumed": true},
+        {"set_code": "me2pt5", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.44, "published_ci_margin_percentage_points": 0.50, "one_in_packs": 70, "eligible_count": 22, "equal_distribution_assumed": true},
+        {"set_code": "me2pt5", "rarity_slot": "mega-hyper-rare", "published_probability_percent": 0.19, "published_ci_margin_percentage_points": 0.18, "one_in_packs": 540, "eligible_count": 2, "equal_distribution_assumed": true}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Perfect Order Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Perfect-Order-Pull-Rates/73148119-ebcb-40b7-84b6-52b3a6d0c631/",
+        "article_id": "73148119-ebcb-40b7-84b6-52b3a6d0c631",
+        "published_at": "2026-04-03",
+        "article_updated_at": "2026-04-03T19:00:00Z",
+        "article_body_sha256": "076deddecbf2c136b3157c28b3bcd79f2f472df91db9254a9425ed36ae204327",
+        "sample_size": 3500,
+        "confidence_grade": "medium"
+      },
+      "entries": [
+        {"set_code": "me3", "rarity_slot": "double-rare", "published_probability_percent": 20.97, "published_ci_margin_percentage_points": 1.34, "one_in_packs": 5, "eligible_count": 9, "equal_distribution_assumed": true},
+        {"set_code": "me3", "rarity_slot": "ultra-rare", "published_probability_percent": 8.54, "published_ci_margin_percentage_points": 0.92, "one_in_packs": 12, "eligible_count": 18, "equal_distribution_assumed": true},
+        {"set_code": "me3", "rarity_slot": "illustration-rare", "published_probability_percent": 11.20, "published_ci_margin_percentage_points": 1.03, "one_in_packs": 9, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "me3", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.23, "published_ci_margin_percentage_points": 0.36, "one_in_packs": 81, "eligible_count": 6, "equal_distribution_assumed": true},
+        {"set_code": "me3", "rarity_slot": "mega-hyper-rare", "published_probability_percent": 0.06, "published_ci_margin_percentage_points": 0.08, "one_in_packs": 1786, "eligible_count": 1, "equal_distribution_assumed": true, "ci_omission_reason": "the published normal-approximation interval crosses zero, while the deployed registry requires a positive lower bound"}
+      ]
+    },
+    {
+      "source": {
+        "title": "Pokémon TCG: Chaos Rising Pull Rates",
+        "url": "https://www.tcgplayer.com/content/article/Pok%C3%A9mon-TCG-Chaos-Rising-Pull-Rates/304e8bfc-175a-4d31-93fe-5bb1be11e5d2/",
+        "article_id": "304e8bfc-175a-4d31-93fe-5bb1be11e5d2",
+        "published_at": "2026-06-04",
+        "article_updated_at": "2026-06-04T20:01:08Z",
+        "article_body_sha256": "22f28f3f2b0c8d808a7cf2047c2d0017ba1d4f540d87e6d552c31c5e24b04e9b",
+        "sample_size": 8500,
+        "confidence_grade": "high"
+      },
+      "entries": [
+        {"set_code": "me4", "rarity_slot": "double-rare", "published_probability_percent": 20.30, "published_ci_margin_percentage_points": 0.85, "one_in_packs": 5, "eligible_count": 10, "equal_distribution_assumed": true},
+        {"set_code": "me4", "rarity_slot": "ultra-rare", "published_probability_percent": 8.29, "published_ci_margin_percentage_points": 0.58, "one_in_packs": 12, "eligible_count": 18, "equal_distribution_assumed": true},
+        {"set_code": "me4", "rarity_slot": "illustration-rare", "published_probability_percent": 10.66, "published_ci_margin_percentage_points": 0.65, "one_in_packs": 9, "eligible_count": 11, "equal_distribution_assumed": true},
+        {"set_code": "me4", "rarity_slot": "special-illustration-rare", "published_probability_percent": 1.21, "published_ci_margin_percentage_points": 0.23, "one_in_packs": 83, "eligible_count": 6, "equal_distribution_assumed": true},
+        {"set_code": "me4", "rarity_slot": "mega-hyper-rare", "published_probability_percent": 0.10, "published_ci_margin_percentage_points": 0.07, "one_in_packs": 956, "eligible_count": 1, "equal_distribution_assumed": true}
+      ]
+    }
+  ],
+  "unavailable": [
+    {"set_code": "sv6pt5", "scope": "set", "reason": "No TCGplayer Authentication Center pull-rate article was found in the publisher's pull-rate article index as of the checked_at timestamp; no neighboring-set rate is imputed.", "checked_at": "2026-08-08T15:56:23Z"},
+    {"set_code": "me5", "scope": "set", "reason": "No TCGplayer Authentication Center pull-rate article was found in the publisher's pull-rate article index as of the checked_at timestamp; no neighboring-set rate is imputed.", "checked_at": "2026-08-08T15:56:23Z"},
+    {"set_code": "zsv10pt5", "scope": "rarity_slot", "rarity_slot": "black-white-rare", "article_id": "bac92199-a2a7-4668-b4a4-2647a111776f", "reason": "The pooled article found zero Black White Rares in more than 700 packs and explicitly reports the rate as unknown.", "checked_at": "2026-08-08T15:56:23Z"},
+    {"set_code": "rsv10pt5", "scope": "rarity_slot", "rarity_slot": "black-white-rare", "article_id": "bac92199-a2a7-4668-b4a4-2647a111776f", "reason": "The pooled article found zero Black White Rares in more than 700 packs and explicitly reports the rate as unknown.", "checked_at": "2026-08-08T15:56:23Z"}
+  ]
+}

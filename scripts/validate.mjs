@@ -35,6 +35,14 @@ const required = [
   'analytics/src/collectfolio_analytics/baselines.py', 'analytics/src/collectfolio_analytics/quantiles.py',
   'analytics/src/collectfolio_analytics/scarcity.py', 'analytics/src/collectfolio_analytics/evaluation.py',
   'analytics/src/collectfolio_analytics/video_model_v0.py',
+  'analytics/src/collectfolio_analytics/pull_rates.py',
+  'analytics/src/collectfolio_analytics/pull_rate_curation.py',
+  'analytics/src/collectfolio_analytics/pull_rate_curation_cli.py',
+  'analytics/src/collectfolio_analytics/pull_rate_source_verify.py',
+  'analytics/src/collectfolio_analytics/pull_rate_sql.py',
+  'analytics/src/collectfolio_analytics/pull_rate_sql_cli.py',
+  'analytics/src/collectfolio_analytics/mapping_supersession_sql.py',
+  'analytics/src/collectfolio_analytics/mapping_supersession_sql_cli.py',
   'netlify/functions/justtcg-catalog.mjs',
   'netlify/lib/justtcg-collector.mjs',
   'netlify/lib/justtcg-blob-repository.mjs',
@@ -46,16 +54,25 @@ const required = [
   '.github/workflows/analytics-check.yml',
   '.github/workflows/price-intelligence-research.yml',
   'analytics/manifests/tcgcsv-surging-sparks-research.json',
+  'analytics/manifests/tcgcsv-surging-sparks-current-v2.json',
+  'analytics/manifests/tcgcsv-surging-sparks-mapping-supersession-v2.json',
+  'analytics/manifests/tcgplayer-sv-me-pull-rates.json',
   'supabase/migrations/0001_initial.sql', 'supabase/migrations/0002_price_intelligence_foundation.sql',
   'supabase/migrations/0003_price_intelligence_research_pipeline.sql',
   'supabase/migrations/0004_price_intelligence_function_acl_hardening.sql',
   'supabase/migrations/0005_private_forecast_research_ledgers.sql',
   'supabase/migrations/0006_price_intelligence_governance_hardening.sql',
+  'supabase/migrations/0009_pull_rate_registry.sql',
+  'supabase/migrations/0014_pull_rate_unavailability_registry.sql',
   'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
   'docs/PRICE_INTELLIGENCE_FOUNDATION.md', 'docs/PRICE_INTELLIGENCE_RUNBOOK.md',
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
+  'docs/PULL_RATE_REGISTRY.md',
   'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md',
-  'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md'
+  'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md',
+  'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md',
+  'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
+  'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md'
 ];
 
 async function filesUnder(directory) {
@@ -79,7 +96,7 @@ if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@n
   errors.push('The only runtime package must be the pinned @netlify/blobs 10.7.12 server dependency.');
 }
 if (Object.keys(packageJSON.devDependencies || {}).length) errors.push('package.json must have zero devDependencies.');
-for (const script of ['dev', 'build', 'test', 'test:analytics', 'qualify:research', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
+for (const script of ['dev', 'build', 'test', 'test:analytics', 'qualify:research', 'qualify:research:current', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
 
 const researchManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-research.json'), 'utf8'));
 const researchReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md'));
@@ -106,6 +123,56 @@ if (researchManifest.retrospectiveResearch?.originSpacingDays !== 30) errors.pus
 if (researchManifest.retrospectiveResearch?.cohortKey !== 'tcgcsv_30d_origins_accepted_research_only_v2') errors.push('TCGCSV retrospective cohort must use the versioned 30-day-origin identity.');
 const requiredBaselines = ['no_change', 'damped_momentum', 'market_index', 'lifecycle_cohort', 'structural_convergence'];
 if (researchManifest.retrospectiveResearch?.promotionPolicy?.requiredBaselines?.join(',') !== requiredBaselines.join(',')) errors.push('TCGCSV promotion policy must require all five PRD baselines.');
+const historicalVariant = researchManifest.canonicalVariants?.[0];
+const historicalMapping = researchManifest.approvedMappings?.[0];
+if (historicalVariant?.setCode !== 'sv08' || historicalVariant?.number !== '238/191') errors.push('Historical TCGCSV v1 manifest must retain its original sv08 / 238/191 identity.');
+if (historicalMapping?.mappingId !== '874f918c-8988-59f5-93ba-ff1ea961bd5a' || historicalMapping?.variantId !== '80b4934a-96db-5f4c-8641-f7c74e0eb949' || researchManifest.mappingVersion !== 'tcgcsv-research-mapping-v1') errors.push('Historical TCGCSV v1 mapping lineage must remain immutable.');
+
+const currentResearchManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-current-v2.json'), 'utf8'));
+const correctedMappingReview = await readFile(resolve(root, 'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md'));
+const correctedMappingReviewHash = createHash('sha256').update(correctedMappingReview).digest('hex');
+if (currentResearchManifest.mode !== 'research_only' || currentResearchManifest.source?.decision !== 'research_only') errors.push('Current TCGCSV v2 manifest must remain research-only.');
+for (const capability of ['commercialUseAllowed', 'catalogMetadataAllowed', 'publicRawDisplayAllowed', 'publicDerivedDisplayAllowed']) {
+  if (currentResearchManifest.source?.[capability] !== false) errors.push(`Current TCGCSV v2 manifest must deny ${capability}.`);
+}
+if (currentResearchManifest.source?.documentHash !== researchReviewHash) errors.push('Current TCGCSV v2 source-review hash is stale.');
+if (currentResearchManifest.mappingReview?.documentHash !== correctedMappingReviewHash || currentResearchManifest.mappingReview?.scope !== 'research_only') errors.push('Current TCGCSV v2 mapping review is stale or exceeds research scope.');
+if ('historicalResearch' in currentResearchManifest || 'retrospectiveResearch' in currentResearchManifest || 'ingestedAt' in currentResearchManifest) errors.push('Current TCGCSV v2 manifest must remain current-snapshot-only.');
+const currentVariant = currentResearchManifest.canonicalVariants?.[0];
+const currentMapping = currentResearchManifest.approvedMappings?.[0];
+if (currentResearchManifest.canonicalVariants?.length !== 1 || currentVariant?.setCode !== 'sv8' || currentVariant?.number !== '238') errors.push('Current TCGCSV v2 manifest must use canonical sv8 card 238.');
+if (currentResearchManifest.approvedMappings?.length !== 1 || currentMapping?.mappingId !== '649be0ee-0893-459a-bad6-331a218e069b' || currentMapping?.variantId !== 'af796afb-d8d3-5b4b-a95a-417e39e77b0a' || currentMapping?.mappingConfidence !== 1 || currentResearchManifest.mappingVersion !== 'tcgcsv-research-mapping-v2') errors.push('Current TCGCSV v2 manifest must use the approved hosted successor mapping.');
+
+const supersessionManifestPath = resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-mapping-supersession-v2.json');
+const supersessionManifest = JSON.parse(await readFile(supersessionManifestPath, 'utf8'));
+if (supersessionManifest.review?.document_sha256 !== correctedMappingReviewHash) errors.push('Mapping supersession manifest review hash is stale.');
+if (supersessionManifest.old_mapping?.id !== historicalMapping?.mappingId || supersessionManifest.replacement?.variant_id !== currentMapping?.variantId) errors.push('Mapping supersession manifest does not bridge the immutable v1 and current v2 identities.');
+const supersessionValidation = spawnSync('python3', ['-c', `import json\nfrom pathlib import Path\nfrom collectfolio_analytics.mapping_supersession_sql import validate_mapping_supersession_manifest\nvalidate_mapping_supersession_manifest(json.loads(Path(${JSON.stringify(supersessionManifestPath)}).read_text(encoding="utf-8")))`], {
+  cwd: root,
+  encoding: 'utf8',
+  env: { ...process.env, PYTHONPATH: resolve(root, 'analytics/src') },
+});
+if (supersessionValidation.status !== 0) errors.push(`Mapping supersession manifest validation failed: ${supersessionValidation.stderr || supersessionValidation.stdout}`);
+
+const researchWorkflow = await readFile(resolve(root, '.github/workflows/price-intelligence-research.yml'), 'utf8');
+if (!researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty') || !researchWorkflow.includes('--skip-history')) errors.push('Scheduled TCGCSV research must use the current-only v2 manifest with --skip-history.');
+if (researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-research.json --pretty')) errors.push('Scheduled TCGCSV research must not route through the historical v1 manifest.');
+
+const pullRateManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgplayer-sv-me-pull-rates.json'), 'utf8'));
+const pullRateReview = await readFile(resolve(root, 'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md'));
+const pullRateReviewHash = createHash('sha256').update(pullRateReview).digest('hex');
+if (pullRateManifest.mode !== 'research_only_pull_rate_curation') errors.push('Pull-rate manifest must remain research-only curation.');
+if (pullRateManifest.source_review?.decision !== 'research_only') errors.push('Pull-rate source review must remain research-only.');
+if (pullRateManifest.source_review?.document_sha256 !== pullRateReviewHash) errors.push('Pull-rate manifest source-review hash is stale.');
+if (pullRateManifest.target_sets?.length !== 22) errors.push('Pull-rate manifest must retain all 22 canonical SV/ME target sets.');
+if (pullRateManifest.studies?.length !== 19) errors.push('Pull-rate manifest must retain the 19 reviewed primary studies.');
+const pullRateEntryCount = (pullRateManifest.studies || []).reduce((count, study) => count + (study.entries?.length || 0), 0);
+if (pullRateEntryCount !== 112) errors.push('Pull-rate manifest must retain exactly 112 curated rarity rows.');
+if (pullRateManifest.unavailable?.length !== 4) errors.push('Pull-rate manifest must retain two unavailable sets and two unknown BWR slots.');
+for (const study of pullRateManifest.studies || []) {
+  if (!/^[0-9a-f]{64}$/.test(study.source?.article_body_sha256 || '')) errors.push(`Pull-rate source ${study.source?.article_id || 'unknown'} lacks an immutable body hash.`);
+  if (study.source?.sample_size_kind && study.source.sample_size_kind !== 'reported_lower_bound') errors.push('Per-source pull-rate sample semantics may not override the reviewed lower-bound policy.');
+}
 
 const walkForward = await readFile(resolve(root, 'analytics/src/collectfolio_analytics/walk_forward.py'), 'utf8');
 for (const contract of [
@@ -325,6 +392,18 @@ for (const contract of [
 if (!/revoke insert, update, delete on public\.card_intelligence_publications\s+from service_role/i.test(governanceMigration)) errors.push('Governance migration must make the publication RPC the exclusive service-role writer.');
 if (!/revoke insert on public\.model_promotion_reviews from service_role/i.test(governanceMigration)) errors.push('Governance migration must make the authenticated review RPC the exclusive promotion-review writer.');
 if (/update\s+public\.product_feature_flags[\s\S]*public_price_intelligence/i.test(governanceMigration)) errors.push('Governance migration must not enable or mutate the public price-intelligence flag.');
+
+const pullRateMissingMigration = await readFile(resolve(root, 'supabase/migrations/0014_pull_rate_unavailability_registry.sql'), 'utf8');
+for (const contract of [
+  'create table public.pull_rate_unavailability',
+  'pull_rate_unavailability_append_only',
+  'alter table public.pull_rate_unavailability enable row level security',
+  'revoke all on public.pull_rate_unavailability from anon, authenticated',
+  'grant select, insert on public.pull_rate_unavailability to service_role',
+  'revoke update, delete on public.pull_rate_unavailability from service_role'
+]) {
+  if (!pullRateMissingMigration.includes(contract)) errors.push(`Pull-rate missing-data migration lacks contract ${contract}.`);
+}
 
 const netlify = await readFile(resolve(root, 'netlify.toml'), 'utf8');
 for (const text of ['command = "npm run build"', 'publish = "dist"', 'NODE_VERSION = "22"', 'to = "/index.html"', 'for = "/sw.js"']) if (!netlify.includes(text)) errors.push(`netlify.toml missing ${text}`);

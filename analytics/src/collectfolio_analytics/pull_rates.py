@@ -16,7 +16,7 @@ from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
 from typing import Mapping, Sequence
-from uuid import uuid5
+from uuid import UUID, uuid5
 
 from .catalog_mapping import CATALOG_NAMESPACE
 from .scarcity import pull_metrics
@@ -50,6 +50,13 @@ class PullRateSource:
             raise ValueError("sample_size must be a positive integer")
         if self.confidence_grade not in CONFIDENCE_GRADES:
             raise ValueError(f"confidence_grade must be one of {CONFIDENCE_GRADES}")
+        if self.published_at is not None and not isinstance(self.published_at, date):
+            raise ValueError("published_at must be a date")
+        for name in ("methodology", "region", "language"):
+            if not isinstance(getattr(self, name), str):
+                raise ValueError(f"{name} must be text")
+        if not self.region.strip() or not self.language.strip():
+            raise ValueError("region and language are required")
 
     @property
     def id(self) -> str:
@@ -99,10 +106,14 @@ class SetPullRateEntry:
     effective_to: date | None = None
 
     def __post_init__(self) -> None:
-        if not str(self.set_id or "").strip():
-            raise ValueError("set_id is required")
+        try:
+            UUID(str(self.set_id))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("set_id must be a UUID") from exc
         if not str(self.rarity_slot or "").strip():
             raise ValueError("rarity_slot is required")
+        if len(str(self.rarity_slot)) > 120:
+            raise ValueError("rarity_slot must be at most 120 characters")
         probability = _probability(self.probability, "probability")
         if self.ci_lower is not None and not 0 < float(self.ci_lower) <= probability:
             raise ValueError("ci_lower must bracket the probability from below")
@@ -111,7 +122,15 @@ class SetPullRateEntry:
         if (self.ci_lower is None) != (self.ci_upper is None):
             raise ValueError("confidence-interval bounds must be provided together")
         expected = 1 / probability
-        if abs(float(self.one_in_packs) - expected) > expected * ONE_IN_PACKS_RELATIVE_TOLERANCE:
+        if isinstance(self.one_in_packs, bool):
+            raise ValueError("one_in_packs must be a number greater than or equal to 1")
+        try:
+            one_in_packs = float(self.one_in_packs)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("one_in_packs must be a number greater than or equal to 1") from exc
+        if one_in_packs < 1:
+            raise ValueError("one_in_packs must be a number greater than or equal to 1")
+        if abs(one_in_packs - expected) > expected * ONE_IN_PACKS_RELATIVE_TOLERANCE:
             raise ValueError(
                 "one_in_packs disagrees with probability beyond the "
                 f"{int(ONE_IN_PACKS_RELATIVE_TOLERANCE * 100)}% rounding tolerance"
@@ -122,10 +141,18 @@ class SetPullRateEntry:
             raise ValueError("effective_to must be after effective_from")
         if isinstance(self.version, bool) or not isinstance(self.version, int) or self.version < 1:
             raise ValueError("version must be a positive integer")
+        if self.eligible_count is not None and (
+            isinstance(self.eligible_count, bool)
+            or not isinstance(self.eligible_count, int)
+            or self.eligible_count <= 0
+        ):
+            raise ValueError("eligible_count must be a positive integer")
         if self.eligible_count is not None and self.equal_distribution_assumed is not True:
             raise ValueError(
                 "card-specific probabilities require the explicit equal-distribution acknowledgment"
             )
+        if self.eligible_count is None and self.equal_distribution_assumed is not False:
+            raise ValueError("equal_distribution_assumed must be false without an eligible_count")
 
     def scarcity(self):
         """Card-specific scarcity via the PRD formulas, when derivable."""
@@ -202,6 +229,9 @@ def entry_from_mapping(payload: Mapping[str, object]) -> SetPullRateEntry:
 
     if not isinstance(payload, Mapping):
         raise ValueError("pull-rate entry must be an object")
+    equal_distribution_assumed = payload.get("equal_distribution_assumed", False)
+    if not isinstance(equal_distribution_assumed, bool):
+        raise ValueError("equal_distribution_assumed must be a boolean")
     return SetPullRateEntry(
         set_id=str(payload.get("set_id") or ""),
         rarity_slot=str(payload.get("rarity_slot") or ""),
@@ -212,7 +242,7 @@ def entry_from_mapping(payload: Mapping[str, object]) -> SetPullRateEntry:
         ci_lower=payload.get("ci_lower"),
         ci_upper=payload.get("ci_upper"),
         eligible_count=payload.get("eligible_count"),
-        equal_distribution_assumed=bool(payload.get("equal_distribution_assumed", False)),
+        equal_distribution_assumed=equal_distribution_assumed,
         collation_notes=str(payload.get("collation_notes") or ""),
         effective_to=date.fromisoformat(str(payload["effective_to"])) if payload.get("effective_to") else None,
     )
