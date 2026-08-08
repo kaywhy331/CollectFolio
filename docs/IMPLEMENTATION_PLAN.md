@@ -147,7 +147,8 @@ Before inviting testers:
 - [x] Review and apply migrations 0002 through 0004 to the hosted project.
 - [x] Add and apply migration 0005 for append-only private model, prediction, evaluation, scorecard, and promotion-review evidence.
 - [x] Implement migration 0006 governance hardening: server read kill switch, immutable reviews, versioned mapping correction, Scored/Unscorable evidence, exact scorecard membership/policy, authenticated model review, and rollback receipts.
-- [ ] Back up the hosted project, rehearse migration 0006, apply it, and verify the 36-table RLS/ACL inventory. Do not infer this gate from the checked-in SQL.
+- [x] Rehearse and apply migration 0006, verify its hosted RLS/ACL inventory, and exercise the guarded one-to-one mapping supersession path without rewriting historical lineage.
+- [ ] Retain independent proof of a restorable Auth/storage-aware hosted backup before any future destructive migration; WAL-G without PITR and logical dumps are not substitutes.
 - [x] Qualify two-account/two-client Watchlist RLS and tombstone behavior after migration.
 - [x] Qualify one exact-mapped TCGCSV cohort across 53 bounded weekly archives and retain accepted/outlier evidence privately.
 - [x] Build and persist a point-in-time private trend snapshot plus research-only baseline forecasts at all five horizons.
@@ -178,6 +179,8 @@ The private research and descriptive-trend implementation is code-complete and c
 - [x] Identify JustTCG paid API as the preferred production market-history source and document its current display/derived/storage contract.
 - [ ] Independently activate the paid subscription and exact live permissions; the checked-in candidate review remains `pending`.
 - [x] Run the first real-source mapping/observation packet and review every initial mapping in the selected one-card cohort.
+- [x] Curate and host the 19-study Scarlet & Violet / Mega Evolution pull-rate registry, represent unavailable/unknown rates explicitly, and continuously verify every immutable primary article snapshot without database credentials.
+- [x] Supersede the duplicate Surging Sparks `sv08` research mapping with canonical `sv8` for future current snapshots while preserving all historical observations, snapshots, and predictions.
 - [ ] Qualify a real descriptive payload before separately enabling `public_price_intelligence`.
 
 Do not treat the private baseline as production forecasting. Scheduled no-secret research execution, monitoring, and local approved-publication alert evaluation are implemented, but licensed service-role data persistence is intentionally absent. The JustTCG adapter is ready for a paid/current approved source but has no key or scheduled write. Fair value remains unimplemented. The first real walk-forward evidence rejects or finds insufficient the current baseline and predates the new 30-day/five-baseline evidence contract. Forecast promotion now requires new prospective or properly held-out multi-card evidence, all five baseline comparisons, positive lift over no-change and the strongest challenger, adequate cases, calibrated intervals/probabilities, an authenticated operator model-card review, and independent source-rights approval.

@@ -1,0 +1,66 @@
+name: Pull-rate source integrity
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pull-rate-source-integrity
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run pull-rate safety tests
+        run: >-
+          PYTHONPATH=analytics/src python3 -m unittest
+          analytics.tests.test_pull_rates
+          analytics.tests.test_pull_rate_curation
+          analytics.tests.test_pull_rate_source_verify
+          analytics.tests.test_pull_rate_sql
+      - name: Rebuild and live-verify the immutable registry packet
+        run: >-
+          PYTHONPATH=analytics/src python3 -m collectfolio_analytics.pull_rate_curation_cli
+          analytics/manifests/tcgplayer-sv-me-pull-rates.json
+          pull-rate-registry-packet.json --verify-sources
+      - name: Assert the reviewed registry contract
+        run: >-
+          jq -e '
+          .mode == "research_only_pull_rate_registry" and
+          .review_required == true and
+          .public_display_candidates == [] and
+          .counts.sources == 19 and
+          .counts.entries == 112 and
+          .counts.target_sets == 22 and
+          .counts.covered_sets == 20 and
+          .counts.unavailable_sets == 2 and
+          .counts.unavailable_records == 4 and
+          .packet_hash == "cfbf261e3986429bed4fe15877309f9783bde584ca11022f0a33f0aa6beadeb6"
+          ' pull-rate-registry-packet.json
+      - name: Generate rollback-only SQL
+        run: >-
+          PYTHONPATH=analytics/src python3 -m collectfolio_analytics.pull_rate_sql_cli
+          pull-rate-registry-packet.json pull-rate-rehearsal.sql
+      - name: Assert the workflow cannot commit or contact the database
+        run: >-
+          test "$(tail -n 1 pull-rate-rehearsal.sql)" =
+          "rollback; -- rehearsal by default; regenerate with commit for the real run"
+      - name: Upload immutable verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: pull-rate-integrity-${{ github.run_id }}
+          path: |
+            pull-rate-registry-packet.json
+            pull-rate-rehearsal.sql
+          if-no-files-found: error
+          retention-days: 30

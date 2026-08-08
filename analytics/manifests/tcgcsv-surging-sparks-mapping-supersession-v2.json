@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "mode": "external_card_mapping_supersession",
+  "source": {
+    "id": "f24c78f8-d4b9-55a3-a8f7-b05d484c052e",
+    "code": "tcgcsv-research",
+    "terms_review_id": "3bc792cf-ad71-54d1-a2f6-d5d5d521fba5",
+    "active": true,
+    "decision": "research_only",
+    "commercial_use_allowed": false,
+    "catalog_metadata_allowed": false,
+    "image_display_allowed": false,
+    "public_raw_display_allowed": false,
+    "public_derived_display_allowed": false
+  },
+  "external_identity": {
+    "product_id": "590027",
+    "variant_key": "holofoil"
+  },
+  "old_mapping": {
+    "id": "874f918c-8988-59f5-93ba-ff1ea961bd5a",
+    "variant_id": "80b4934a-96db-5f4c-8641-f7c74e0eb949",
+    "mapping_confidence": 1.0,
+    "mapping_method": "operator_reviewed_exact_identity",
+    "mapping_version": "tcgcsv-research-mapping-v1",
+    "review_status": "approved",
+    "expected_lineage": {
+      "price_observations": 54,
+      "trend_feature_snapshots": 43,
+      "card_forecast_predictions": 215,
+      "intelligence_publication_candidates": 0,
+      "card_intelligence_publications": 0
+    }
+  },
+  "replacement": {
+    "set_id": "369d6905-d6ac-597e-9a5c-9c0d153a6af7",
+    "canonical_set_key": "set|pokemon|en|sv8",
+    "card_id": "9b2cc742-ad22-5b4d-9542-0dd2dfbdeb4d",
+    "canonical_card_key": "card|set|pokemon|en|sv8|238|pikachu-ex",
+    "variant_id": "af796afb-d8d3-5b4b-a95a-417e39e77b0a",
+    "canonical_variant_key": "variant|card|set|pokemon|en|sv8|238|pikachu-ex|en|standard|holofoil||raw",
+    "finish": "holofoil",
+    "condition_class": "raw",
+    "mapping_confidence": 1.0,
+    "mapping_method": "operator_reviewed_exact_identity",
+    "mapping_version": "tcgcsv-research-mapping-v2"
+  },
+  "review": {
+    "document": "docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md",
+    "document_sha256": "90affc83a1341382185c42f63f2767c6a6bc38014477cddc5a1d1a777f78750a",
+    "reviewed_at": "2026-08-08T16:36:22Z",
+    "reviewer_label": "Codex-assisted operator identity correction"
+  },
+  "correction_reason": "Canonical catalog seed normalized the Pokemon set code to sv8 and collector number to 238. TCGCSV product 590027 / Holofoil independently matches Pikachu ex 238/191 and canonical variant af796afb-d8d3-5b4b-a95a-417e39e77b0a. Preserve historical sv08 observations while routing future research to the canonical catalog identity.",
+  "safety": {
+    "preserve_historical_lineage": true,
+    "require_public_price_intelligence_disabled": true,
+    "require_no_public_candidates": true,
+    "require_no_public_publications": true
+  },
+  "manifest_sha256": "b5ad203bbdc44d29bc87dff206c6c3ec8704543ef5df4ce0860e54b1770319b9"
+}

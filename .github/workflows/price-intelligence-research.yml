@@ -26,7 +26,7 @@ jobs:
       - name: Build non-publishing live research packet
         run: >-
           PYTHONPATH=analytics/src python3 -m collectfolio_analytics.operator_cli
-          analytics/manifests/tcgcsv-surging-sparks-research.json --pretty
+          analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty
           --skip-history --output tcgcsv-research-packet.json
       - name: Assert research gates remain closed
         run: >-

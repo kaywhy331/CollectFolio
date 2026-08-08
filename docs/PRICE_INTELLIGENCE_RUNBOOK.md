@@ -166,6 +166,23 @@ select public.supersede_external_card_mapping(
 
 A new all-field exact match receives confidence 0.99 but still carries `initial_mapping_review_required`. Confidence 1.00 is reserved for a manually approved or previously approved immutable external identity. Name-only attachment is never allowed.
 
+For a reviewed one-time correction, bind the exact old identity, replacement identity, review hash, hosted lineage counts, and closed public gates in a supersession manifest. Generate and execute the rollback form first, confirm the final read still shows the old mapping current and no successor, then generate the commit form from the unchanged manifest and verify a terminator-only diff:
+
+```sh
+PYTHONPATH=analytics/src python3 -m collectfolio_analytics.mapping_supersession_sql_cli \
+  analytics/manifests/tcgcsv-surging-sparks-mapping-supersession-v2.json \
+  /secure/mapping-rehearsal.sql --repo-root .
+npx --yes supabase@latest db query --linked --file /secure/mapping-rehearsal.sql
+
+PYTHONPATH=analytics/src python3 -m collectfolio_analytics.mapping_supersession_sql_cli \
+  analytics/manifests/tcgcsv-surging-sparks-mapping-supersession-v2.json \
+  /secure/mapping-commit.sql --repo-root . --commit
+diff -u /secure/mapping-rehearsal.sql /secure/mapping-commit.sql
+npx --yes supabase@latest db query --linked --file /secure/mapping-commit.sql
+```
+
+This specific operation completed on August 8, 2026 and is not rerunnable: the v1 mapping is now superseded by approved mapping `649be0ee-0893-459a-bad6-331a218e069b`. Its immutable operator receipt is [TCGCSV_SURGING_SPARKS_MAPPING_V2.md](receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md). Preserve the v1 manifest and review for historical queries; route only new current-snapshot research through `tcgcsv-surging-sparks-current-v2.json`.
+
 ## 6. Observation and trend flow
 
 For each approved source refresh:
@@ -184,7 +201,7 @@ For JustTCG, hash the complete bounded response for the ingestion run, retain on
 
 ## 7. Historical research and private forecast flow
 
-The checked-in TCGCSV manifest is a single-card research cohort, not a provider-wide production approval. Its archive contract permits exactly 53 weekly samples at most, caps compressed artifacts at 8 MiB and selected members at 2 MiB, stamps each archive-day value as available the following UTC day, and uses a seven-day endpoint-reference tolerance.
+The checked-in historical TCGCSV v1 manifest is a single-card research cohort, not a provider-wide production approval. Its archive contract permits exactly 53 weekly samples at most, caps compressed artifacts at 8 MiB and selected members at 2 MiB, stamps each archive-day value as available the following UTC day, and uses a seven-day endpoint-reference tolerance. It intentionally retains the superseded `sv08` mapping so every historical export below continues to resolve against the immutable v1 ledger.
 
 Generate a permission-restricted operator packet and rollback SQL:
 
@@ -231,6 +248,8 @@ The August 5 gates produced two private receipts:
 - Legacy retrospective packet `72df5fb8417786a83fcd480cff314c2565fa130f8976391e264ea4e6b9d89cf3`: 42 origin snapshots, 210 simulated predictions, 109 stored evaluations, and four scorecards. The 7-day result is `reject`; 30/90/180-day results are `insufficient`; 365 days has no eligible scorecard. It created zero model-promotion reviews, candidates, promotion receipts, or public rows. It predates the 30-day-origin, five-baseline-membership, and immutable-Unscorable contracts; preserve it as historical evidence and never relabel it as promotion-eligible.
 
 Persist an unfavorable scorecard unchanged. Never tune after inspecting the same cohort and then relabel it as held-out evidence. A replacement model needs a new version and independent walk-forward evidence.
+
+Scheduled current-snapshot monitoring is separate from those historical exports. It uses `analytics/manifests/tcgcsv-surging-sparks-current-v2.json` with `--skip-history`, successor mapping `649be0ee-0893-459a-bad6-331a218e069b`, and canonical variant `af796afb-d8d3-5b4b-a95a-417e39e77b0a`. It produces a non-publishing review packet only and never rewrites v1 observations, snapshots, predictions, or scorecards.
 
 ## 8. Candidate review and promotion
 
