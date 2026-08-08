@@ -72,6 +72,8 @@ test('search shows watching state and forecast center publishes no invented numb
     search: { query: 'Charizard', category: 'pokemon', provider: 'pokemon', loading: false, results: [legacyPricedItem], warnings: [] }
   }));
   assert.match(search, /★ Watching/);
+  assert.match(search, /Add to portfolio/);
+  assert.doesNotMatch(search, /Review and add/);
   assert.match(search, /Price unavailable/);
   assert.doesNotMatch(search, /Choose finish|\$90\.00|\$70\.00/);
 
@@ -108,6 +110,9 @@ test('forecast center renders only a validated approved publication contract', (
     } }, loading: false, error: '' }
   }));
   assert.match(html, /30-day outlook/);
+  assert.match(html, /Approved forecast projection/);
+  assert.match(html, /Observed now/);
+  assert.match(html, /1 product · 1 approved horizon/);
   assert.match(html, /\$105\.00/);
   assert.match(html, /60%/);
   assert.match(html, /baseline-v1/);

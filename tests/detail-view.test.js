@@ -71,6 +71,9 @@ test('tier-4 publication renders observed, trend, fair value, forecast, and driv
   assert.match(html, /Strong rise/);
   assert.match(html, /Above modeled range/);
   assert.match(html, /365-day outlook/);
+  assert.match(html, /Observed price to modeled range/);
+  assert.match(html, /Approved forecast projection/);
+  assert.match(html, /Observed now/);
   assert.match(html, /Probability of gain/);
   assert.match(html, /Strong character premium/);
   assert.match(html, /Current price above structural band/);
@@ -89,6 +92,7 @@ test('tier-2 publication shows trend but explicitly withholds fair value and for
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef }, state);
   assert.match(html, /Fair value not supported/);
   assert.match(html, /No forecast published/);
+  assert.doesNotMatch(html, /projection-chart/);
   assert.match(html, /No recorded driver evidence/);
 });
 

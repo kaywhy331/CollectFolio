@@ -179,6 +179,8 @@ Optional cloud sync records the current day's valuation after holdings merge, th
 
 Provider identity data is snapshotted inside the holding so an outage does not remove the collectible reference. Existing holdings are not destructively rewritten: `catalogKey` supplies an exact provider-level bridge, while `canonicalVariantId` remains empty until an approved mapping exists. A legacy provider value remains in the user's record for provenance but cannot enter valuation or display when the source policy marks that route restricted.
 
+Selecting a catalog result opens a prefilled exact-printing summary rather than a second catalog editor. Name, set, number, rarity, finish, artwork, and source are carried forward from the chosen result; the primary form asks only for quantity, condition, and optional purchase price. Dates, fees, organization, grading, manual value, notes, and a local photo remain available through progressive disclosure. Custom collectibles retain editable identity fields because no catalog record exists to supply them.
+
 ## 5. Valuation rules
 
 - Unit value = `manualMarketPrice` when set; otherwise a locally permitted `item.price`; otherwise 0. Pokémon/TCGplayer catalog prices are restricted until a licensed publication exists.
@@ -189,7 +191,7 @@ Provider identity data is snapshotted inside the holding so an outage does not r
 - Portfolio summary is the sum of holding values and costs.
 - Daily snapshot IDs use `portfolio:YYYY-MM-DD`; subsequent changes on the same day replace that day’s point. Only snapshots stamped with the current rights-aware pricing-policy version are charted, so an older TCGplayer/Cardmarket-derived total cannot survive the source-policy transition through historical charts.
 
-Market and cost lines are drawn separately so adding a collectible is not visually represented as pure market appreciation.
+Market and cost lines are drawn separately so adding a collectible is not visually represented as pure market appreciation. The 90-day SVG includes an explicit currency scale, date anchors, series legend, and exact latest values; it does not rely on an unlabeled line shape.
 
 ## 6. Catalog provider abstraction
 
@@ -359,7 +361,7 @@ This is deterministic last-write-wins at holding granularity with persistent del
 
 The browser requests publications only for deduplicated canonical UUIDs represented in Holdings or Watchlist, in batches of 50. IndexedDB cache entries expire at the earlier of six hours or the publication's own expiry. A hydration generation prevents an older in-flight response from restoring intelligence after its last mapped card is removed.
 
-The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Support tiers are layered: Tier 1 observed market, Tier 2 trends, Tier 3 fair value, and Tier 4 forecasts. Invalid or above-tier layers are omitted rather than repaired or guessed.
+The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Support tiers are layered: Tier 1 observed market, Tier 2 trends, Tier 3 fair value, and Tier 4 forecasts. Invalid or above-tier layers are omitted rather than repaired or guessed. A Tier-4 product outlook may plot the approved observed price against published forecast medians and 50%/80% quantile bands. The browser never extrapolates a forecast from trend percentages; without both an approved observation and approved forecast, the projection graph is absent.
 
 The Python analytics core requires exact series identity plus `observed_at` and `available_at`; only accepted records knowable at the feature cutoff enter a snapshot. Outliers remain in the immutable ledger and its audit hash but never become features or realized targets. It implements deterministic canonical rows, conservative mapping candidates, rights-gated observation packets, descriptive features, no-change/damped-momentum baselines, quantile validation, pull-scarcity formulas, and the research-only legacy formula. Evaluation uses the seven-day maturity median and reports point, direction, probability, interval, and baseline-relative metrics.
 

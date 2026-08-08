@@ -28,6 +28,7 @@ The product is being delivered in a free-first sequence that protects the core i
 - [x] Holding create, update, delete, filter, and sort.
 - [x] Cost basis, market value, gain/loss, and return formulas.
 - [x] Daily portfolio snapshots and SVG trend visualization.
+- [x] Add currency ticks, date anchors, legends, and exact latest values to the portfolio trend graph.
 - [x] Category allocation and highest-value holdings.
 - [x] Full JSON backup and CSV export.
 - [x] Demo collection for visual validation.
@@ -40,6 +41,7 @@ The product is being delivered in a free-first sequence that protects the core i
 - [x] Concurrent failure-isolated search.
 - [x] Local query cache.
 - [x] Variant/finish price selection.
+- [x] Replace the catalog “Review and add” form with a prefilled exact-printing summary, ownership essentials, and progressive disclosure for advanced fields.
 - [x] Explicit price source and update disclosure.
 - [x] Keep Pokémon catalog lookup metadata-only and exclude legacy TCGplayer/Cardmarket-derived values, finish selectors, and unversioned historical snapshots from display or valuation until a licensed publication exists.
 - [x] Manual universal entry for sports, comics, and other collectibles.
@@ -136,6 +138,7 @@ Before inviting testers:
 ## Milestone 7 — price-intelligence foundation
 
 - [x] Preserve the five-action shell and add Holdings, Watchlist, and Forecasts inside Portfolio.
+- [x] Group approved forecasts by exact product and graph the observed price against published median and 50%/80% outlook bands without client-side prediction.
 - [x] Add offline exact-variant watch/unwatch from Search, holdings, and scan review.
 - [x] Upgrade IndexedDB to version 3 with tombstone-safe watchlists and version 2 backup export.
 - [x] Add provider-to-canonical identity bridge without rewriting existing holding IDs.

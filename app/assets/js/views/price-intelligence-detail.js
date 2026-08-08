@@ -1,6 +1,7 @@
 import { externalImage, priceDisclosure } from '../core/components.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
+import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 
 const TIER_NAMES = ['Identity only', 'Price only', 'Trend supported', 'Fair value supported', 'Forecast supported', 'Fully evaluated'];
@@ -66,8 +67,8 @@ function headerCard(detail, ref, intelligence, holding, watching, currency, stat
 function intelligenceSections(intelligence, fallbackCurrency) {
   const currency = intelligence.observed?.currency || fallbackCurrency;
   return `${trendSection(intelligence)}
-    ${fairValueSection(intelligence, currency)}
     ${forecastSection(intelligence, currency)}
+    ${fairValueSection(intelligence, currency)}
     ${scorecardSection(intelligence)}
     ${driverSection(intelligence)}`;
 }
@@ -118,14 +119,9 @@ function forecastSection(intelligence, currency) {
   if (intelligence.supportTier < 4 || !forecasts.length) {
     return '<section class="card"><p class="eyebrow">Forecast</p><h2>No forecast published</h2><p class="muted">Forecasts appear only after a rights-cleared model run passes horizon-specific baseline, leakage, and calibration gates. Unsupported cards never show a fabricated estimate.</p></section>';
   }
-  return forecasts.map((forecast) => `<section class="card forecast-card"><div class="section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h2>Modeled range</h2></div>${forecast.confidence !== null ? `<span class="pill">Confidence ${Math.round(forecast.confidence)}/100</span>` : ''}</div>
-    <div class="forecast-grid">
-      <div><span>Median modeled outcome</span><strong>${escapeHTML(formatCurrency(forecast.q50, currency))}</strong></div>
-      <div><span>50% interval</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div>
-      <div><span>80% interval</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div>
-      <div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div>
-    </div>
-    <p class="fine-print">Origin ${escapeHTML(forecast.origin || 'not disclosed')} · Matures ${escapeHTML(forecast.maturesAt || 'not disclosed')} · Model ${escapeHTML(forecast.modelVersion || 'not disclosed')} · An existing forecast is never rewritten.</p></section>`).join('');
+  const projection = forecastProjectionChart(intelligence.observed?.price, forecasts, currency)
+    || '<div class="empty-chart">An approved observed price is required before ranges can be anchored on a graph.</div>';
+  return `<section class="card forecast-card product-outlook-card"><div class="section-heading"><div><p class="eyebrow">Approved outlook</p><h2>Observed price to modeled range</h2><p class="muted">Historical trend evidence and approved forecasts stay separate; this graph connects only published observations and model outputs.</p></div><span class="support-badge supported">Tier ${intelligence.supportTier}</span></div>${projection}<div class="forecast-horizon-list">${forecasts.map((forecast) => `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(forecast.q50, currency))} median</h3></div>${forecast.confidence !== null ? `<span class="pill">Confidence ${Math.round(forecast.confidence)}/100</span>` : ''}</div><div class="forecast-grid"><div><span>50% range</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% range</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div></div><p class="fine-print">Origin ${escapeHTML(forecast.origin || 'not disclosed')} · Matures ${escapeHTML(forecast.maturesAt || 'not disclosed')} · Model ${escapeHTML(forecast.modelVersion || 'not disclosed')} · An existing forecast is never rewritten.</p></section>`).join('')}</div></section>`;
 }
 
 function driverSection(intelligence) {

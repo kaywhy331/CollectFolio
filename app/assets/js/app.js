@@ -20,6 +20,7 @@ import { consumeAuthCallback, fetchDemandAnalyticsOptOut, fetchPublicFeatureFlag
 import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js';
 import { renderAdd } from './views/add.js';
 import { renderHome } from './views/home.js';
+import { renderHoldingForm } from './views/holding-form.js';
 import { renderPortfolio } from './views/portfolio.js';
 import { renderPriceIntelligenceDetail } from './views/price-intelligence-detail.js';
 import { renderProfile } from './views/profile.js';
@@ -162,39 +163,11 @@ function navigate(view) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function option(value, selected, label = value) {
-  return `<option value="${escapeAttribute(value)}" ${selected === value ? 'selected' : ''}>${escapeHTML(label)}</option>`;
-}
-
-function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Approve custom holding', image = '', item: proposedItem = null } = {}) {
+function holdingForm(holding = null, { title = '', image = '', item: proposedItem = null } = {}) {
   const item = holding?.item || proposedItem || {};
-  const category = item.category || 'other';
-  const visiblePriceOptions = catalogPriceOptionsForDisplay(item);
-  const content = `<form id="holding-form">
-    <div class="field-grid">
-      <label class="span-all">Name<input name="name" required maxlength="160" value="${escapeAttribute(item.name || '')}" placeholder="e.g. 1989 Ken Griffey Jr. rookie"></label>
-      <label>Category<select name="category">${[['pokemon','Pokémon'],['magic','Magic'],['yugioh','Yu-Gi-Oh!'],['sports','Sports'],['comics','Comics'],['slab','Graded slab'],['other','Other']].map(([value,label]) => option(value, category, label)).join('')}</select></label>
-      <label>Game / type<input name="game" maxlength="80" value="${escapeAttribute(item.game || '')}" placeholder="Baseball, Marvel…"></label>
-      <label>Set / series<input name="setName" maxlength="120" value="${escapeAttribute(item.setName || '')}"></label>
-      <label>Number / issue<input name="number" maxlength="50" value="${escapeAttribute(item.number || '')}"></label>
-      <label>Variant / rarity<input name="variant" maxlength="100" value="${escapeAttribute(item.variant || '')}"></label>
-      <label>Year<input name="year" inputmode="numeric" maxlength="4" value="${escapeAttribute(item.year || '')}"></label>
-      ${visiblePriceOptions.length ? `<label class="span-all">Variant / finish and provider price<select name="finish">${visiblePriceOptions.map((entry, index) => `<option value="${index}" ${entry.finish === item.variant ? 'selected' : ''}>${escapeHTML(entry.finish)} — ${escapeHTML(String(entry.price))} ${escapeHTML(item.currency || 'USD')}</option>`).join('')}</select><span class="fine-print">Changing finish snapshots that price; the full provider options remain stored.</span></label>` : ''}
-      <label>Quantity<input name="quantity" type="number" min="1" step="1" value="${escapeAttribute(holding?.quantity || 1)}" required></label>
-      <label>Condition<select name="condition">${['Mint','Near Mint','Excellent','Good','Played','Poor','Graded'].map((value) => option(value, holding?.condition || 'Near Mint')).join('')}</select></label>
-      <label>Grade company<input name="gradeCompany" maxlength="40" value="${escapeAttribute(holding?.gradeCompany || '')}" placeholder="PSA, CGC, BGS"></label>
-      <label>Grade<input name="grade" maxlength="20" value="${escapeAttribute(holding?.grade || '')}" placeholder="10"></label>
-      <label>Purchase price (each)<input name="purchasePrice" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.purchasePrice ?? '')}"></label>
-      <label>Fees (total)<input name="fees" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.fees ?? '')}"></label>
-      <label>Purchase date<input name="purchaseDate" type="date" value="${escapeAttribute(holding?.purchaseDate || '')}"></label>
-      <label>Manual unit value<input name="manualMarketPrice" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.manualMarketPrice ?? '')}" placeholder="Overrides, but retains, provider price"></label>
-      <label>Folder<input name="folder" maxlength="80" value="${escapeAttribute(holding?.folder || '')}"></label>
-      <label class="span-all">Notes<textarea name="notes" maxlength="2000">${escapeHTML(holding?.notes || '')}</textarea></label>
-      <label class="span-all">Your photo<input name="photo" type="file" accept="image/*"><span class="fine-print">Original source photos are never uploaded. This image stays in IndexedDB.</span></label>
-    </div>
-    <input type="hidden" name="existingImage" value="${escapeAttribute(image || holding?.userImage || '')}">
-  </form>`;
-  openModal({ title, content, actions: `<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="holding-form">${holding ? 'Save changes' : 'Approve and add'}</button>`, onOpen(layer) {
+  const modalTitle = title || (holding ? `Edit ${item.name || 'holding'}` : item.provider === 'custom' || !item.provider ? 'Add a custom collectible' : 'Add to portfolio');
+  const content = renderHoldingForm(holding, { image, item: proposedItem });
+  openModal({ title: modalTitle, content, actions: `<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="holding-form">${holding ? 'Save changes' : 'Add to portfolio'}</button>`, onOpen(layer) {
     layer.querySelector('#holding-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const submit = layer.querySelector('[type="submit"]');
@@ -217,7 +190,7 @@ function holdingForm(holding = null, { title = holding ? 'Edit holding' : 'Appro
         closeModal();
         await loadLocal();
         await hydrateIntelligence();
-        showToast(holding ? 'Holding updated' : `${data.name} added with your approval`);
+        showToast(holding ? 'Holding updated' : `${data.name} added to your portfolio`);
       } catch (error) {
         showToast(error.message || 'Could not save holding', 'error');
         submit.disabled = false;
@@ -626,7 +599,7 @@ root.addEventListener('click', async (event) => {
   }
   if (action.dataset.action === 'add-catalog') {
     const item = getState().search.results[Number(action.dataset.index)];
-    if (item) holdingForm(null, { title: 'Review catalog match', item });
+    if (item) holdingForm(null, { item });
   }
   if (action.dataset.action === 'toggle-compare') {
     const before = getState().compare || [];
