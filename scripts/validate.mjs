@@ -53,6 +53,7 @@ const required = [
   'netlify/functions/justtcg-refresh.mjs',
   '.github/workflows/analytics-check.yml',
   '.github/workflows/price-intelligence-research.yml',
+  '.github/workflows/pull-rate-integrity.yml',
   'analytics/manifests/tcgcsv-surging-sparks-research.json',
   'analytics/manifests/tcgcsv-surging-sparks-current-v2.json',
   'analytics/manifests/tcgcsv-surging-sparks-mapping-supersession-v2.json',
@@ -157,6 +158,17 @@ if (supersessionValidation.status !== 0) errors.push(`Mapping supersession manif
 const researchWorkflow = await readFile(resolve(root, '.github/workflows/price-intelligence-research.yml'), 'utf8');
 if (!researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty') || !researchWorkflow.includes('--skip-history')) errors.push('Scheduled TCGCSV research must use the current-only v2 manifest with --skip-history.');
 if (researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-research.json --pretty')) errors.push('Scheduled TCGCSV research must not route through the historical v1 manifest.');
+
+const pullRateIntegrityWorkflow = await readFile(resolve(root, '.github/workflows/pull-rate-integrity.yml'), 'utf8');
+for (const contract of [
+  'schedule:', '--verify-sources', 'tcgplayer-sv-me-pull-rates.json',
+  'cfbf261e3986429bed4fe15877309f9783bde584ca11022f0a33f0aa6beadeb6',
+  'pull_rate_sql_cli', 'rollback; -- rehearsal by default', 'retention-days: 30'
+]) {
+  if (!pullRateIntegrityWorkflow.includes(contract)) errors.push(`Pull-rate integrity workflow lacks contract ${contract}.`);
+}
+if (!/permissions:\s*\n\s+contents: read/.test(pullRateIntegrityWorkflow)) errors.push('Pull-rate integrity workflow must remain contents-read-only.');
+if (/SUPABASE_|db query|--commit/i.test(pullRateIntegrityWorkflow)) errors.push('Pull-rate integrity workflow must have no database credential or write path.');
 
 const pullRateManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgplayer-sv-me-pull-rates.json'), 'utf8'));
 const pullRateReview = await readFile(resolve(root, 'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md'));

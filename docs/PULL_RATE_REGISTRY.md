@@ -4,6 +4,8 @@ As of August 8, 2026, the checked-in TCGplayer curation covers 20 of the 22 cano
 
 The database lane stays private research-only: `pull_rate_sources`, `set_pull_rates`, and `pull_rate_unavailability` have RLS enabled, no anon/authenticated grants, and append-only service-role access. Nothing here enables public price intelligence or publishes pull rates to the browser.
 
+The weekly `pull-rate-integrity.yml` workflow rebuilds the deterministic packet, re-fetches all 19 primary article JSON documents from the fixed HTTPS API origin, verifies their UUID/title/date/update/body hashes, regenerates rollback-only SQL, and retains both artifacts for 30 days. It has no Supabase credential or database command. A changed article or packet hash fails visibly and requires a new operator review; the workflow never accepts drift by rewriting the manifest.
+
 ## Coverage
 
 | Canonical set | Primary study state |
@@ -76,3 +78,5 @@ Execute database artifacts only from a controlled service-role/operator PostgreS
 ## Refresh policy
 
 Do not rewrite the August 8 snapshot. If TCGplayer edits an article, review the changed body, record a new retrieval timestamp/body hash, and append a new source/version. If a Shrouded Fable or Pitch Black study appears, append the new rates; retain the historical unavailability check. An article's later publication does not make its estimates point-in-time evidence before their actual publication/retrieval date.
+
+The integrity workflow verifies known sources; it does not claim that an unavailable set can never receive a later study. Operators must still review the publisher index for Shrouded Fable, Pitch Black, and future sets. When a new primary study appears, append it through the same review, rehearsal, and commit lane rather than weakening the fixed packet hash in place.
