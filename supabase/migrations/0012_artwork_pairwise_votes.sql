@@ -51,6 +51,9 @@ create policy artwork_votes_insert_own on public.artwork_pairwise_votes
   for insert with check (user_id = auth.uid());
 -- No update/delete policies: the vote ledger is append-only.
 
+-- Hosted Supabase default privileges grant browser roles access to every new
+-- table; revoke first so the grants below are the complete surface.
+revoke all on public.artwork_pairwise_votes from anon, authenticated;
 grant select, insert on public.artwork_pairwise_votes to authenticated;
 revoke all on public.artwork_score_snapshots from anon, authenticated;
 grant select, insert on public.artwork_score_snapshots to service_role;
@@ -60,6 +63,10 @@ do $$
 begin
   if has_table_privilege('anon', 'public.artwork_pairwise_votes', 'SELECT') then
     raise exception 'Anonymous role must not read artwork votes';
+  end if;
+  if has_table_privilege('authenticated', 'public.artwork_pairwise_votes', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.artwork_pairwise_votes', 'DELETE') then
+    raise exception 'The artwork vote ledger must be append-only for signed-in users';
   end if;
   if has_table_privilege('anon', 'public.artwork_score_snapshots', 'SELECT')
      or has_table_privilege('authenticated', 'public.artwork_score_snapshots', 'SELECT') then
