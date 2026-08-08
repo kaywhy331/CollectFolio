@@ -18,9 +18,12 @@ This module is deliberately parked behind the PRD Sec 36.4 rights gate:
   is generated or applied.
 - Card imagery is intentionally NOT ingested — image rights are reviewed
   separately (PRD Sec 16.3), and the packet carries no image URLs.
-- Every card receives exactly one ``unspecified``-finish variant as an
-  identity placeholder. Exact finishes attach later through the
-  operator-reviewed external-mapping flow; the packet says so explicitly.
+- Variants are enumerated from era print-run rules by rarity (see
+  ``RARITY_FINISHES``): commons/uncommons print normal with a
+  reverse-holofoil parallel, single-star rares print holofoil with a
+  reverse parallel, and every higher rarity is a single holofoil printing.
+  A rarity outside the known vocabulary falls back to one explicit
+  ``unspecified`` placeholder rather than a guessed finish.
 """
 
 from __future__ import annotations
@@ -36,6 +39,32 @@ from .catalog_mapping import CanonicalCard, CanonicalSet, CanonicalVariant, vali
 MAX_SETS_PER_PACKET = 50
 MAX_CARDS_PER_SET = 1_000
 ALLOWED_DECISIONS = ("research_only", "approved")
+
+# Scarlet & Violet / Mega Evolution era print-run finishes by rarity. This is
+# the complete rarity vocabulary observed in the 2026-08-07 pokemon-tcg-data
+# survey of 4,393 cards across 22 SV/ME sets; keys are normalized lowercase
+# with underscores treated as spaces. Special reverse patterns (poke-ball /
+# master-ball parallels in 151 and Prismatic Evolutions) are deliberately
+# not enumerated here; they attach later through the operator-reviewed
+# mapping flow if a priced market for them is adopted.
+RARITY_FINISHES = {
+    "common": ("normal", "reverse-holofoil"),
+    "uncommon": ("normal", "reverse-holofoil"),
+    "rare": ("holofoil", "reverse-holofoil"),
+    "rare holo": ("holofoil", "reverse-holofoil"),
+    "double rare": ("holofoil",),
+    "ultra rare": ("holofoil",),
+    "illustration rare": ("holofoil",),
+    "special illustration rare": ("holofoil",),
+    "hyper rare": ("holofoil",),
+    "ace spec rare": ("holofoil",),
+    "shiny rare": ("holofoil",),
+    "shiny ultra rare": ("holofoil",),
+    "mega hyper rare": ("holofoil",),
+    "mega attack rare": ("holofoil",),
+    "black white rare": ("holofoil",),
+}
+FALLBACK_FINISHES = ("unspecified",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,11 +153,18 @@ def parse_cards(canonical_set: CanonicalSet, payloads: Sequence[Mapping[str, obj
     return tuple(cards)
 
 
-def placeholder_variants(cards: Sequence[CanonicalCard]) -> tuple[CanonicalVariant, ...]:
-    """One unspecified-finish identity placeholder per card (see module doc)."""
+def finishes_for_rarity(rarity: str) -> tuple[str, ...]:
+    normalized = " ".join(str(rarity or "").replace("_", " ").lower().split())
+    return RARITY_FINISHES.get(normalized, FALLBACK_FINISHES)
+
+
+def rarity_finish_variants(cards: Sequence[CanonicalCard]) -> tuple[CanonicalVariant, ...]:
+    """Era print-run variants per card, from RARITY_FINISHES (see module doc)."""
 
     return validate_catalog(
-        CanonicalVariant.build(card, finish="unspecified") for card in cards
+        CanonicalVariant.build(card, finish=finish)
+        for card in cards
+        for finish in finishes_for_rarity(card.rarity)
     )
 
 
@@ -174,7 +210,7 @@ def build_catalog_seed_packet(
             raise ValueError(f"set {raw_code!r} contributed no cards; remove it from the manifest")
         sets.append(canonical_set)
         cards.extend(parsed_cards)
-        variants.extend(placeholder_variants(parsed_cards))
+        variants.extend(rarity_finish_variants(parsed_cards))
 
     rows = {
         "catalog_sets": [entry.database_row() for entry in sets],
@@ -192,8 +228,10 @@ def build_catalog_seed_packet(
         },
         "rows": rows,
         "notes": [
-            "Variants are unspecified-finish identity placeholders; exact finishes "
-            "attach through the operator-reviewed external-mapping flow.",
+            "Variants are enumerated from era print-run rules by rarity; rarities "
+            "outside the known vocabulary fall back to an explicit unspecified "
+            "placeholder, and special reverse parallels attach later through the "
+            "operator-reviewed external-mapping flow.",
             "No imagery is ingested; image rights are reviewed separately.",
             "Applying this packet to a hosted project requires a separate "
             "operator-reviewed SQL step; this packet writes nothing.",

@@ -57,6 +57,6 @@ jobs:
           assert packet["mode"] == "research_only_catalog_seed", packet["mode"]
           assert packet["review_required"] is True
           assert packet["public_display_candidates"] == []
-          assert packet["counts"] == {"sets": 1, "cards": 1, "variants": 1}
+          assert packet["counts"] == {"sets": 1, "cards": 1, "variants": 2}  # Common: normal + reverse
           print("fixture packet OK:", packet["packet_hash"])
           PY
