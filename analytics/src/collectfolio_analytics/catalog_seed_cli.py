@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.dump(packet, output, ensure_ascii=False, indent=2)
         output.write("\n")
     counts = packet["counts"]
-    print(f"catalog seed packet: {counts['sets']} sets, {counts['cards']} cards, {counts['variants']} placeholder variants -> {args.output}")
+    print(f"catalog seed packet: {counts['sets']} sets, {counts['cards']} cards, {counts['variants']} variants -> {args.output}")
     return 0
 
 

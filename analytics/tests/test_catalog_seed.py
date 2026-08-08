@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from collectfolio_analytics.catalog_seed import (
     CatalogSeedRights,
     build_catalog_seed_packet,
+    finishes_for_rarity,
     parse_cards,
     parse_set,
 )
@@ -71,15 +72,27 @@ class PacketTests(unittest.TestCase):
         self.assertEqual(first["mode"], "research_only_catalog_seed")
         self.assertTrue(first["review_required"])
         self.assertEqual(first["public_display_candidates"], [])
-        self.assertEqual(first["counts"], {"sets": 1, "cards": 2, "variants": 2})
+        # SIR Charizard prints holofoil only; Common Pidgey prints normal
+        # plus a reverse-holofoil parallel.
+        self.assertEqual(first["counts"], {"sets": 1, "cards": 2, "variants": 3})
 
-    def test_every_card_gets_exactly_one_unspecified_placeholder_variant(self):
+    def test_variants_follow_era_print_run_rules_by_rarity(self):
         packet = self.build()
         variants = packet["rows"]["catalog_variants"]
-        self.assertEqual(len(variants), 2)
-        self.assertTrue(all(row["finish"] == "unspecified" for row in variants))
-        card_ids = {row["id"] for row in packet["rows"]["catalog_cards"]}
-        self.assertEqual({row["card_id"] for row in variants}, card_ids)
+        by_card = {}
+        for row in variants:
+            by_card.setdefault(row["card_id"], set()).add(row["finish"])
+        cards = {row["name"]: row["id"] for row in packet["rows"]["catalog_cards"]}
+        self.assertEqual(by_card[cards["Charizard ex"]], {"holofoil"})
+        self.assertEqual(by_card[cards["Pidgey"]], {"normal", "reverse-holofoil"})
+
+    def test_finish_rules_cover_the_surveyed_vocabulary_and_fall_back_honestly(self):
+        self.assertEqual(finishes_for_rarity("Common"), ("normal", "reverse-holofoil"))
+        self.assertEqual(finishes_for_rarity("Rare"), ("holofoil", "reverse-holofoil"))
+        self.assertEqual(finishes_for_rarity("MEGA_ATTACK_RARE"), ("holofoil",))
+        self.assertEqual(finishes_for_rarity("Black White Rare"), ("holofoil",))
+        self.assertEqual(finishes_for_rarity("Never Seen Before"), ("unspecified",))
+        self.assertEqual(finishes_for_rarity(""), ("unspecified",))
 
     def test_packet_carries_no_image_references(self):
         import json
