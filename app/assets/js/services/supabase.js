@@ -1,6 +1,7 @@
 import { dataUrlBytes } from '../core/utils.js';
 import { isUUID } from '../core/catalog-identity.js';
 import { deleteRecord, getAll, putRecord, recordDailySnapshot } from '../core/db.js';
+import { PRICING_POLICY_VERSION } from '../core/pricing-policy.js';
 import { mergeWatchlistItems, mergeWatchlistTombstones } from './watchlist.js';
 
 const SESSION_KEY = 'collectfolio:supabase-session';
@@ -150,6 +151,82 @@ export function mergeHoldings(local, remote, deletedIds = new Set()) {
     : { ...holding, userImage: localImages.get(holding.id) });
 }
 
+function isCalendarDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1];
+}
+
+function normalizeISODateTime(value) {
+  if (typeof value !== 'string') return '';
+  const match = /^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+  if (!match || !isCalendarDate(match[1])) return '';
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
+export function normalizePortfolioSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  if (typeof snapshot.id !== 'string' || typeof snapshot.date !== 'string') return null;
+  const match = /^portfolio:(\d{4}-\d{2}-\d{2})$/.exec(snapshot.id);
+  if (!match || !isCalendarDate(match[1]) || snapshot.date !== match[1]) return null;
+  if (snapshot.pricingPolicyVersion !== PRICING_POLICY_VERSION) return null;
+  const updatedAt = normalizeISODateTime(snapshot.updatedAt);
+  if (!updatedAt) return null;
+  if (typeof snapshot.marketValue !== 'number' || !Number.isFinite(snapshot.marketValue) || snapshot.marketValue < 0) return null;
+  if (typeof snapshot.costBasis !== 'number' || !Number.isFinite(snapshot.costBasis) || snapshot.costBasis < 0) return null;
+  if (!Number.isInteger(snapshot.uniqueItems) || snapshot.uniqueItems < 0) return null;
+  if (!Number.isInteger(snapshot.totalQuantity) || snapshot.totalQuantity < 0) return null;
+  return {
+    id: snapshot.id,
+    date: snapshot.date,
+    pricingPolicyVersion: PRICING_POLICY_VERSION,
+    marketValue: snapshot.marketValue === 0 ? 0 : snapshot.marketValue,
+    costBasis: snapshot.costBasis === 0 ? 0 : snapshot.costBasis,
+    uniqueItems: snapshot.uniqueItems === 0 ? 0 : snapshot.uniqueItems,
+    totalQuantity: snapshot.totalQuantity === 0 ? 0 : snapshot.totalQuantity,
+    updatedAt
+  };
+}
+
+export function remotePortfolioSnapshot(row = {}) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+  const embedded = normalizePortfolioSnapshot(row.data);
+  const updatedAt = normalizeISODateTime(row.updated_at);
+  if (!embedded || !updatedAt || row.id !== embedded.id || row.snapshot_date !== embedded.date) return null;
+  return { ...embedded, updatedAt };
+}
+
+export function portfolioSnapshotRow(snapshot, userId) {
+  const normalized = normalizePortfolioSnapshot(snapshot);
+  if (!normalized || typeof userId !== 'string' || !userId) return null;
+  return {
+    user_id: userId,
+    id: normalized.id,
+    data: normalized,
+    snapshot_date: normalized.date,
+    updated_at: normalized.updatedAt
+  };
+}
+
+export function mergePortfolioSnapshots(...sets) {
+  const merged = new Map();
+  for (const snapshot of sets.flatMap((set) => Array.isArray(set) ? set : [])) {
+    const normalized = normalizePortfolioSnapshot(snapshot);
+    if (!normalized) continue;
+    const current = merged.get(normalized.id);
+    const timestampOrder = current ? normalized.updatedAt.localeCompare(current.updatedAt) : 1;
+    const tieOrder = current ? JSON.stringify(normalized).localeCompare(JSON.stringify(current)) : 1;
+    if (!current || timestampOrder > 0 || (timestampOrder === 0 && tieOrder > 0)) merged.set(normalized.id, normalized);
+  }
+  return [...merged.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
 function remoteHolding(row) {
   return { ...row.data, id: row.id, userImage: row.user_image || row.data?.userImage || '', updatedAt: row.updated_at || row.data?.updatedAt, dirty: false };
 }
@@ -158,6 +235,28 @@ function holdingRow(holding, userId) {
   const includeImage = holding.userImage && dataUrlBytes(holding.userImage) <= INLINE_IMAGE_LIMIT;
   const data = { ...holding, userImage: '' };
   return { id: holding.id, user_id: userId, data, user_image: includeImage ? holding.userImage : null, updated_at: holding.updatedAt };
+}
+
+export async function syncPortfolioSnapshots(session, userId) {
+  await recordDailySnapshot();
+  const [localSnapshots, remoteRows] = await Promise.all([
+    getAll('snapshots'),
+    request('/rest/v1/portfolio_snapshots?select=id,data,snapshot_date,updated_at', { session })
+  ]);
+  const remoteSnapshots = Array.isArray(remoteRows)
+    ? remoteRows.map(remotePortfolioSnapshot).filter(Boolean)
+    : [];
+  const merged = mergePortfolioSnapshots(localSnapshots, remoteSnapshots);
+  for (const snapshot of merged) await putRecord('snapshots', snapshot);
+  if (merged.length) {
+    await request('/rest/v1/portfolio_snapshots?on_conflict=user_id,id', {
+      method: 'POST',
+      session,
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: merged.map((snapshot) => portfolioSnapshotRow(snapshot, userId))
+    });
+  }
+  return merged.length;
 }
 
 export function remoteWatchlistItem(row) {
@@ -233,8 +332,8 @@ export async function syncPortfolio() {
     await request('/rest/v1/holdings?on_conflict=id', { method: 'POST', session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: merged.map((holding) => holdingRow(holding, userId)) });
   }
   for (const tombstone of tombstones) await putRecord('deletions', { ...tombstone, dirty: false });
-  await recordDailySnapshot();
-  return { holdings: merged.length, deletions: tombstones.length, omittedImages: merged.filter((holding) => holding.userImage && dataUrlBytes(holding.userImage) > INLINE_IMAGE_LIMIT).length };
+  const snapshots = await syncPortfolioSnapshots(session, userId);
+  return { holdings: merged.length, deletions: tombstones.length, snapshots, omittedImages: merged.filter((holding) => holding.userImage && dataUrlBytes(holding.userImage) > INLINE_IMAGE_LIMIT).length };
 }
 
 export async function syncWatchlist() {

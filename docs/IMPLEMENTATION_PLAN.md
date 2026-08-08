@@ -64,6 +64,7 @@ The product is being delivered in a free-first sequence that protects the core i
 - [x] Runtime public-key configuration.
 - [x] Password sign-up/sign-in, magic-link callback consumption, refresh, and sign-out.
 - [x] Holdings pull, merge, upsert, and deletion-tombstone propagation.
+- [x] Rights-aware daily portfolio snapshot pull, deterministic last-write-wins merge, and composite-key upsert; malformed and legacy-policy rows fail closed, and absence never implies deletion.
 - [x] Initial database migration and Row Level Security.
 - [x] Apply the migration to the hosted Supabase project.
 - [x] Copy the Supabase publishable key into the explicit Netlify staging environment.
@@ -128,7 +129,7 @@ Before inviting testers:
 8. Verify detection editing on touch and mouse.
 9. Verify first-use OCR on Wi-Fi and a throttled mobile connection.
 10. Export a backup, clear local data, and restore it.
-11. Sign in on two browsers and verify create, update, and deletion synchronization.
+11. Sign in on two browsers and verify holding create/update/deletion plus current-policy daily snapshot synchronization.
 12. Install the PWA on Android/Chrome and iOS/Safari.
 13. Confirm service worker update after incrementing its cache version.
 

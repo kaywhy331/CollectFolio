@@ -143,6 +143,8 @@ Database: `collectfolio`, version 3. New exports use interchange version 2; vers
 
 Indexes on holdings include `catalogId` and `updatedAt`.
 
+Optional cloud sync records the current day's valuation after holdings merge, then reconciles only well-formed `rights-aware-v1` snapshots by canonical daily ID and ISO `updatedAt`. Local and hosted rows must agree on `portfolio:YYYY-MM-DD` and `snapshot_date`; legacy-policy, mismatched, negative, non-finite, or fractional-count records do not cross the sync boundary. Equal timestamps use a stable payload tie-break, and the client never treats an absent hosted snapshot as a deletion.
+
 ### 4.3 Holding model
 
 ```js
@@ -323,6 +325,8 @@ Migration `0001_initial.sql` creates:
 - user-profile creation trigger;
 - complete per-user RLS policies.
 
+Authenticated portfolio sync uses those existing `portfolio_snapshots` CRUD grants and per-user RLS policies. It pulls the signed-in user's daily rows, performs deterministic last-write-wins reconciliation locally, and upserts one row per day through the composite `(user_id, id)` key. Saved scan sessions remain device-local because their image-size and privacy contract has not been approved.
+
 Migration `0002_price_intelligence_foundation.sql` is intentionally a separately reviewed operator step. It adds versioned source-terms reviews, a private canonical catalog, a nullable existing-holding bridge, exact-key watchlists and tombstones, runtime product flags, and the only anonymous intelligence publication table. Raw catalog/source tables have no anon or authenticated grants. Public publication RLS re-evaluates every lineage source against its current approved terms review and expiration.
 
 Migration `0003_price_intelligence_research_pipeline.sql` adds private append-oriented mapping candidates/reviews, exact-mapping price observations, data-quality events, analytics runs/source lineage, trend snapshots, descriptive publication candidates/reviews, and immutable promotion receipts. Composite foreign keys bind every observation to its exact source, terms review, approved mapping, variant, and ingestion run. All research tables have RLS with no anon/authenticated grants.
@@ -417,8 +421,7 @@ CI runs the same command on pushes and pull requests. A path-filtered Python 3.1
 - OCR is English-only in the MVP.
 - Perceptual hashing detects broad visual similarity but cannot reliably distinguish every parallel.
 - Sports-card and comic catalog automation remains manual-assisted.
-- Remote snapshot and saved-scan synchronization are schema-ready but not implemented in the client; holdings and explicit deletions are synchronized.
-- Portfolio snapshots are currently local; remote snapshot sync is schema-ready but not implemented in the client.
+- Saved-scan synchronization remains schema-ready but is not implemented in the client; crop-image payload limits and the cross-device privacy contract still need an explicit design decision.
 - Stable asset filenames require release discipline around service-worker cache versioning.
 - One TCGCSV identity and 53-week cohort are qualified for research only; no public/commercial TCGplayer-derived permission exists. JustTCG's paid contract is the preferred licensed alternative and its bounded adapter is implemented, but no paid account, API secret, or live approved review exists, so public price intelligence remains disabled.
 - Migrations 0001 through 0014 are hosted. Migration 0006's guarded mapping supersession and ACL/RLS contracts have been exercised against the hosted project, and migrations 0009/0014 now hold the reviewed pull-rate registry and explicit missing-data evidence. The project still lacks independently retained proof of a restorable Auth/storage-aware backup; WAL-G without PITR and logical dumps do not satisfy that recovery requirement for a future destructive migration.
