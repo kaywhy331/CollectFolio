@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.2.7';
+const CACHE = 'collectfolio-shell-v0.2.8';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
@@ -9,7 +9,7 @@ const SHELL = [
   './assets/js/core/pricing-policy.js', './assets/js/core/compare.js',
   './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
-  './assets/js/views/price-intelligence-detail.js',
+  './assets/js/views/price-intelligence-detail.js', './assets/js/views/holding-form.js',
   './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js',
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/image-algorithms.js',

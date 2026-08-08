@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { forecastProjectionChart, trendChart } from '../app/assets/js/core/ui.js';
+
+test('portfolio chart renders currency scale, dates, series, and exact latest values', () => {
+  const html = trendChart([
+    { date: '2026-07-01', marketValue: 1000, costBasis: 800 },
+    { date: '2026-07-15', marketValue: 1200, costBasis: 900 },
+    { date: '2026-07-31', marketValue: 1500, costBasis: 1000 }
+  ], 'USD');
+  assert.match(html, /chart-axis-label/);
+  assert.match(html, /Jul 1/);
+  assert.match(html, /Jul 31/);
+  assert.match(html, /Market value/);
+  assert.match(html, /Latest market/);
+  assert.match(html, /\$1,500\.00/);
+  assert.match(html, /\$1,000\.00/);
+});
+
+test('forecast chart relates an approved observation to ordered horizon bands', () => {
+  const html = forecastProjectionChart(100, [
+    { horizon: 30, q10: 80, q25: 90, q50: 105, q75: 120, q90: 140 },
+    { horizon: 90, q10: 70, q25: 92, q50: 115, q75: 135, q90: 160 }
+  ], 'USD');
+  assert.match(html, /Approved forecast projection/);
+  assert.match(html, /Today/);
+  assert.match(html, /30D/);
+  assert.match(html, /90D/);
+  assert.match(html, /forecast-band-80/);
+  assert.match(html, /90D median/);
+  assert.match(html, /\+15\.0%/);
+});
+
+test('forecast chart fails closed without an observation or with unordered ranges', () => {
+  assert.equal(forecastProjectionChart(null, [{ horizon: 30, q10: 1, q25: 2, q50: 3, q75: 4, q90: 5 }]), '');
+  assert.equal(forecastProjectionChart(10, [{ horizon: 30, q10: 5, q25: 4, q50: 3, q75: 2, q90: 1 }]), '');
+});

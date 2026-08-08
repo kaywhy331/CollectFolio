@@ -3,6 +3,7 @@ import { watchKeyForItem } from '../core/catalog-identity.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { filterAndSortHoldings, holdingCostBasis, holdingGain, holdingMarketValue, portfolioSummary, returnPercent } from '../core/calculations.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from '../core/pricing-policy.js';
+import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 
 export function renderPortfolio(state) {
@@ -78,11 +79,13 @@ function forecastSection(state) {
     <ul class="evidence-list"><li>No fabricated estimates for unsupported cards.</li><li>Past predictions will remain immutable once forecasting launches.</li><li>Observed price, trend, fair value, and forecast will remain separate outputs.</li></ul>
   </section>`;
 
-  const publications = Object.values(state.intelligence?.byVariant || {}).map(normalizeIntelligencePayload);
-  const forecastRows = publications.flatMap((publication) => Object.values(publication.forecasts).map((forecast) => ({ publication, forecast })));
+  const publications = Object.values(state.intelligence?.byVariant || {})
+    .map(normalizeIntelligencePayload)
+    .filter((publication) => Object.keys(publication.forecasts).length);
+  const outlookCount = publications.reduce((count, publication) => count + Object.keys(publication.forecasts).length, 0);
   const status = `${state.intelligence?.loading ? '<p class="fine-print" role="status">Refreshing approved publications…</p>' : ''}${state.intelligence?.error ? `<p class="fine-print negative" role="status">${escapeHTML(state.intelligence.error)}</p>` : ''}`;
-  if (!forecastRows.length) return `${status}<section class="card intelligence-gate" role="status"><span class="support-badge supported">Publication enabled</span><h2>No approved forecasts published yet</h2><p>Cards appear here only after a rights-cleared model run passes horizon-specific baseline, leakage, and calibration gates.</p></section>`;
-  return `${status}<div class="section-heading"><div><p class="eyebrow">${forecastRows.length} approved outlooks</p><h2>Published forecasts</h2></div></div><div class="forecast-list">${forecastRows.sort((a, b) => a.forecast.horizon - b.forecast.horizon).map(({ publication, forecast }) => forecastCard(state, publication, forecast)).join('')}</div>`;
+  if (!publications.length) return `${status}<section class="card intelligence-gate" role="status"><span class="support-badge supported">Publication enabled</span><h2>No approved forecasts published yet</h2><p>Cards appear here only after a rights-cleared model run passes horizon-specific baseline, leakage, and calibration gates.</p></section>`;
+  return `${status}<div class="section-heading"><div><p class="eyebrow">${publications.length} product${publications.length === 1 ? '' : 's'} · ${outlookCount} approved horizon${outlookCount === 1 ? '' : 's'}</p><h2>Product outlooks</h2></div></div><div class="forecast-list">${publications.map((publication) => forecastCard(state, publication)).join('')}</div>`;
 }
 
 function portfolioFilters(state, placeholder) {
@@ -131,11 +134,19 @@ function intelligenceSummary(intelligence, currency, compact = false) {
   return `<div class="intelligence-summary"><span class="support-badge ${tone}">Tier ${intelligence.supportTier} · Approved publication</span>${trend}${fair}</div>`;
 }
 
-function forecastCard(state, publication, forecast) {
+function forecastCard(state, publication) {
   const holding = state.holdings.find((entry) => entry.canonicalVariantId === publication.variantId);
   const watched = state.watchlistItems.find((entry) => entry.canonicalVariantId === publication.variantId);
   const item = holding?.item || watched?.catalogRef || {};
   const currency = publication.observed?.currency || item.currency || state.settings.currency || 'USD';
+  const forecasts = Object.values(publication.forecasts).sort((left, right) => left.horizon - right.horizon);
   const source = publication.sourceAttributions.map((entry) => entry.name).filter(Boolean).join(', ');
-  return `<article class="card forecast-card"><div class="section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h2>${escapeHTML(item.name || 'Mapped card')}</h2><p class="item-meta">${escapeHTML([item.setName, item.number, item.finish || item.variant].filter(Boolean).join(' · '))}</p></div><span class="support-badge supported">Tier ${publication.supportTier}</span></div><div class="forecast-grid"><div><span>Median modeled outcome</span><strong>${escapeHTML(formatCurrency(forecast.q50, currency))}</strong></div><div><span>50% interval</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% interval</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div><div><span>Evidence confidence</span><strong>${forecast.confidence === null ? '—' : `${Math.round(forecast.confidence)}/100`}</strong></div></div><p class="fine-print">Origin ${escapeHTML(forecast.origin || 'not disclosed')} · Matures ${escapeHTML(forecast.maturesAt || 'not disclosed')} · Model ${escapeHTML(forecast.modelVersion || 'not disclosed')}</p>${source ? `<p class="price-source">Sources: ${escapeHTML(source)}</p>` : ''}</article>`;
+  const trend30 = publication.supportTier >= 2 ? publication.trend.return30d : null;
+  const trend = trend30 === null ? '' : `<span class="outlook-trend ${trend30 >= 0 ? 'positive' : 'negative'}">30D ${escapeHTML(formatPercent(trend30 * 100))} · ${escapeHTML(trendLabel(publication.trend.status))}</span>`;
+  const detail = holding
+    ? `<button class="button ghost small" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">Open product detail</button>`
+    : watched ? `<button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(watched.watchKey)}">Open product detail</button>` : '';
+  const projection = forecastProjectionChart(publication.observed?.price, forecasts, currency)
+    || '<div class="empty-chart">An approved observed price is required before ranges can be anchored on a graph.</div>';
+  return `<article class="card forecast-card product-outlook-card"><div class="forecast-product-head">${externalImage(item, 'forecast-product-image')}<div><p class="eyebrow">Approved product outlook</p><h2>${escapeHTML(item.name || 'Mapped card')}</h2><p class="item-meta">${escapeHTML([item.setName, item.number, item.finish || item.variant].filter(Boolean).join(' · '))}</p><div class="intelligence-summary"><span class="support-badge supported">Tier ${publication.supportTier}</span>${trend}</div></div>${detail}</div>${projection}<div class="forecast-horizon-list">${forecasts.map((forecast) => `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(forecast.q50, currency))} median</h3></div>${forecast.confidence === null ? '' : `<span class="pill">Confidence ${Math.round(forecast.confidence)}/100</span>`}</div><div class="forecast-grid"><div><span>50% range</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% range</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div></div><p class="fine-print">Origin ${escapeHTML(forecast.origin || 'not disclosed')} · Matures ${escapeHTML(forecast.maturesAt || 'not disclosed')} · Model ${escapeHTML(forecast.modelVersion || 'not disclosed')}</p></section>`).join('')}</div>${source ? `<p class="price-source">Sources: ${escapeHTML(source)}</p>` : ''}</article>`;
 }

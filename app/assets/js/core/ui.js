@@ -46,28 +46,141 @@ export function closeModal() {
   closeCurrent?.();
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function finiteNonNegative(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function niceCeiling(value) {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const normalized = value / magnitude;
+  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+function compactCurrency(value, currency) {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency', currency, notation: 'compact', maximumFractionDigits: 1
+  }).format(value);
+}
+
+function shortDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return '';
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== value) return '';
+  return `${MONTHS[date.getUTCMonth()]} ${date.getUTCDate()}`;
+}
+
+function axisMarkup({ top, currency, left, right, y, xLabels }) {
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const horizontal = ticks.map((fraction) => {
+    const value = top * fraction;
+    const row = y(value);
+    return `<line x1="${left}" y1="${row.toFixed(1)}" x2="${right}" y2="${row.toFixed(1)}" class="chart-grid"/><text x="${left - 10}" y="${(row + 4).toFixed(1)}" text-anchor="end" class="chart-axis-label">${escapeHTML(compactCurrency(value, currency))}</text>`;
+  }).join('');
+  const dates = xLabels.map(({ x, label, anchor = 'middle' }) => `<text x="${x.toFixed(1)}" y="286" text-anchor="${anchor}" class="chart-axis-label chart-date-label">${escapeHTML(label)}</text>`).join('');
+  return `${horizontal}${dates}`;
+}
+
 export function trendChart(snapshots = [], currency = 'USD') {
-  const points = snapshots.slice(-90);
+  const points = (Array.isArray(snapshots) ? snapshots : [])
+    .map((point) => ({
+      date: String(point?.date || ''),
+      marketValue: finiteNonNegative(point?.marketValue),
+      costBasis: finiteNonNegative(point?.costBasis)
+    }))
+    .filter((point) => point.marketValue !== null && point.costBasis !== null && shortDate(point.date))
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .slice(-90);
   if (!points.length) return '<div class="empty-chart">A trend appears after your first holding is added.</div>';
-  const width = 720;
-  const height = 260;
-  const pad = 24;
-  const values = points.flatMap((point) => [Number(point.marketValue) || 0, Number(point.costBasis) || 0]);
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const range = max - min || 1;
+  const width = 760;
+  const height = 300;
+  const left = 76;
+  const right = 742;
+  const chartTop = 18;
+  const bottom = 252;
+  const values = points.flatMap((point) => [point.marketValue, point.costBasis]);
+  const top = niceCeiling(Math.max(...values, 1) * 1.05);
+  const y = (value) => bottom - ((value / top) * (bottom - chartTop));
+  const x = (index) => points.length === 1
+    ? right
+    : left + ((index * (right - left)) / (points.length - 1));
   const coords = (field) => points.map((point, index) => {
-    const x = pad + (index * (width - pad * 2)) / Math.max(points.length - 1, 1);
-    const y = height - pad - (((Number(point[field]) || 0) - min) / range) * (height - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+    return `${x(index).toFixed(1)},${y(point[field]).toFixed(1)}`;
   }).join(' ');
+  const labelIndexes = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
+  const xLabels = labelIndexes.map((index) => ({
+    x: x(index),
+    label: shortDate(points[index].date),
+    anchor: index === 0 && points.length > 1 ? 'start' : index === points.length - 1 ? 'end' : 'middle'
+  }));
   const latest = points.at(-1);
-  return `<svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Market value and cost basis over ${points.length} days">
-    <title>Market ${escapeHTML(formatCurrency(latest.marketValue, currency))}; cost ${escapeHTML(formatCurrency(latest.costBasis, currency))}</title>
-    <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="chart-grid"/>
+  const latestX = x(points.length - 1);
+  return `<div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Portfolio market value and cost basis with currency scale and dates">
+    <title>Latest market ${escapeHTML(formatCurrency(latest.marketValue, currency))}; latest cost ${escapeHTML(formatCurrency(latest.costBasis, currency))}</title>
+    ${axisMarkup({ top, currency, left, right, y, xLabels })}
     <polyline points="${coords('marketValue')}" class="chart-line chart-market"/>
     <polyline points="${coords('costBasis')}" class="chart-line chart-cost"/>
-  </svg><div class="chart-legend"><span><i class="market-dot"></i>Market value</span><span><i class="cost-dot"></i>Cost basis</span></div>`;
+    <circle cx="${latestX.toFixed(1)}" cy="${y(latest.marketValue).toFixed(1)}" r="5" class="chart-point chart-market-point"/>
+    <circle cx="${latestX.toFixed(1)}" cy="${y(latest.costBasis).toFixed(1)}" r="5" class="chart-point chart-cost-point"/>
+  </svg></div><div class="chart-footer"><div class="chart-legend"><span><i class="market-dot"></i>Market value</span><span><i class="cost-dot"></i>Cost basis</span></div><div class="chart-latest"><span>Latest market <strong>${escapeHTML(formatCurrency(latest.marketValue, currency))}</strong></span><span>Cost <strong>${escapeHTML(formatCurrency(latest.costBasis, currency))}</strong></span></div></div>`;
+}
+
+export function forecastProjectionChart(observedPrice, forecasts = [], currency = 'USD') {
+  const observed = finiteNonNegative(observedPrice);
+  const candidates = (Array.isArray(forecasts) ? forecasts : Object.values(forecasts || []))
+    .map((forecast) => ({
+      horizon: Number(forecast?.horizon),
+      q10: finiteNonNegative(forecast?.q10),
+      q25: finiteNonNegative(forecast?.q25),
+      q50: finiteNonNegative(forecast?.q50),
+      q75: finiteNonNegative(forecast?.q75),
+      q90: finiteNonNegative(forecast?.q90)
+    }))
+    .filter((forecast) => Number.isInteger(forecast.horizon) && forecast.horizon > 0
+      && [forecast.q10, forecast.q25, forecast.q50, forecast.q75, forecast.q90].every((value) => value !== null)
+      && forecast.q10 <= forecast.q25 && forecast.q25 <= forecast.q50
+      && forecast.q50 <= forecast.q75 && forecast.q75 <= forecast.q90)
+    .sort((left, right) => left.horizon - right.horizon);
+  if (observed === null || !candidates.length) return '';
+  const unique = [...new Map(candidates.map((forecast) => [forecast.horizon, forecast])).values()];
+  const points = [{ horizon: 0, q10: observed, q25: observed, q50: observed, q75: observed, q90: observed }, ...unique];
+  const width = 760;
+  const height = 300;
+  const left = 76;
+  const right = 742;
+  const chartTop = 18;
+  const bottom = 252;
+  const top = niceCeiling(Math.max(observed, ...unique.map((forecast) => forecast.q90), 1) * 1.05);
+  const xPositions = new Map(points.map((point, index) => [
+    point.horizon,
+    left + ((index * (right - left)) / Math.max(points.length - 1, 1))
+  ]));
+  const x = (horizon) => xPositions.get(horizon);
+  const y = (value) => bottom - ((value / top) * (bottom - chartTop));
+  const coords = (field) => points.map((point) => `${x(point.horizon).toFixed(1)},${y(point[field]).toFixed(1)}`);
+  const band = (high, low) => [...coords(high), ...coords(low).reverse()].join(' ');
+  const latest = points.at(-1);
+  const change = observed > 0 ? ((latest.q50 - observed) / observed) * 100 : null;
+  const changeLabel = change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(1)}%`;
+  const xLabels = points.map((point, index) => ({
+    x: x(point.horizon),
+    label: point.horizon ? `${point.horizon}D` : 'Today',
+    anchor: index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'
+  }));
+  return `<div class="projection-chart"><div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Approved forecast projection from today's observed price to modeled future ranges">
+    <title>Observed ${escapeHTML(formatCurrency(observed, currency))}; ${latest.horizon}-day median ${escapeHTML(formatCurrency(latest.q50, currency))}; 80% interval ${escapeHTML(formatCurrency(latest.q10, currency))} to ${escapeHTML(formatCurrency(latest.q90, currency))}</title>
+    ${axisMarkup({ top, currency, left, right, y, xLabels })}
+    <polygon points="${band('q90', 'q10')}" class="forecast-band forecast-band-80"/>
+    <polygon points="${band('q75', 'q25')}" class="forecast-band forecast-band-50"/>
+    <polyline points="${coords('q50').join(' ')}" class="chart-line forecast-median"/>
+    ${points.map((point) => `<circle cx="${x(point.horizon).toFixed(1)}" cy="${y(point.q50).toFixed(1)}" r="4.5" class="chart-point forecast-point"/>`).join('')}
+  </svg></div><div class="projection-summary"><span>Observed now <strong>${escapeHTML(formatCurrency(observed, currency))}</strong></span><span>${latest.horizon}D median <strong>${escapeHTML(formatCurrency(latest.q50, currency))}</strong></span><strong class="${change === null ? '' : change >= 0 ? 'positive' : 'negative'}">${escapeHTML(changeLabel)}</strong></div><div class="chart-legend"><span><i class="forecast-median-dot"></i>Median outlook</span><span><i class="forecast-band-50-dot"></i>50% range</span><span><i class="forecast-band-80-dot"></i>80% range</span></div></div>`;
 }
 
 export function allocationChart(allocation = {}) {
