@@ -36,7 +36,7 @@ function moversModule(state) {
 function signalsModule(state) {
   const signals = watchlistSignals(state.alerts, state.watchlistItems);
   if (!signals.length) return '';
-  return `<section class="card"><div class="section-heading"><div><p class="eyebrow">Watchlist</p><h2>Watchlist signals</h2></div><button class="button ghost small" type="button" data-go="portfolio">Watchlist →</button></div>
+  return `<section class="card"><div class="section-heading"><div><p class="eyebrow">Watchlist</p><h2>Watchlist signals</h2></div><button class="button ghost small" type="button" data-go="portfolio" data-portfolio-target="watchlist">Watchlist →</button></div>
     ${signals.map((alert) => `<p class="fine-print positive" role="status">● ${escapeHTML(alert.message)}</p>`).join('')}</section>`;
 }
 

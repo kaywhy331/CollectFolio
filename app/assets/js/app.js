@@ -6,9 +6,11 @@ import {
   isRestrictedCatalogPrice,
   PRICING_POLICY_VERSION
 } from './core/pricing-policy.js';
+import { appRouteForLegacyView, currentAppPath, parseAppRoute, primaryDestination, routeStatePatch } from './core/router.js';
 import { getState, setState, subscribe } from './core/store.js';
 import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
+import { shellViewModel } from './core/view-models.js';
 import { refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, refreshPublishedIntelligence } from './services/price-intelligence.js';
@@ -33,6 +35,9 @@ const root = document.querySelector('#main-content');
 const defaults = { currency: 'USD', theme: 'dark', demandAnalyticsOptOut: false };
 let activeDraft = null;
 let activeDetail = null;
+let activeRoute = parseAppRoute(location);
+
+setState(routeStatePatch(activeRoute, getState()));
 
 root.addEventListener('error', (event) => {
   const image = event.target;
@@ -54,11 +59,18 @@ root.addEventListener('error', (event) => {
 function render(state = getState()) {
   const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, profile: renderProfile, scan: () => renderScanReview(activeDraft, state), detail: () => renderPriceIntelligenceDetail(activeDetail, state) };
   root.innerHTML = state.ready ? (views[state.activeView] || renderHome)(state) : '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>';
-  document.querySelectorAll('.bottom-nav [data-view]').forEach((button) => {
-    const selected = button.dataset.view === state.activeView;
+  const destination = primaryDestination(state.route || activeRoute);
+  document.querySelectorAll('.primary-nav [data-nav]').forEach((button) => {
+    const selected = button.dataset.nav === destination;
     button.classList.toggle('active', selected);
     if (selected) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   });
+  const shell = shellViewModel(state);
+  document.querySelectorAll('[data-portfolio-label]').forEach((element) => { element.textContent = shell.portfolioLabel; });
+  document.querySelectorAll('[data-sync-label]').forEach((element) => { element.textContent = shell.syncLabel; });
+  document.querySelectorAll('[data-sync-status]').forEach((element) => { element.dataset.syncStatus = shell.syncStatus; });
+  document.querySelectorAll('[data-account-label]').forEach((element) => { element.textContent = shell.accountLabel; });
+  document.querySelectorAll('[data-search-label]').forEach((element) => { element.textContent = shell.searchQuery || 'Search cards'; });
 }
 
 function runtimePriceIntelligenceEnabled() {
@@ -72,10 +84,18 @@ async function loadLocal() {
     getAll('watchlistItems'), getAll('alerts')
   ]);
   const settings = { ...defaults, ...Object.fromEntries(settingsRecords.map((record) => [record.key, record.value])) };
+  const scanDrafts = scans.filter((scan) => scan.status !== 'complete')
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  if (activeRoute.key === 'add-review') {
+    activeDraft = scanDrafts[0] || null;
+    if (activeDraft && recoverInterruptedIdentifications(activeDraft)) await saveScanDraft(activeDraft);
+  }
   document.documentElement.dataset.theme = settings.theme;
-  setState({
+  const nextState = {
+    ...getState(),
     holdings,
     snapshots: currentPricingSnapshots(snapshots).sort((a, b) => a.date.localeCompare(b.date)),
+    scanDrafts,
     watchlistItems: watchlistItems.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))),
     compare: (getState().compare || []).filter((key) => watchlistItems.some((entry) => entry.watchKey === key)),
     alerts: alerts.sort((a, b) => String(b.triggeredAt).localeCompare(String(a.triggeredAt))),
@@ -83,9 +103,11 @@ async function loadLocal() {
     featureFlags: getState().featureFlags.loaded
       ? getState().featureFlags
       : { ...getState().featureFlags, watchlists: runtimePriceIntelligenceEnabled(), publicPriceIntelligence: false },
-    scanDraftCount: scans.filter((scan) => scan.status !== 'complete').length,
+    scanDraftCount: scanDrafts.length,
     ready: true
-  });
+  };
+  resolveRouteContext(activeRoute, nextState);
+  setState(nextState);
 }
 
 function initializeAuth() {
@@ -157,10 +179,63 @@ async function hydrateIntelligence() {
   }
 }
 
-function navigate(view) {
-  setState({ activeView: view });
-  root.focus({ preventScroll: true });
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+function routeItemIdentifiers(item = {}, options = {}) {
+  const reference = catalogReferenceForItem(item, options);
+  return new Set([reference.canonicalVariantId, reference.watchKey, reference.externalId, item.id].filter(Boolean));
+}
+
+function resolveRouteContext(route, state = getState()) {
+  if (route.key === 'holding-detail') {
+    const holding = state.holdings.find((entry) => entry.id === route.entityId);
+    activeDetail = holding ? { origin: 'portfolio', item: holding.item, holding, catalogRef: catalogReferenceForItem(holding.item, {
+      canonicalVariantId: holding.canonicalVariantId,
+      conditionClass: holding.grade ? 'graded' : 'raw'
+    }) } : null;
+  } else if (route.key === 'card-detail') {
+    const item = state.search.results.find((entry) => routeItemIdentifiers(entry).has(route.entityId));
+    const watched = state.watchlistItems.find((entry) => routeItemIdentifiers(entry.catalogRef, {
+      canonicalVariantId: entry.canonicalVariantId,
+      conditionClass: entry.catalogRef?.conditionClass
+    }).has(route.entityId));
+    const selected = item || (watched ? { ...watched.catalogRef, variant: watched.catalogRef.finish } : null);
+    activeDetail = selected ? {
+      origin: route.origin || 'search',
+      item: selected,
+      watched: watched || undefined,
+      catalogRef: catalogReferenceForItem(selected, {
+        canonicalVariantId: watched?.canonicalVariantId,
+        conditionClass: watched?.catalogRef?.conditionClass
+      })
+    } : null;
+  } else {
+    activeDetail = null;
+  }
+  if (route.key === 'add-review') activeDraft = state.scanDrafts?.[0] || activeDraft;
+}
+
+function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = true } = {}) {
+  activeRoute = route;
+  const state = getState();
+  resolveRouteContext(route, state);
+  const current = currentAppPath(location);
+  const historyState = {
+    collectfolio: true,
+    routeKey: route.key,
+    inspector: historyMode === 'push' && route.legacyView === 'detail'
+  };
+  if (historyMode === 'push' && current !== route.canonicalPath) {
+    history.pushState(historyState, '', route.canonicalPath);
+  } else if (historyMode === 'replace' || current !== route.canonicalPath || !history.state?.collectfolio) {
+    history.replaceState(historyState, '', route.canonicalPath);
+  }
+  setState(routeStatePatch(route, state));
+  document.title = `${({ overview: 'Overview', portfolio: 'Portfolio', discover: 'Discover', insights: 'Insights', add: 'Add', 'add-review': 'Add review', settings: 'Settings', 'card-detail': 'Card detail', 'holding-detail': 'Holding detail' })[route.key] || 'CollectFolio'} · CollectFolio`;
+  if (focus) root.focus({ preventScroll: true });
+  if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+function navigate(view, context = {}) {
+  applyAppRoute(appRouteForLegacyView(view, getState(), { ...context, detail: context.detail || activeDetail }));
 }
 
 function holdingForm(holding = null, { title = '', image = '', item: proposedItem = null } = {}) {
@@ -263,7 +338,9 @@ async function loadDemo() {
 
 async function runCatalogSearch(form) {
   const data = Object.fromEntries(new FormData(form));
-  setState({ search: { ...getState().search, query: data.query, category: data.category, provider: data.provider, loading: true, results: [], warnings: [], cached: false } });
+  const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, loading: true, results: [], warnings: [], cached: false };
+  setState({ search });
+  navigate('search', { search });
   try {
     const response = await searchCatalog(data);
     setState({ search: { ...getState().search, loading: false, ...response } });
@@ -483,7 +560,7 @@ function openDetail(detail) {
   activeDetail = { ...detail, catalogRef };
   recordDemandEvent(catalogRef.canonicalVariantId, 'card_view').catch(() => {});
   if (detail.origin === 'search') recordDemandEvent(catalogRef.canonicalVariantId, 'search_view').catch(() => {});
-  navigate('detail');
+  navigate('detail', { detail: activeDetail });
 }
 
 // PRD Sec 11.4: side-by-side comparison of up to four watched cards. The
@@ -584,10 +661,15 @@ function customCropForm(cropId) {
 
 root.addEventListener('click', async (event) => {
   const go = event.target.closest('[data-go]');
-  if (go) { navigate(go.dataset.go); return; }
+  if (go) {
+    navigate(go.dataset.go, {
+      portfolioSection: go.dataset.portfolioTarget || (go.dataset.go === 'portfolio' ? 'holdings' : undefined)
+    });
+    return;
+  }
   const section = event.target.closest('[data-portfolio-section]');
   if (section) {
-    setState({ portfolio: { ...getState().portfolio, section: section.dataset.portfolioSection } });
+    navigate('portfolio', { portfolioSection: section.dataset.portfolioSection });
     return;
   }
   const action = event.target.closest('[data-action]');
@@ -626,8 +708,8 @@ root.addEventListener('click', async (event) => {
   }
   if (action.dataset.action === 'close-detail') {
     const origin = activeDetail?.origin === 'search' ? 'search' : 'portfolio';
-    activeDetail = null;
-    navigate(origin);
+    if (history.state?.inspector) history.back();
+    else { activeDetail = null; navigate(origin, origin === 'portfolio' ? { portfolioSection: 'holdings' } : {}); }
   }
   if (action.dataset.action === 'add-from-detail' && activeDetail) {
     holdingForm(null, { title: 'Add card to portfolio', item: { ...activeDetail.item, canonicalVariantId: activeDetail.catalogRef.canonicalVariantId } });
@@ -713,7 +795,7 @@ root.addEventListener('click', async (event) => {
     activeDraft = null;
     await loadLocal();
     await hydrateIntelligence();
-    navigate('portfolio');
+    navigate('portfolio', { portfolioSection: 'holdings' });
     showToast(`${count} explicitly approved crop${count === 1 ? '' : 's'} added`);
   }
 });
@@ -763,19 +845,44 @@ root.addEventListener('change', async (event) => {
   }
 });
 
-document.querySelector('.bottom-nav').addEventListener('click', (event) => {
+document.querySelector('.primary-nav').addEventListener('click', (event) => {
   const button = event.target.closest('[data-view]');
-  if (button) navigate(button.dataset.view);
+  if (button) navigate(button.dataset.view, {
+    portfolioSection: button.dataset.portfolioTarget || (button.dataset.view === 'portfolio' ? 'holdings' : undefined)
+  });
 });
 
+document.querySelector('.shell-topbar').addEventListener('click', (event) => {
+  const control = event.target.closest('[data-shell-action]');
+  if (!control) return;
+  if (control.dataset.shellAction === 'settings') navigate('profile');
+  if (control.dataset.shellAction === 'search') {
+    navigate('search');
+    document.querySelector('#catalog-query')?.focus({ preventScroll: true });
+  }
+});
+
+addEventListener('keydown', (event) => {
+  const target = event.target;
+  const editing = target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName));
+  if (event.key !== '/' || event.defaultPrevented || editing || event.metaKey || event.ctrlKey || event.altKey) return;
+  event.preventDefault();
+  navigate('search');
+  document.querySelector('#catalog-query')?.focus({ preventScroll: true });
+});
+
+initializeAuth();
+applyAppRoute(activeRoute, { historyMode: 'replace', focus: false, scroll: false });
 subscribe(render);
 render();
-initializeAuth();
+addEventListener('popstate', () => {
+  applyAppRoute(parseAppRoute(location), { historyMode: 'none', focus: true, scroll: false });
+});
 loadLocal().then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
   setState({ ready: true });
   showToast(error.message || 'Could not open local portfolio', 'error', 8000);
 });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+  addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }

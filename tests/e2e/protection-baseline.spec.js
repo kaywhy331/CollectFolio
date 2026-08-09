@@ -69,18 +69,91 @@ test('guest shell preserves every current primary entry point', async ({ page })
   await openApp(page);
   await expect(page.getByRole('heading', { name: 'Your collection starts here.' })).toBeVisible();
   const navigation = page.getByRole('navigation', { name: 'Primary' });
-  await navigation.getByRole('button', { name: 'Search' }).click();
+  await navigation.getByRole('button', { name: 'Discover' }).click();
+  await expect(page).toHaveURL(/\/discover\?mode=search$/);
   await expect(page.getByRole('heading', { name: 'Search collectibles' })).toBeVisible();
   await navigation.getByRole('button', { name: 'Add' }).click();
+  await expect(page).toHaveURL(/\/add$/);
   await expect(page.getByRole('heading', { name: 'Add collectibles' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Scan multiple items/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Scan one item/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Search catalogs/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Create custom item/ })).toBeVisible();
   await navigation.getByRole('button', { name: 'Portfolio' }).click();
+  await expect(page).toHaveURL(/\/portfolio\?view=holdings$/);
   await expect(page.getByRole('heading', { name: 'Portfolio' })).toBeVisible();
-  await navigation.getByRole('button', { name: 'Profile' }).click();
+  await navigation.getByRole('button', { name: 'Insights' }).click();
+  await expect(page).toHaveURL(/\/insights\?view=forecasts$/);
+  await expect(page.getByRole('heading', { name: 'Forecasts', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open settings' }).click();
+  await expect(page).toHaveURL(/\/settings$/);
   await expect(page.getByRole('heading', { name: 'Profile' })).toBeVisible();
+});
+
+test('foundation shell stays truthful and keyboard-operable across breakpoints', async ({ page }) => {
+  await openApp(page);
+  const navigation = page.getByRole('navigation', { name: 'Primary' });
+  for (const name of ['Overview', 'Discover', 'Add', 'Portfolio', 'Insights']) {
+    await expect(navigation.getByRole('button', { name })).toBeVisible();
+  }
+  await expect(page.getByText('Local portfolio', { exact: true })).toBeVisible();
+  await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Search cards' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /notifications/i })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /switch portfolio/i })).toHaveCount(0);
+
+  await page.keyboard.press('/');
+  await expect(page).toHaveURL(/\/discover\?mode=search$/);
+  await expect(page.locator('#catalog-query')).toBeFocused();
+
+  for (const viewport of [
+    { width: 390, height: 844, mobile: true },
+    { width: 768, height: 900, mobile: true },
+    { width: 1024, height: 900, mobile: false },
+    { width: 1440, height: 900, mobile: false },
+    { width: 1920, height: 1080, mobile: false }
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/');
+    await expect(navigation.getByRole('button', { name: viewport.mobile ? 'Home' : 'Overview' })).toBeVisible();
+    await expect(navigation.getByRole('button', { name: 'Add' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open settings' })).toBeVisible();
+    const layout = await navigation.evaluate((element) => {
+      const main = document.querySelector('#main-content');
+      return {
+        position: getComputedStyle(element).position,
+        bottom: Math.round(element.getBoundingClientRect().bottom),
+        viewport: innerHeight,
+        navigationHeight: Math.round(element.getBoundingClientRect().height),
+        mainPaddingBottom: Number.parseFloat(getComputedStyle(main).paddingBottom)
+      };
+    });
+    expect(layout.position).toBe(viewport.mobile ? 'fixed' : 'static');
+    if (viewport.mobile) {
+      expect(layout.bottom).toBe(layout.viewport);
+      expect(layout.mainPaddingBottom).toBeGreaterThan(layout.navigationHeight);
+    }
+  }
+});
+
+test('foundation routes restore filters and browser Back closes holding detail first', async ({ page }) => {
+  await page.goto('/discover?mode=search&q=Lotus&category=magic&provider=scryfall');
+  await expect(page.getByRole('heading', { name: 'Search collectibles' })).toBeVisible();
+  await expect(page.locator('#catalog-query')).toHaveValue('Lotus');
+  await expect(page.locator('[name="category"]')).toHaveValue('magic');
+  await expect(page.locator('[name="provider"]')).toHaveValue('scryfall');
+
+  await seedLegacyIndexedDB(page);
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Portfolio' }).click();
+  await page.locator('[data-action="open-detail"][data-holding-id="10000000-0000-4000-8000-000000000001"]').click();
+  await expect(page).toHaveURL(/\/holdings\/10000000-0000-4000-8000-000000000001$/);
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/portfolio\?view=holdings$/);
+  await expect(page.getByRole('heading', { name: 'Portfolio' })).toBeVisible();
+
+  await page.goto('/holdings/10000000-0000-4000-8000-000000000001');
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
 });
 
 test('version-4 local data hydrates calculations, holdings, and scan recovery', async ({ page }) => {
@@ -98,7 +171,7 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   await expect(page.getByRole('heading', { name: 'Synthetic Rights Gate ex' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Unpriced Comic' })).toBeVisible();
 
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' }).click();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Overview' }).click();
   await page.getByRole('button', { name: 'Resume saved scan (1)' }).click();
   await expect(page.getByRole('heading', { name: 'Review 2 crops' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add 1 approved' })).toBeVisible();
