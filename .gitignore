@@ -1,6 +1,8 @@
 dist/
 .netlify/
 node_modules/
+playwright-report/
+test-results/
 supabase/.temp/
 *.log
 __pycache__/
