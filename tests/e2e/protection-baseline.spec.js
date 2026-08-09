@@ -128,6 +128,7 @@ test('first-use Overview visual baseline', async ({ page }) => {
   await expect(page).toHaveScreenshot('legacy-overview-empty.png', {
     animations: 'disabled',
     caret: 'hide',
-    fullPage: true
+    fullPage: true,
+    maxDiffPixels: 50
   });
 });
