@@ -6,10 +6,37 @@ const legacyBackup = JSON.parse(readFileSync(
   new URL('../fixtures/redesign/indexeddb-v4-backup-v2.json', import.meta.url),
   'utf8'
 ));
+const snapshotFont = readFileSync(
+  new URL('../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', import.meta.url)
+).toString('base64');
 
 async function openApp(page) {
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+}
+
+async function stabilizeSnapshotTypography(page) {
+  await page.addStyleTag({
+    content: `
+      @font-face {
+        font-family: "CollectFolio Snapshot";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url("data:font/woff2;base64,${snapshotFont}") format("woff2-variations");
+      }
+      html, body, button, input, select, textarea {
+        font-family: "CollectFolio Snapshot", sans-serif !important;
+      }
+    `
+  });
+  await page.evaluate(async () => {
+    await Promise.all([
+      document.fonts.load('400 16px "CollectFolio Snapshot"'),
+      document.fonts.load('700 16px "CollectFolio Snapshot"')
+    ]);
+    await document.fonts.ready;
+  });
 }
 
 async function seedLegacyIndexedDB(page) {
@@ -97,6 +124,7 @@ test('first-use Overview has no serious or critical accessibility violations', a
 
 test('first-use Overview visual baseline', async ({ page }) => {
   await openApp(page);
+  await stabilizeSnapshotTypography(page);
   await expect(page).toHaveScreenshot('legacy-overview-empty.png', {
     animations: 'disabled',
     caret: 'hide',

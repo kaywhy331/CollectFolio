@@ -106,12 +106,13 @@ if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@n
 }
 const approvedDevDependencies = {
   '@axe-core/playwright': '4.12.1',
+  '@fontsource-variable/inter': '5.3.0',
   '@playwright/test': '1.62.1'
 };
 const devDependencies = packageJSON.devDependencies || {};
 if (JSON.stringify(Object.keys(devDependencies).sort()) !== JSON.stringify(Object.keys(approvedDevDependencies).sort())
     || Object.entries(approvedDevDependencies).some(([name, version]) => devDependencies[name] !== version)) {
-  errors.push('Dev dependencies must be exactly the pinned Playwright and axe browser-test packages.');
+  errors.push('Dev dependencies must be exactly the pinned Playwright, axe, and snapshot-font packages.');
 }
 for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
 
@@ -445,4 +446,4 @@ if (errors.length) {
   console.error(`Validation failed:\n- ${errors.join('\n- ')}`);
   process.exit(1);
 }
-console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only package, and two pinned browser-test packages.`);
+console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only package, and three pinned browser-test packages.`);
