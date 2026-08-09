@@ -2,8 +2,10 @@ const listeners = new Set();
 
 let state = {
   activeView: 'home',
+  route: { key: 'overview', legacyView: 'home', canonicalPath: '/' },
   holdings: [],
   snapshots: [],
+  scanDrafts: [],
   watchlistItems: [],
   alerts: [],
   settings: { currency: 'USD', theme: 'dark', demandAnalyticsOptOut: false },

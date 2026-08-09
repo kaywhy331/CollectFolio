@@ -11,6 +11,7 @@ const required = [
   'package.json', 'package-lock.json', 'playwright.config.js', 'netlify.toml', 'README.md',
   'app/index.html', 'app/manifest.webmanifest', 'app/sw.js',
   'app/assets/css/app.css', 'app/assets/js/app.js', 'app/assets/js/core/db.js', 'app/assets/js/core/calculations.js',
+  'app/assets/js/core/router.js', 'app/assets/js/core/view-models.js',
   'app/assets/js/services/catalog.js', 'app/assets/js/services/image-algorithms.js', 'app/assets/js/services/image.js',
   'app/assets/js/services/scan-workbench.js', 'app/assets/js/services/scan-review.js', 'app/assets/js/services/supabase.js',
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
@@ -67,7 +68,7 @@ const required = [
   'supabase/migrations/0009_pull_rate_registry.sql',
   'supabase/migrations/0014_pull_rate_unavailability_registry.sql',
   'PRD/redesign.md', 'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
-  'docs/REDESIGN_COMPATIBILITY.md',
+  'docs/REDESIGN_COMPATIBILITY.md', 'docs/REDESIGN_FOUNDATION.md',
   'docs/PRICE_INTELLIGENCE_FOUNDATION.md', 'docs/PRICE_INTELLIGENCE_RUNBOOK.md',
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
   'docs/PULL_RATE_REGISTRY.md',
@@ -77,6 +78,7 @@ const required = [
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
   'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md',
   'tests/redesign-protection.test.js',
+  'tests/router.test.js', 'tests/view-models.test.js',
   'tests/fixtures/redesign/indexeddb-v4-backup-v2.json',
   'tests/fixtures/redesign/cloud-sync.json',
   'tests/fixtures/redesign/legacy-routes.json',
@@ -238,11 +240,36 @@ for (const file of sourceFiles) {
 }
 
 const index = await readFile(resolve(app, 'index.html'), 'utf8');
-for (const reference of ['./manifest.webmanifest', './runtime-config.js', './assets/css/app.css', './assets/js/app.js']) if (!index.includes(reference)) errors.push(`index.html does not reference ${reference}`);
-for (const view of ['home', 'search', 'add', 'portfolio', 'profile']) if (!index.includes(`data-view="${view}"`)) errors.push(`index.html is missing ${view} navigation.`);
+for (const reference of ['/manifest.webmanifest', '/runtime-config.js', '/assets/css/app.css', '/assets/js/app.js']) if (!index.includes(reference)) errors.push(`index.html does not reference ${reference}`);
+for (const destination of ['overview', 'discover', 'add', 'portfolio', 'insights']) if (!index.includes(`data-nav="${destination}"`)) errors.push(`index.html is missing ${destination} navigation.`);
+for (const action of ['search', 'settings']) if (!index.includes(`data-shell-action="${action}"`)) errors.push(`index.html is missing the supported ${action} shell control.`);
+for (const unsupported of ['notifications', 'switch-portfolio']) if (index.includes(`data-shell-action="${unsupported}"`)) errors.push(`index.html must not expose unsupported ${unsupported} shell controls.`);
+
+const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
+if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
+
+const stylesheet = await readFile(resolve(app, 'assets/css/app.css'), 'utf8');
+const semanticTokens = [
+  'canvas', 'workspace', 'surface', 'interactive', 'selected', 'border', 'border-strong',
+  'text-primary', 'text-secondary', 'text-muted', 'action', 'action-hover', 'action-ink',
+  'positive', 'negative', 'forecast', 'warning', 'error', 'focus'
+];
+for (const token of semanticTokens) if (!stylesheet.includes(`--color-${token}:`)) errors.push(`Design system is missing semantic token --color-${token}.`);
+for (const token of ['space-1', 'space-2', 'space-3', 'space-4', 'space-6', 'space-8', 'space-12', 'radius-control', 'radius-panel', 'radius-dialog']) {
+  if (!stylesheet.includes(`--${token}:`)) errors.push(`Design system is missing layout token --${token}.`);
+}
+const tokenValue = (token) => stylesheet.match(new RegExp(`--color-${token}:\\s*([^;]+);`))?.[1].trim();
+if (tokenValue('action') === tokenValue('positive')) errors.push('Primary action and positive movement must use distinct token values.');
+if (!stylesheet.includes('.positive { color: var(--positive); }')) errors.push('Positive movement must consume the positive semantic token.');
+if (!stylesheet.includes('.negative { color: var(--color-negative); }')) errors.push('Negative movement must consume the negative semantic token.');
+
+const foundationDoc = await readFile(resolve(root, 'docs/REDESIGN_FOUNDATION.md'), 'utf8');
+for (const contract of ['Supported route map', 'Normalized view-model contracts', 'Semantic token reference', 'Component inventory', 'Deferred capabilities']) {
+  if (!foundationDoc.includes(contract)) errors.push(`Redesign foundation documentation is missing ${contract}.`);
+}
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.2.8'")) errors.push('Service worker cache name must be collectfolio-shell-v0.2.8.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.3.0'")) errors.push('Service worker cache name must be collectfolio-shell-v0.3.0.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
