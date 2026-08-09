@@ -8,7 +8,8 @@ const app = resolve(root, 'app');
 const errors = [];
 const placeholderPattern = new RegExp(`\\b(?:${['TO' + 'DO', 'FIX' + 'ME', 'CHANGE' + 'ME', 'YOUR_' + '[A-Z_]+' ].join('|')})\\b`);
 const required = [
-  'package.json', 'netlify.toml', 'README.md', 'app/index.html', 'app/manifest.webmanifest', 'app/sw.js',
+  'package.json', 'package-lock.json', 'playwright.config.js', 'netlify.toml', 'README.md',
+  'app/index.html', 'app/manifest.webmanifest', 'app/sw.js',
   'app/assets/css/app.css', 'app/assets/js/app.js', 'app/assets/js/core/db.js', 'app/assets/js/core/calculations.js',
   'app/assets/js/services/catalog.js', 'app/assets/js/services/image-algorithms.js', 'app/assets/js/services/image.js',
   'app/assets/js/services/scan-workbench.js', 'app/assets/js/services/scan-review.js', 'app/assets/js/services/supabase.js',
@@ -65,7 +66,8 @@ const required = [
   'supabase/migrations/0006_price_intelligence_governance_hardening.sql',
   'supabase/migrations/0009_pull_rate_registry.sql',
   'supabase/migrations/0014_pull_rate_unavailability_registry.sql',
-  'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
+  'PRD/redesign.md', 'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
+  'docs/REDESIGN_COMPATIBILITY.md',
   'docs/PRICE_INTELLIGENCE_FOUNDATION.md', 'docs/PRICE_INTELLIGENCE_RUNBOOK.md',
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
   'docs/PULL_RATE_REGISTRY.md',
@@ -73,7 +75,13 @@ const required = [
   'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
-  'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md'
+  'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md',
+  'tests/redesign-protection.test.js',
+  'tests/fixtures/redesign/indexeddb-v4-backup-v2.json',
+  'tests/fixtures/redesign/cloud-sync.json',
+  'tests/fixtures/redesign/legacy-routes.json',
+  'tests/e2e/protection-baseline.spec.js',
+  'tests/e2e/protection-baseline.spec.js-snapshots/legacy-overview-empty-chromium-linux.png'
 ];
 
 async function filesUnder(directory) {
@@ -96,8 +104,17 @@ const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '10.7.12') {
   errors.push('The only runtime package must be the pinned @netlify/blobs 10.7.12 server dependency.');
 }
-if (Object.keys(packageJSON.devDependencies || {}).length) errors.push('package.json must have zero devDependencies.');
-for (const script of ['dev', 'build', 'test', 'test:analytics', 'qualify:research', 'qualify:research:current', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
+const approvedDevDependencies = {
+  '@axe-core/playwright': '4.12.1',
+  '@fontsource-variable/inter': '5.3.0',
+  '@playwright/test': '1.62.1'
+};
+const devDependencies = packageJSON.devDependencies || {};
+if (JSON.stringify(Object.keys(devDependencies).sort()) !== JSON.stringify(Object.keys(approvedDevDependencies).sort())
+    || Object.entries(approvedDevDependencies).some(([name, version]) => devDependencies[name] !== version)) {
+  errors.push('Dev dependencies must be exactly the pinned Playwright, axe, and snapshot-font packages.');
+}
+for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
 
 const researchManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-research.json'), 'utf8'));
 const researchReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md'));
@@ -429,4 +446,4 @@ if (errors.length) {
   console.error(`Validation failed:\n- ${errors.join('\n- ')}`);
   process.exit(1);
 }
-console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only npm package.`);
+console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only package, and three pinned browser-test packages.`);

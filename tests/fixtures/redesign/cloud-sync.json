@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "localHoldings": [
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "quantity": 1,
+      "notes": "older local record",
+      "userImage": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "updatedAt": "2026-08-01T10:00:00.000Z"
+    },
+    {
+      "id": "50000000-0000-4000-8000-000000000002",
+      "quantity": 1,
+      "notes": "must stay deleted",
+      "userImage": "",
+      "updatedAt": "2026-08-04T10:00:00.000Z"
+    }
+  ],
+  "remoteHoldings": [
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "quantity": 3,
+      "notes": "newer remote record",
+      "userImage": "",
+      "updatedAt": "2026-08-03T10:00:00.000Z"
+    },
+    {
+      "id": "50000000-0000-4000-8000-000000000002",
+      "quantity": 2,
+      "notes": "newer than the holding but still deleted",
+      "userImage": "",
+      "updatedAt": "2026-08-05T10:00:00.000Z"
+    },
+    {
+      "id": "50000000-0000-4000-8000-000000000003",
+      "quantity": 1,
+      "notes": "remote-only record",
+      "userImage": "",
+      "updatedAt": "2026-08-02T10:00:00.000Z"
+    }
+  ],
+  "localTombstones": [
+    { "id": "50000000-0000-4000-8000-000000000002", "deletedAt": "2026-08-04T12:00:00.000Z" }
+  ],
+  "remoteTombstones": [
+    { "id": "50000000-0000-4000-8000-000000000002", "deletedAt": "2026-08-05T12:00:00.000Z" }
+  ],
+  "localSnapshots": [
+    {
+      "id": "portfolio:2026-08-08",
+      "date": "2026-08-08",
+      "pricingPolicyVersion": "rights-aware-v1",
+      "marketValue": 79,
+      "costBasis": 89,
+      "uniqueItems": 3,
+      "totalQuantity": 6,
+      "updatedAt": "2026-08-08T10:00:00.000Z"
+    }
+  ],
+  "remoteSnapshotRows": [
+    {
+      "id": "portfolio:2026-08-08",
+      "snapshot_date": "2026-08-08",
+      "data": {
+        "id": "portfolio:2026-08-08",
+        "date": "2026-08-08",
+        "pricingPolicyVersion": "rights-aware-v1",
+        "marketValue": 80,
+        "costBasis": 89,
+        "uniqueItems": 3,
+        "totalQuantity": 6,
+        "updatedAt": "2026-08-08T10:30:00.000Z"
+      },
+      "updated_at": "2026-08-08T11:00:00.000Z"
+    },
+    {
+      "id": "portfolio:2026-08-07",
+      "snapshot_date": "2026-08-07",
+      "data": {
+        "id": "portfolio:2026-08-07",
+        "date": "2026-08-07",
+        "pricingPolicyVersion": "legacy-unversioned",
+        "marketValue": 999,
+        "costBasis": 1,
+        "uniqueItems": 1,
+        "totalQuantity": 1,
+        "updatedAt": "2026-08-07T10:00:00.000Z"
+      },
+      "updated_at": "2026-08-07T11:00:00.000Z"
+    }
+  ],
+  "expected": {
+    "tombstoneDeletedAt": "2026-08-05T12:00:00.000Z",
+    "holdingIds": ["50000000-0000-4000-8000-000000000001", "50000000-0000-4000-8000-000000000003"],
+    "winningQuantity": 3,
+    "preserveLocalImage": true,
+    "snapshotMarketValue": 80,
+    "snapshotUpdatedAt": "2026-08-08T11:00:00.000Z"
+  }
+}

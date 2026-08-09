@@ -1,0 +1,272 @@
+{
+  "format": "collectfolio-backup",
+  "version": 2,
+  "databaseName": "collectfolio",
+  "databaseVersion": 4,
+  "exportedAt": "2026-08-09T12:00:00.000Z",
+  "stores": {
+    "holdings": [
+      {
+        "id": "10000000-0000-4000-8000-000000000001",
+        "catalogId": "scryfall:synthetic-permitted",
+        "catalogKey": "source:v1:scryfall:synthetic-permitted:en:standard:regular:raw",
+        "canonicalVariantId": "20000000-0000-4000-8000-000000000001",
+        "item": {
+          "id": "scryfall:synthetic-permitted",
+          "externalId": "synthetic-permitted",
+          "provider": "scryfall",
+          "category": "magic",
+          "game": "Magic",
+          "name": "Synthetic Archive Mage",
+          "setName": "Compatibility Set",
+          "number": "1",
+          "variant": "regular",
+          "rarity": "Rare",
+          "year": "2026",
+          "image": "",
+          "imageSmall": "",
+          "price": 12,
+          "priceOptions": [{ "finish": "regular", "price": 12, "source": "Scryfall daily price" }],
+          "currency": "USD",
+          "priceSource": "Scryfall daily price",
+          "priceUrl": "",
+          "priceUpdatedAt": "2026-08-08T10:00:00.000Z"
+        },
+        "quantity": 2,
+        "condition": "Near Mint",
+        "gradeCompany": "",
+        "grade": "",
+        "purchasePrice": 7,
+        "purchaseDate": "2026-07-01",
+        "fees": 3,
+        "manualMarketPrice": "",
+        "folder": "Main collection",
+        "notes": "Synthetic fixture",
+        "userImage": "",
+        "createdAt": "2026-07-01T12:00:00.000Z",
+        "updatedAt": "2026-08-08T10:00:00.000Z",
+        "lastPriceRefresh": "2026-08-08T10:00:00.000Z",
+        "dirty": false
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000002",
+        "catalogId": "pokemon:synthetic-restricted",
+        "catalogKey": "source:v1:pokemon:synthetic-restricted:en:standard:holofoil:raw",
+        "canonicalVariantId": "20000000-0000-4000-8000-000000000002",
+        "item": {
+          "id": "pokemon:synthetic-restricted",
+          "externalId": "synthetic-restricted",
+          "provider": "pokemon",
+          "category": "pokemon",
+          "game": "Pokémon",
+          "name": "Synthetic Rights Gate ex",
+          "setName": "Compatibility Set",
+          "number": "2",
+          "variant": "holofoil",
+          "rarity": "Double Rare",
+          "year": "2026",
+          "image": "",
+          "imageSmall": "",
+          "price": 90,
+          "priceOptions": [{ "finish": "holofoil", "price": 90, "source": "TCGplayer market" }],
+          "currency": "USD",
+          "priceSource": "Pokémon TCG API · TCGplayer market",
+          "priceUrl": "",
+          "priceUpdatedAt": "2026-08-08T10:00:00.000Z"
+        },
+        "quantity": 1,
+        "condition": "Near Mint",
+        "gradeCompany": "",
+        "grade": "",
+        "purchasePrice": 40,
+        "purchaseDate": "2026-07-02",
+        "fees": 2,
+        "manualMarketPrice": 55,
+        "folder": "Main collection",
+        "notes": "Manual value must remain distinct from the restricted reference",
+        "userImage": "",
+        "createdAt": "2026-07-02T12:00:00.000Z",
+        "updatedAt": "2026-08-08T10:00:00.000Z",
+        "lastPriceRefresh": "",
+        "dirty": false
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000003",
+        "catalogId": "custom:synthetic-unpriced",
+        "catalogKey": "catalog:v1:comic:compatibility%20set:3:synthetic%20unpriced%20comic:en:standard:cover%20b:raw",
+        "canonicalVariantId": "",
+        "item": {
+          "id": "custom:synthetic-unpriced",
+          "externalId": "",
+          "provider": "custom",
+          "category": "comics",
+          "game": "Comic",
+          "name": "Synthetic Unpriced Comic",
+          "setName": "Compatibility Set",
+          "number": "3",
+          "variant": "Cover B",
+          "rarity": "",
+          "year": "2026",
+          "image": "",
+          "imageSmall": "",
+          "price": null,
+          "priceOptions": [],
+          "currency": "USD",
+          "priceSource": "",
+          "priceUrl": "",
+          "priceUpdatedAt": ""
+        },
+        "quantity": 3,
+        "condition": "Good",
+        "gradeCompany": "",
+        "grade": "",
+        "purchasePrice": 10,
+        "purchaseDate": "2026-07-03",
+        "fees": 0,
+        "manualMarketPrice": "",
+        "folder": "Comics",
+        "notes": "Unpriced holdings remain visible",
+        "userImage": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "createdAt": "2026-07-03T12:00:00.000Z",
+        "updatedAt": "2026-08-08T10:00:00.000Z",
+        "lastPriceRefresh": "",
+        "dirty": true
+      }
+    ],
+    "snapshots": [
+      {
+        "id": "portfolio:2026-08-07",
+        "date": "2026-08-07",
+        "pricingPolicyVersion": "legacy-unversioned",
+        "marketValue": 999,
+        "costBasis": 1,
+        "uniqueItems": 3,
+        "totalQuantity": 6,
+        "updatedAt": "2026-08-07T12:00:00.000Z"
+      },
+      {
+        "id": "portfolio:2026-08-08",
+        "date": "2026-08-08",
+        "pricingPolicyVersion": "rights-aware-v1",
+        "marketValue": 79,
+        "costBasis": 89,
+        "uniqueItems": 3,
+        "totalQuantity": 6,
+        "updatedAt": "2026-08-08T12:00:00.000Z"
+      }
+    ],
+    "settings": [
+      { "key": "currency", "value": "USD" },
+      { "key": "theme", "value": "dark" },
+      { "key": "demandAnalyticsOptOut", "value": false }
+    ],
+    "scans": [
+      {
+        "id": "30000000-0000-4000-8000-000000000001",
+        "mode": "multi",
+        "status": "review",
+        "createdAt": "2026-08-08T09:00:00.000Z",
+        "updatedAt": "2026-08-08T09:05:00.000Z",
+        "crops": [
+          {
+            "id": "30000000-0000-4000-8000-000000000002",
+            "index": 0,
+            "box": { "x": 0, "y": 0, "width": 1, "height": 1 },
+            "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "status": "matched",
+            "query": "Synthetic Archive Mage",
+            "ocrText": "Synthetic Archive Mage 1",
+            "ocrEngine": "fixture",
+            "candidates": [],
+            "selectedId": "",
+            "customItem": { "id": "custom:scan-fixture", "provider": "custom", "category": "magic", "name": "Synthetic Scan Draft" },
+            "approved": true,
+            "error": ""
+          },
+          {
+            "id": "30000000-0000-4000-8000-000000000003",
+            "index": 1,
+            "box": { "x": 1, "y": 0, "width": 1, "height": 1 },
+            "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "status": "unmatched",
+            "query": "",
+            "ocrText": "",
+            "ocrEngine": "",
+            "candidates": [],
+            "selectedId": "",
+            "customItem": null,
+            "approved": false,
+            "error": ""
+          }
+        ]
+      }
+    ],
+    "catalogCache": [],
+    "deletions": [{ "id": "10000000-0000-4000-8000-000000000099", "deletedAt": "2026-08-01T12:00:00.000Z", "dirty": false }],
+    "watchlistItems": [
+      {
+        "id": "40000000-0000-4000-8000-000000000001",
+        "watchKey": "variant:20000000-0000-4000-8000-000000000001",
+        "canonicalVariantId": "20000000-0000-4000-8000-000000000001",
+        "catalogRef": {
+          "watchKey": "variant:20000000-0000-4000-8000-000000000001",
+          "canonicalVariantId": "20000000-0000-4000-8000-000000000001",
+          "mappingStatus": "mapped",
+          "provider": "scryfall",
+          "externalId": "synthetic-permitted",
+          "game": "Magic",
+          "category": "magic",
+          "name": "Synthetic Archive Mage",
+          "setName": "Compatibility Set",
+          "number": "1",
+          "rarity": "Rare",
+          "language": "en",
+          "edition": "standard",
+          "finish": "regular",
+          "conditionClass": "raw",
+          "image": "",
+          "imageSmall": "",
+          "currency": "USD",
+          "price": 12,
+          "priceSource": "Scryfall daily price",
+          "priceUpdatedAt": "2026-08-08T10:00:00.000Z"
+        },
+        "targetPrice": "",
+        "alertPercentChange": "",
+        "notes": "",
+        "createdAt": "2026-08-08T10:00:00.000Z",
+        "updatedAt": "2026-08-08T10:00:00.000Z",
+        "dirty": false
+      }
+    ],
+    "watchlistDeletions": [],
+    "intelligenceCache": [
+      {
+        "key": "intelligence:v1:20000000-0000-4000-8000-000000000001",
+        "variantId": "20000000-0000-4000-8000-000000000001",
+        "value": {
+          "variantId": "20000000-0000-4000-8000-000000000001",
+          "supportTier": 1,
+          "payload": {
+            "observed": { "price": 12, "currency": "USD", "source": "Approved synthetic fixture", "observedAt": "2026-08-08T10:00:00.000Z", "quality": 0.9 },
+            "forecasts": { "90": { "q10": 8, "q25": 10, "q50": 13, "q75": 15, "q90": 18, "confidence": 75 } }
+          },
+          "reasonCodes": [],
+          "sourceAttributions": [{ "name": "Approved synthetic fixture" }],
+          "publishedAt": "2026-08-08T10:00:00.000Z",
+          "expiresAt": "2027-08-08T10:00:00.000Z"
+        },
+        "cachedAt": 1786200000000,
+        "expiresAt": 1817686800000
+      }
+    ],
+    "alerts": []
+  },
+  "expected": {
+    "summary": { "marketValue": 79, "costBasis": 89, "gain": -10, "returnPercent": -11.235955056179776, "uniqueItems": 3, "totalQuantity": 6 },
+    "currentSnapshotIds": ["portfolio:2026-08-08"],
+    "scanDraftCount": 1,
+    "restrictedCatalogValue": 0,
+    "restrictedManualValue": 55
+  }
+}
