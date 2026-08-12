@@ -5,7 +5,7 @@ import { catalogPriceDisclosure, catalogPriceForValuation } from './pricing-poli
 
 export const MATCH_BUCKETS = Object.freeze(['exact', 'likely', 'possible', 'unmatched']);
 export const PRICING_STATUSES = Object.freeze(['verified', 'delayed', 'manual', 'pending', 'unsupported', 'unavailable', 'error']);
-export const SYNC_STATUSES = Object.freeze(['local', 'syncing', 'synced', 'error']);
+export const SYNC_STATUSES = Object.freeze(['local', 'pending', 'syncing', 'synced', 'offline', 'error']);
 
 const finite = (value) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value))
   ? Number(value)
@@ -55,17 +55,17 @@ export function forecastViewModels(publication = {}, { holdingId = '' } = {}) {
     upperBound: forecast.q90,
     currency: normalized.observed?.currency || 'USD',
     confidenceLabel: forecast.confidence === null ? '' : `${Math.round(forecast.confidence)} / 100`,
-    confidenceReason: normalized.reasonCodes.join(', '),
-    coverageStatus: 'available',
+    confidenceReason: forecast.confidenceReason || normalized.reasonCodes.join(', '),
+    coverageStatus: forecast.coverageStatus || forecast.forecastStatus,
     drivers: [...normalized.drivers.supporting],
     risks: [...normalized.drivers.limiting],
     modelVersion: forecast.modelVersion,
-    forecastStatus: 'available',
+    forecastStatus: forecast.forecastStatus,
     createdAt: text(publication.publishedAt, 40),
-    maturedAt: '',
-    actualValueAtMaturity: null,
-    absoluteError: null,
-    directionResult: ''
+    maturedAt: forecast.maturedAt,
+    actualValueAtMaturity: forecast.actualValueAtMaturity,
+    absoluteError: forecast.absoluteError,
+    directionResult: forecast.directionResult
   }));
 }
 
@@ -136,13 +136,33 @@ export function holdingViewModel(holding = {}, { publication = null } = {}) {
 
 export function shellViewModel(state = {}) {
   const session = state.auth?.session;
-  const syncStatus = state.auth?.syncing ? 'syncing' : session ? 'synced' : 'local';
+  const online = state.auth?.online !== false;
+  const pending = Math.max(0, Number(state.auth?.pendingChanges) || 0);
+  const syncStatus = !online
+    ? 'offline'
+    : state.auth?.syncing
+      ? 'syncing'
+      : state.auth?.error
+        ? 'error'
+        : !session
+          ? 'local'
+          : pending > 0 || !state.settings?.lastSyncedAt
+            ? 'pending'
+            : 'synced';
+  const labels = {
+    local: 'Saved on this device',
+    pending: pending ? `${pending} change${pending === 1 ? '' : 's'} waiting to sync` : 'Ready to synchronize',
+    syncing: 'Synchronizing…',
+    synced: 'Synchronized',
+    offline: session && pending ? `Offline · ${pending} change${pending === 1 ? '' : 's'} waiting` : 'Offline · local access available',
+    error: 'Synchronization needs attention'
+  };
   return {
     portfolioLabel: 'Local portfolio',
     syncStatus,
-    syncLabel: syncStatus === 'syncing' ? 'Syncing…' : syncStatus === 'synced' ? 'Cloud sync available' : 'Saved on this device',
+    syncLabel: labels[syncStatus],
     accountLabel: session?.user?.email || 'Settings',
     searchQuery: text(state.search?.query),
-    hasUnreadAlerts: false
+    hasUnreadAlerts: (state.alerts || []).some((alert) => !alert.readAt && !alert.mutedAt)
   };
 }

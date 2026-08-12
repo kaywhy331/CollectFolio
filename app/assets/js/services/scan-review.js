@@ -1,14 +1,76 @@
 import { createId } from '../core/utils.js';
-import { putRecord, saveHolding } from '../core/db.js';
+import { deleteRecords, getAll, putRecord, saveHolding } from '../core/db.js';
+import { catalogPriceForValuation } from '../core/pricing-policy.js';
+import { matchBucketFor } from '../core/view-models.js';
 import { searchCatalog } from './catalog.js';
-import { recognizeText, rerankCandidates } from './image.js';
+import { candidateEvidenceScore, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
 import { recordDemandEvent } from './demand-events.js';
 
-export function createScanDraft(crops, mode = 'multi') {
+export const ACQUISITION_FIELDS = Object.freeze([
+  'quantity', 'condition', 'gradeCompany', 'grade', 'purchasePrice', 'purchaseCurrency', 'fees',
+  'purchaseDate', 'seller', 'folder', 'manualMarketPrice', 'manualMarketCurrency', 'notes'
+]);
+export const COMPLETED_SCAN_RETENTION_DAYS = 30;
+export const COMPLETED_SCAN_RECEIPT_LIMIT = 20;
+
+const text = (value, max) => String(value ?? '').trim().slice(0, max);
+const moneyOrBlank = (value) => value === '' || value === null || value === undefined
+  ? ''
+  : Math.max(0, Number(value) || 0);
+const currency = (value, fallback = 'USD') => {
+  const normalized = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(normalized) ? normalized : fallback;
+};
+
+export async function searchCatalogCandidates(queries = [], evidence = {}, search = searchCatalog) {
+  const candidates = new Map();
+  const warnings = new Set();
+  let allAttemptsFailed = true;
+  for (const query of queries.slice(0, 3)) {
+    const response = await search({ query });
+    (response.warnings || []).forEach((warning) => warnings.add(warning));
+    if ((response.fulfilledProviders ?? 1) > 0 || response.manual) allAttemptsFailed = false;
+    const useful = (response.results || []).filter((candidate) => candidateEvidenceScore(candidate, evidence) >= 0.28);
+    useful.slice(0, 24).forEach((candidate) => candidates.set(candidate.id, candidate));
+    const strong = useful.some((candidate) => candidateEvidenceScore(candidate, evidence) >= (evidence.number ? 0.8 : 0.72));
+    if (strong || candidates.size >= 18) break;
+  }
+  return { candidates: [...candidates.values()], warnings: [...warnings], allAttemptsFailed };
+}
+
+export function normalizeAcquisition(value = {}) {
+  return {
+    quantity: Math.max(1, Math.trunc(Number(value.quantity) || 1)),
+    condition: text(value.condition || 'Near Mint', 80),
+    gradeCompany: text(value.gradeCompany, 40),
+    grade: text(value.grade, 20),
+    purchasePrice: moneyOrBlank(value.purchasePrice),
+    purchaseCurrency: currency(value.purchaseCurrency || value.currency),
+    fees: moneyOrBlank(value.fees),
+    purchaseDate: text(value.purchaseDate, 40),
+    seller: text(value.seller, 160),
+    folder: text(value.folder, 80),
+    manualMarketPrice: moneyOrBlank(value.manualMarketPrice),
+    manualMarketCurrency: currency(value.manualMarketCurrency || value.currency || value.purchaseCurrency),
+    notes: text(value.notes, 2000)
+  };
+}
+
+export function selectedCropItem(crop = {}) {
+  return crop.customItem || crop.candidates?.find((candidate) => candidate.id === crop.selectedId) || null;
+}
+
+export function createScanDraft(crops, mode = 'multi', acquisitionDefaults = {}) {
   const now = new Date().toISOString();
+  const acquisition = normalizeAcquisition(acquisitionDefaults);
   return {
     id: createId(), mode, status: 'review', createdAt: now, updatedAt: now,
-    crops: crops.map((crop, index) => ({ id: createId(), index, box: crop.box, image: crop.image, status: 'unmatched', query: '', ocrText: '', ocrEngine: '', candidates: [], selectedId: '', customItem: null, approved: false, error: '' }))
+    bulkAcquisition: acquisition,
+    crops: crops.map((crop, index) => ({
+      id: createId(), index, box: crop.box, image: crop.image, status: 'unmatched',
+      query: '', ocrText: '', ocrEngine: '', candidates: [], selectedId: '',
+      customItem: null, approved: false, error: '', acquisition: { ...acquisition }
+    }))
   };
 }
 
@@ -18,8 +80,67 @@ export async function saveScanDraft(draft) {
   return draft;
 }
 
+export function compactCompletedScanDraft(draft) {
+  if (!draft || draft.status !== 'complete') return draft;
+  const compact = {
+    id: draft.id,
+    mode: draft.mode || 'multi',
+    status: 'complete',
+    createdAt: draft.createdAt || '',
+    updatedAt: draft.updatedAt || '',
+    completedAt: draft.completedAt || draft.updatedAt || '',
+    addedCount: Math.max(0, Number(draft.addedCount) || 0),
+    result: draft.result && typeof draft.result === 'object' && !Array.isArray(draft.result)
+      ? structuredClone(draft.result)
+      : {},
+    crops: []
+  };
+  return compact;
+}
+
+export function completedScanRetentionPlan(scans = [], now = Date.now(), {
+  maxAgeDays = COMPLETED_SCAN_RETENTION_DAYS,
+  maximumReceipts = COMPLETED_SCAN_RECEIPT_LIMIT
+} = {}) {
+  const cutoff = now - Math.max(0, Number(maxAgeDays) || 0) * 86_400_000;
+  const limit = Math.max(0, Math.trunc(Number(maximumReceipts) || 0));
+  const active = (Array.isArray(scans) ? scans : []).filter((scan) => scan?.status !== 'complete');
+  const completed = (Array.isArray(scans) ? scans : []).filter((scan) => scan?.status === 'complete')
+    .sort((left, right) => String(right.completedAt || right.updatedAt || '').localeCompare(String(left.completedAt || left.updatedAt || '')));
+  const retained = [];
+  const removedIds = [];
+  for (const scan of completed) {
+    const timestamp = Date.parse(scan.completedAt || scan.updatedAt || '');
+    if (!scan.id || !Number.isFinite(timestamp) || timestamp <= cutoff || retained.length >= limit) {
+      if (scan.id) removedIds.push(scan.id);
+      continue;
+    }
+    retained.push(compactCompletedScanDraft(scan));
+  }
+  return { records: [...active, ...retained], compacted: retained, removedIds };
+}
+
+export async function maintainCompletedScans(scans = null, now = Date.now(), options = {}) {
+  const source = Array.isArray(scans) ? scans : await getAll('scans');
+  const plan = completedScanRetentionPlan(source, now, options);
+  const changed = plan.compacted.filter((record) => {
+    const current = source.find((entry) => entry.id === record.id);
+    return current?.crops?.length || current?.bulkAcquisition || current?.submissionError;
+  });
+  await Promise.all([
+    ...changed.map((record) => putRecord('scans', record)),
+    deleteRecords('scans', plan.removedIds)
+  ]);
+  return plan.records;
+}
+
 export function recoverInterruptedIdentifications(draft) {
   let recovered = 0;
+  if (draft?.status === 'adding') {
+    draft.status = 'review';
+    draft.submissionError = 'The previous add was interrupted. Review and retry; existing crop IDs prevent duplicate holdings.';
+    recovered++;
+  }
   for (const crop of draft?.crops || []) {
     if (crop.status !== 'identifying') continue;
     crop.status = 'error';
@@ -29,30 +150,92 @@ export function recoverInterruptedIdentifications(draft) {
   return recovered;
 }
 
+export function scanReviewSummary(draft = {}) {
+  const crops = Array.isArray(draft.crops) ? draft.crops : [];
+  const result = { total: crops.length, exact: 0, needsReview: 0, unmatched: 0, approved: 0 };
+  for (const crop of crops) {
+    const selected = selectedCropItem(crop);
+    if (crop.approved) result.approved++;
+    if (!selected) result.unmatched++;
+    else if (!crop.customItem && matchBucketFor(selected) === 'exact') result.exact++;
+    else result.needsReview++;
+  }
+  return result;
+}
+
+export function scanReviewTotals(draft = {}, selectedCurrency = '') {
+  const approved = eligibleApprovedCrops(draft);
+  return approved.reduce((result, crop) => {
+    const acquisition = normalizeAcquisition(crop.acquisition);
+    const selected = selectedCropItem(crop);
+    result.quantity += acquisition.quantity;
+    const cost = (Number(acquisition.purchasePrice || 0) * acquisition.quantity) + Number(acquisition.fees || 0);
+    if (!selectedCurrency || acquisition.purchaseCurrency === selectedCurrency) result.costBasis += cost;
+    else result.excludedCostItems = (result.excludedCostItems || 0) + 1;
+    if (acquisition.manualMarketPrice !== '' || catalogPriceForValuation(selected) !== null) result.priced++;
+    return result;
+  }, { items: approved.length, quantity: 0, costBasis: 0, priced: 0 });
+}
+
+export async function setCropAcquisition(draft, cropId, patch = {}) {
+  const crop = draft?.crops?.find((entry) => entry.id === cropId);
+  if (!crop) throw new Error('Crop not found.');
+  crop.acquisition = normalizeAcquisition({ ...crop.acquisition, ...patch });
+  await saveScanDraft(draft);
+  return crop.acquisition;
+}
+
+export function applyAcquisitionPatch(draft, patch = {}) {
+  if (!draft?.crops?.length) return 0;
+  const allowed = Object.fromEntries(ACQUISITION_FIELDS
+    .filter((key) => patch[key] !== undefined && patch[key] !== null && patch[key] !== '')
+    .map((key) => [key, patch[key]]));
+  draft.bulkAcquisition = normalizeAcquisition({ ...draft.bulkAcquisition, ...allowed });
+  for (const crop of draft.crops) crop.acquisition = normalizeAcquisition({ ...crop.acquisition, ...allowed });
+  return draft.crops.length;
+}
+
+export async function applyAcquisitionToAll(draft, patch = {}) {
+  const count = applyAcquisitionPatch(draft, patch);
+  if (!count) return 0;
+  await saveScanDraft(draft);
+  return count;
+}
+
 export async function identifyCrop(draft, cropId, editedQuery = '') {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
   crop.status = 'identifying'; crop.error = ''; crop.approved = false;
+  crop.candidates = []; crop.selectedId = ''; crop.customItem = null;
   await saveScanDraft(draft);
   try {
+    let evidence;
     if (!editedQuery.trim()) {
       const ocr = await recognizeText(crop.image);
-      crop.ocrText = ocr.text;
       crop.ocrEngine = ocr.engine;
-      crop.query = ocr.query;
+      crop.ocrText = ocr.accepted ? ocr.text : '';
+      crop.query = ocr.accepted ? ocr.query : '';
+      evidence = ocr;
     } else {
       crop.query = editedQuery.trim();
+      crop.ocrText = '';
+      crop.ocrEngine = '';
+      evidence = queryEvidenceFromText(crop.query);
     }
-    if (!crop.query) {
+    const queries = evidence?.queries?.length ? evidence.queries : crop.query ? [crop.query] : [];
+    if (!queries.length) {
       crop.status = 'unmatched';
-      crop.error = 'OCR found no useful query. Enter one manually.';
+      crop.error = 'Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.';
       await saveScanDraft(draft);
       return crop;
     }
-    const response = await searchCatalog({ query: crop.query });
-    crop.candidates = await rerankCandidates(crop.image, response.results.slice(0, 18), crop.query);
+    const recovered = await searchCatalogCandidates(queries, evidence);
+    if (recovered.allAttemptsFailed && recovered.warnings.length) throw new Error('Card catalogs are temporarily unavailable. Check your connection and retry.');
+    crop.candidates = await rerankCandidates(crop.image, recovered.candidates.slice(0, 24), evidence);
     crop.status = crop.candidates.length ? 'matched' : 'unmatched';
-    crop.error = response.warnings.join(' ');
+    crop.error = crop.candidates.length
+      ? recovered.warnings.join(' ')
+      : ['No catalog match found. Try the card name or collector number, or create a custom item.', ...recovered.warnings].join(' ');
   } catch (error) {
     crop.status = 'error';
     crop.error = error.message || 'Identification failed. Enter a query or create a custom item.';
@@ -97,18 +280,54 @@ export function eligibleApprovedCrops(draft) {
   return draft.crops.filter((crop) => crop.approved && (crop.customItem || (crop.selectedId && crop.candidates.some((candidate) => candidate.id === crop.selectedId))));
 }
 
-export async function batchAddApproved(draft) {
+export async function batchAddApproved(draft, currency = 'USD') {
+  if (draft?.status === 'complete') return Number(draft.result?.added || draft.addedCount || 0);
   const approved = eligibleApprovedCrops(draft);
-  for (const crop of approved) {
-    const item = crop.customItem || crop.candidates.find((candidate) => candidate.id === crop.selectedId);
-    if (!item) continue;
-    const holding = await saveHolding({ catalogId: item.provider === 'custom' ? `custom:${item.id}` : item.id, item, quantity: 1, condition: 'Near Mint', purchasePrice: '', fees: '', manualMarketPrice: '', userImage: crop.image, folder: '', notes: `Added from scan ${draft.id}` });
-    recordDemandEvent(holding.canonicalVariantId, 'portfolio_add').catch(() => {});
-    recordDemandEvent(holding.canonicalVariantId, 'scan_confirm').catch(() => {});
+  if (!approved.length) return 0;
+  for (const crop of approved) crop.holdingId ||= createId();
+  draft.status = 'adding';
+  draft.submissionError = '';
+  await saveScanDraft(draft);
+  try {
+    for (const crop of approved) {
+      const item = selectedCropItem(crop);
+      if (!item) continue;
+      const acquisition = normalizeAcquisition(crop.acquisition);
+      const holding = await saveHolding({
+        id: crop.holdingId,
+        catalogId: item.provider === 'custom' ? `custom:${item.id}` : item.id,
+        item,
+        ...acquisition,
+        userImage: crop.image,
+        notes: [acquisition.notes, `Added from scan ${draft.id}`].filter(Boolean).join('\n')
+      });
+      crop.addedHoldingId = holding.id;
+      await saveScanDraft(draft);
+      recordDemandEvent(holding.canonicalVariantId, 'portfolio_add').catch(() => {});
+      recordDemandEvent(holding.canonicalVariantId, 'scan_confirm').catch(() => {});
+    }
+  } catch (error) {
+    draft.status = 'review';
+    draft.submissionError = error.message || 'The approved items could not all be added. Retry is safe.';
+    await saveScanDraft(draft);
+    throw error;
   }
   draft.status = 'complete';
   draft.completedAt = new Date().toISOString();
   draft.addedCount = approved.length;
+  const summary = scanReviewSummary(draft);
+  const totals = scanReviewTotals(draft, currency);
+  draft.result = {
+    added: approved.length,
+    skipped: Math.max(0, summary.total - approved.length),
+    unresolved: summary.unmatched,
+    quantity: totals.quantity,
+    costBasis: totals.costBasis,
+    currency,
+    excludedCostItems: totals.excludedCostItems || 0
+  };
+  Object.assign(draft, compactCompletedScanDraft(draft));
+  for (const key of ['bulkAcquisition', 'submissionError']) delete draft[key];
   await saveScanDraft(draft);
   return approved.length;
 }

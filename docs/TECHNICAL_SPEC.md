@@ -1,6 +1,6 @@
 # CollectFolio Technical Specification
 
-**Version:** 0.4
+**Version:** 0.7
 **Target:** Static Netlify PWA + optional Supabase  
 **Runtime:** Modern evergreen browsers; Node.js 22+ and Python 3.11+ for complete checks
 
@@ -50,6 +50,7 @@ app/
         catalog-identity.js   # exact source/canonical variant bridge
         pricing-policy.js     # fail-closed local provider-price eligibility
         intelligence-contract.js # support-tier and payload validation
+        settings.js           # normalized preferences, onboarding, and sync history
         components.js         # shared render helpers
         db.js                 # IndexedDB gateway
         store.js              # in-memory observable state
@@ -66,6 +67,8 @@ app/
         price-intelligence.js # approved-publication cache/hydration
         providers/
       views/
+        onboarding.js         # persistent first-run storage/currency/Add flow
+        profile.js            # collector-facing Settings and data controls
 scripts/
   build.mjs
   dev.mjs
@@ -101,7 +104,9 @@ docs/
 | `SUPABASE_ANON_KEY` | No | Browser-safe public/publishable key; enables auth and sync |
 | `APP_VERSION` | No | Displayed and embedded version |
 | `ENABLE_TESSERACT` | No | Disables external OCR loading when set to `false` |
-| `ENABLE_PRICE_INTELLIGENCE` | No | Rollback switch for Watchlist/Forecasts UI; defaults to `true` |
+| `ENABLE_WATCHLISTS` | No | Independent rollback switch for the local Watchlist UI; defaults to `true` |
+| `ENABLE_PRICE_INTELLIGENCE` | No | Fail-closed gate for approved public intelligence; defaults to `false` and still requires the hosted publication flag |
+| `ENABLE_CLOUD_DATA_REMOVAL` | No | Fail-closed gate for the migration-0015 erasure RPC; defaults to `false` until hosted recovery, rollback, and isolation qualification pass |
 
 The supplied URL is `https://agmjgyyvhfcivbwdlvzk.supabase.co`. The public key is intentionally not committed.
 
@@ -119,33 +124,63 @@ The supplied URL is `https://agmjgyyvhfcivbwdlvzk.supabase.co`. The public key i
 - portfolio section/filter/sort;
 - server/runtime feature flags;
 - approved publication state indexed by canonical variant UUID;
-- auth session and sync state;
+- auth session, connectivity, pending-change count, and sync state;
+- normalized onboarding/preferences and browser storage estimate;
 - scan draft count.
 
 The current view is rendered after state mutation. Complex modal workflows own their local transient state to avoid whole-app rerenders while editing Canvas or OCR progress.
 
 ### 4.2 IndexedDB
 
-Database: `collectfolio`, version 3. New exports use interchange version 2; version 1 backups remain importable.
+Database: `collectfolio`, additive version 5. New exports use interchange version 2; version 1 backups remain importable. Version 5 adds `localValueObservations` and seeds one current anchor for already-valued version-4 holdings without inventing history.
 
 | Store | Key | Contents |
 |---|---|---|
 | `holdings` | `id` | Catalog snapshot plus ownership metadata |
 | `snapshots` | `id` | Portfolio-level daily valuation snapshots stamped with the active pricing-policy version |
-| `settings` | `key` | Currency, theme, and preferences |
-| `scans` | `id` | Draft crops and review progress |
-| `catalogCache` | `key` | Search responses with expiry timestamp |
+| `settings` | `key` | Normalized preferences, onboarding progress, sync history, and diagnostics |
+| `scans` | `id` | Active crop drafts plus bounded, image-free completion receipts |
+| `catalogCache` | `key` | Search/detail responses with expiry timestamp and bounded retention |
 | `deletions` | `id` | Holding tombstones for deterministic cross-device deletion sync |
 | `watchlistItems` | `id` | Exact source or canonical variant snapshot plus alert preferences |
 | `watchlistDeletions` | `id` | Watch-key tombstones for deterministic cross-device deletion sync |
 | `intelligenceCache` | `key` | Last approved public intelligence payloads; no research data |
+| `localValueObservations` | `id` | Source-separated, append-only daily unit-value checks for owned holdings; same-day corrections link with `supersedes` |
 | `alerts` | `id` | Local in-app alert state |
+| `demandEventsQueue` | `id` | Private limited-retention signed-in analytics outbox; excluded from portable backups |
 
-Indexes on holdings include `catalogId` and `updatedAt`.
+Indexes on holdings include `catalogId` and `updatedAt`. Local value observations
+are indexed by `subjectId` and `observedAt`. Their `observedAt` is the device capture
+time; optional `sourceUpdatedAt` retains the catalog's declared price date and governs
+freshness without being mislabeled as device-observed market history.
 
-Optional cloud sync records the current day's valuation after holdings merge, then reconciles only well-formed `rights-aware-v1` snapshots by canonical daily ID and ISO `updatedAt`. Local and hosted rows must agree on `portfolio:YYYY-MM-DD` and `snapshot_date`; legacy-policy, mismatched, negative, non-finite, or fractional-count records do not cross the sync boundary. Equal timestamps use a stable payload tie-break, and the client never treats an absent hosted snapshot as a deletion.
+Optional cloud sync records the current day's valuation after holdings merge, then reconciles only well-formed `rights-aware-v1` snapshots by canonical currency/day ID and ISO `updatedAt`. New rows use `portfolio:CCC:YYYY-MM-DD`; existing `portfolio:YYYY-MM-DD` rows are read as their embedded currency and canonicalized without deleting the compatibility row. Local and hosted identities must agree on currency, date, and `snapshot_date`; legacy-policy, mismatched, negative, non-finite, or fractional-count records do not cross the sync boundary. Equal timestamps use a stable payload tie-break, and the client never treats an absent hosted snapshot as a deletion.
 
-### 4.3 Holding model
+### 4.3 Settings, onboarding, and portability
+
+`core/settings.js` owns schema version 1 inside the existing `settings` object store;
+this is a record migration, not an IndexedDB version change. It fills and normalizes
+known keys, removes unknown values from application state, and writes only changed
+records. Existing collectors with holdings are marked onboarding-complete the first
+time the marker is introduced. Once the marker exists, an explicitly reopened or
+partially completed onboarding state wins and survives refresh.
+
+First use persists storage preference, portfolio currency, and the first-Add step before
+advancing. Condition and language defaults flow into both manual holding forms and
+scan acquisition drafts. Synchronization history is newest-first and bounded to 12
+success/error entries; failures store collector-facing recovery copy plus a diagnostic
+reference that contains no portfolio data. Pending-change counts include holdings,
+both tombstone collections, Watchlist items, and the private demand-event outbox.
+
+Backup import rejects files above 128 MiB before reading them, then validates the
+top-level format, every included store, store-specific record shapes, every primary
+key, duplicate keys, private/unknown stores, and record-count bounds before starting
+a single multi-store read/write transaction. An invalid file performs no writes. Image selection similarly
+rejects files above 25 MiB before `FileReader` allocation; accepted images are then
+downsampled for local use. Browser storage usage is an estimate from the Storage API
+and is reported as unavailable when the browser cannot supply it.
+
+### 4.4 Holding model
 
 ```js
 {
@@ -167,7 +202,9 @@ Optional cloud sync records the current day's valuation after holdings merge, th
   purchaseDate,
   fees,
   manualMarketPrice,
+  seller,
   folder,
+  tags,
   notes,
   userImage,
   createdAt,
@@ -179,7 +216,7 @@ Optional cloud sync records the current day's valuation after holdings merge, th
 
 Provider identity data is snapshotted inside the holding so an outage does not remove the collectible reference. Existing holdings are not destructively rewritten: `catalogKey` supplies an exact provider-level bridge, while `canonicalVariantId` remains empty until an approved mapping exists. A legacy provider value remains in the user's record for provenance but cannot enter valuation or display when the source policy marks that route restricted.
 
-Selecting a catalog result opens a prefilled exact-printing summary rather than a second catalog editor. Name, set, number, rarity, finish, artwork, and source are carried forward from the chosen result; the primary form asks only for quantity, condition, and optional purchase price. Dates, fees, organization, grading, manual value, notes, and a local photo remain available through progressive disclosure. Custom collectibles retain editable identity fields because no catalog record exists to supply them.
+Selecting a catalog result opens a prefilled exact-printing summary rather than a second catalog editor. Name, set, number, rarity, finish, artwork, and source are carried forward from the chosen result; the primary form asks only for quantity, condition, and optional purchase price. Dates, fees, seller/source, organization, tags, grading, manual value, notes, and a local photo remain available through progressive disclosure. Custom collectibles retain editable identity fields because no catalog record exists to supply them.
 
 ## 5. Valuation rules
 
@@ -189,7 +226,7 @@ Selecting a catalog result opens a prefilled exact-printing summary rather than 
 - Unrealized gain = market value − cost basis.
 - Return percentage = gain ÷ cost basis × 100 when cost basis is positive.
 - Portfolio summary is the sum of holding values and costs.
-- Daily snapshot IDs use `portfolio:YYYY-MM-DD`; subsequent changes on the same day replace that day’s point. Only snapshots stamped with the current rights-aware pricing-policy version are charted, so an older TCGplayer/Cardmarket-derived total cannot survive the source-policy transition through historical charts.
+- Daily snapshot IDs use `portfolio:CCC:YYYY-MM-DD`; subsequent changes in the same currency on the same day replace only that currency’s point. Older `portfolio:YYYY-MM-DD` records remain readable and are deduplicated against their currency-qualified successor. Only snapshots stamped with the current rights-aware pricing-policy version are charted, so an older TCGplayer/Cardmarket-derived total cannot survive the source-policy transition through historical charts.
 
 Market and cost lines are drawn separately so adding a collectible is not visually represented as pure market appreciation. The 90-day SVG includes an explicit currency scale, date anchors, series legend, and exact latest values; it does not rely on an unlabeled line shape.
 
@@ -230,7 +267,10 @@ Catalog searches use `Promise.allSettled`. One provider failure produces a parti
 
 ### Local caching
 
-The cache key includes category, selected provider, and normalized query. Search results expire after 30 minutes. Provider images from the three approved hosts are cached separately by the service worker until the user clears site data or a future cache migration removes them.
+The cache key includes category, selected provider, and normalized query. Search and
+detail records expire after 30 minutes; maintenance removes expired records and keeps
+at most 250 active entries. Provider images from approved hosts are cached separately
+by the service worker in its bounded 160-entry store.
 
 ## 7. Image pipeline
 
@@ -296,7 +336,10 @@ A crop can be `unmatched`, `identifying`, `matched`, or `error`. It is only incl
 
 “Approve 80%+” is still an explicit user action. The application never runs it automatically.
 
-Review state can be saved as a draft and resumed from Home or Add. A completed batch is marked complete so it no longer appears as an active draft.
+Review state can be saved as a draft and resumed from Home or Add. Completion first
+copies crop images into approved holdings, then replaces the draft with an image-free
+summary receipt. At most 20 completion receipts younger than 30 days are retained;
+active drafts are never removed by this maintenance.
 
 ## 9. Supabase design
 
@@ -327,7 +370,13 @@ Migration `0001_initial.sql` creates:
 - user-profile creation trigger;
 - complete per-user RLS policies.
 
-Authenticated portfolio sync uses those existing `portfolio_snapshots` CRUD grants and per-user RLS policies. It pulls the signed-in user's daily rows, performs deterministic last-write-wins reconciliation locally, and upserts one row per day through the composite `(user_id, id)` key. Saved scan sessions remain device-local because their image-size and privacy contract has not been approved.
+Authenticated portfolio sync uses those existing CRUD grants and per-user RLS
+policies. Holdings, tombstones, snapshots, and Watchlist collections use stable-key
+ordering with 500-row Range pages and exact totals, fail closed above 100,000 rows,
+upsert at most 20 rows per request, and limit individual remote deletes to 10 at a
+time. Snapshot reconciliation remains deterministic last-write-wins with one row per
+currency/day through `(user_id, id)`. Saved scan sessions remain device-local because
+their image-size and privacy contract has not been approved.
 
 Migration `0002_price_intelligence_foundation.sql` is intentionally a separately reviewed operator step. It adds versioned source-terms reviews, a private canonical catalog, a nullable existing-holding bridge, exact-key watchlists and tombstones, runtime product flags, and the only anonymous intelligence publication table. Raw catalog/source tables have no anon or authenticated grants. Public publication RLS re-evaluates every lineage source against its current approved terms review and expiration.
 
@@ -335,7 +384,15 @@ Migration `0003_price_intelligence_research_pipeline.sql` adds private append-or
 
 Migration `0004_price_intelligence_function_acl_hardening.sql` removes Supabase default function execution from browser roles and leaves descriptive publication service-role-only. Migration `0005_private_forecast_research_ledgers.sql` adds append-only model versions, research predictions, matured evaluations, scorecards, and promotion-review evidence. Forecast tables are private; predictions are schema-limited to `research_only` or `quarantined`, and the evaluation-lineage trigger helper is unavailable to API roles.
 
-Pending migration `0006_price_intelligence_governance_hardening.sql` makes the database `public_price_intelligence` flag and exact source attribution part of the public RLS predicate; terms-review rows become append-only. Mapping corrections use a one-to-one supersession RPC that preserves referenced versions. Model records distinguish static definitions, nullable training datasets, and code artifacts. Every matured outcome is `scored` or `unscorable`, while scorecards persist a complete case partition, exact membership/hash, and versioned policy/hash. Direct service-role model-review inserts are revoked: an authenticated JWT with server-managed `app_metadata.price_intelligence_operator=true` must use `review_model_promotion`. Descriptive publication and per-card quarantine remain separate service-role RPCs, and disable actions append control receipts. This migration adds two RLS-protected tables, bringing the expected hosted inventory from 34 to 36 only after it is actually applied.
+Migration `0006_price_intelligence_governance_hardening.sql` makes the database `public_price_intelligence` flag and exact source attribution part of the public RLS predicate; terms-review rows become append-only. Mapping corrections use a one-to-one supersession RPC that preserves referenced versions. Model records distinguish static definitions, nullable training datasets, and code artifacts. Every matured outcome is `scored` or `unscorable`, while scorecards persist a complete case partition, exact membership/hash, and versioned policy/hash. Direct service-role model-review inserts are revoked: an authenticated JWT with server-managed `app_metadata.price_intelligence_operator=true` must use `review_model_promotion`. Descriptive publication and per-card quarantine remain separate service-role RPCs, and disable actions append control receipts. This migration added two RLS-protected tables and is included in the hosted migration inventory recorded below.
+
+Migration `0015_remove_my_cloud_data.sql` is checked in and intentionally not applied.
+It installs one authenticated security-definer RPC that binds its target to
+`auth.uid()`, removes only that collector's portfolio, Watchlist, snapshot, scan, and
+private-market rows, and retains the Auth account and profile. The client requires an
+online session and typed confirmation, signs out after success, and leaves local data
+untouched. RPC installation and any later invocation are separate transactions;
+installation itself removes no collector data.
 
 The service-role-only `publish_descriptive_intelligence` function accepts only a latest approved candidate review with source-rights and mapping attestations. It rechecks current commercial, attribution, and per-usage permissions, rejects non-published or above-Tier-2 payloads and any `fairValue`/`forecasts` key, then atomically replaces the public payload and lineage. It does not change the public feature flag. The flag remains a separate global operator decision; `disable_public_intelligence` is the append-receip per-card rollback path.
 
@@ -355,13 +412,23 @@ The service-role key is never used or exposed in the browser.
 
 The watchlist follows the same deletion-first/LWW pattern using its exact `watchKey`. A default cloud watchlist is obtained through an invoker-secured RPC. Failure of the optional watchlist schema does not roll back an otherwise successful holdings sync; the user receives a migration-required warning and local watchlist data stays intact.
 
+The shell derives `local`, `pending`, `syncing`, `synced`, `offline`, or `error` from
+the actual session, connectivity, dirty records, last-success timestamp, and current
+request state. Offline and failed operations retain local writes. A reconnect retries
+a signed-in pending or failed sync automatically, while a generation guard prevents
+an older search response from replacing a newer query.
+
 This is deterministic last-write-wins at holding granularity with persistent deletion tombstones. It does not merge individual fields. Clearing all browser data is intentionally different from deleting holdings inside the app: a browser reset does not issue cloud deletions, while an explicit holding deletion records a tombstone and propagates on the next sync.
 
 ### 9.4 Publication hydration and analytics isolation
 
 The browser requests publications only for deduplicated canonical UUIDs represented in Holdings or Watchlist, in batches of 50. IndexedDB cache entries expire at the earlier of six hours or the publication's own expiry. A hydration generation prevents an older in-flight response from restoring intelligence after its last mapped card is removed.
 
-The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Support tiers are layered: Tier 1 observed market, Tier 2 trends, Tier 3 fair value, and Tier 4 forecasts. Invalid or above-tier layers are omitted rather than repaired or guessed. A Tier-4 product outlook may plot the approved observed price against published forecast medians and 50%/80% quantile bands. The browser never extrapolates a forecast from trend percentages; without both an approved observation and approved forecast, the projection graph is absent.
+The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid or above-tier layers are omitted rather than repaired or guessed. A Tier-4 product outlook plots an approved history line when one is published, marks the present boundary, and renders future medians as a dotted path inside distinct 50%/80% quantile bands. The browser never reconstructs history from trend percentages or extrapolates a forecast from them; without both an approved observation and approved forecast, the projection graph is absent.
+
+Insights has independent restorable Performance, Forecasts, Alerts, and Track Record routes. Performance consumes only local portfolio snapshots. Local Scenario Outlooks use source-separated saved unit values and qualitative confidence, work from a single deliberately broad anchor, refuse values stale beyond 180 days, and never feed Track Record. Published portfolio forecast aggregation remains separate and excludes manual values, unmapped holdings, missing horizons, missing approved observations, and currencies that would require an unapproved conversion. Confidence scores are preserved item-by-item as a score or range rather than averaged into a new claim. Actual current value and either modeled future product remain separate in markup, copy, and visual treatment.
+
+The latest publication keeps the bounded `intelligence:v1:` TTL cache. Refresh also writes a content-addressed `intelligence-history:v1:` receipt into the existing `intelligenceCache` store only when its key does not exist. These public-payload receipts support revision links and open/matured status without exposing private prediction ledgers. The browser never derives maturity outcomes or accuracy from a later current price. It shows evaluation fields only when a complete approved record exists and aggregate percentages only from Tier 5 scorecards. Alert read and per-notification mute timestamps remain optional backward-compatible fields in the existing `alerts` store.
 
 The Python analytics core requires exact series identity plus `observed_at` and `available_at`; only accepted records knowable at the feature cutoff enter a snapshot. Outliers remain in the immutable ledger and its audit hash but never become features or realized targets. It implements deterministic canonical rows, conservative mapping candidates, rights-gated observation packets, descriptive features, no-change/damped-momentum baselines, quantile validation, pull-scarcity formulas, and the research-only legacy formula. Evaluation uses the seven-day maturity median and reports point, direction, probability, interval, and baseline-relative metrics.
 
@@ -383,10 +450,22 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 - External images use `referrerpolicy="no-referrer"`.
 - User-entered strings are escaped before HTML insertion.
 - Destructive actions require confirmation.
+- Local and cloud deletion are distinct typed-confirmation paths; clearing the browser
+  never manufactures cloud tombstones or invokes the cloud-removal RPC.
+- Portable imports complete full preflight validation before one atomic write
+  transaction, and private activity records cannot enter or leave through backups.
 
 ## 11. PWA and offline behavior
 
-The service worker caches the application shell and all local modules. Navigation uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and images use cache-first after first fetch. Approved provider images use a dedicated cache-first store to reduce repeat downloads. External catalog API calls are not intercepted, so stale provider data is not silently substituted as current data.
+The service worker caches the application shell and all local modules. Shell
+`collectfolio-shell-v0.8.0` includes the Settings, onboarding, and local-scenario modules. Navigation
+uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
+images use cache-first after first fetch. Approved provider images use a dedicated,
+160-entry cache-first store to reduce repeat downloads without unbounded growth.
+Runtime configuration uses network-first delivery with its installed copy as an
+offline-only fallback, so key rotation and feature rollback are not hidden by a stale
+shell cache. External catalog API calls are not intercepted, so stale provider data is
+not silently substituted as current data.
 
 IndexedDB remains the source of truth offline. Search and price refresh naturally require connectivity.
 
@@ -426,6 +505,6 @@ CI runs the same command on pushes and pull requests. A path-filtered Python 3.1
 - Saved-scan synchronization remains schema-ready but is not implemented in the client; crop-image payload limits and the cross-device privacy contract still need an explicit design decision.
 - Stable asset filenames require release discipline around service-worker cache versioning.
 - One TCGCSV identity and 53-week cohort are qualified for research only; no public/commercial TCGplayer-derived permission exists. JustTCG's paid contract is the preferred licensed alternative and its bounded adapter is implemented, but no paid account, API secret, or live approved review exists, so public price intelligence remains disabled.
-- Migrations 0001 through 0014 are hosted. Migration 0006's guarded mapping supersession and ACL/RLS contracts have been exercised against the hosted project, and migrations 0009/0014 now hold the reviewed pull-rate registry and explicit missing-data evidence. The project still lacks independently retained proof of a restorable Auth/storage-aware backup; WAL-G without PITR and logical dumps do not satisfy that recovery requirement for a future destructive migration.
+- Migrations 0001 through 0014 are hosted. Migration 0006's guarded mapping supersession and ACL/RLS contracts have been exercised against the hosted project, and migrations 0009/0014 now hold the reviewed pull-rate registry and explicit missing-data evidence. Migration 0015 is checked in but intentionally unapplied. The project still lacks independently retained proof of a restorable Auth/storage-aware backup; WAL-G without PITR and logical dumps do not satisfy that recovery requirement for a future destructive migration.
 - Trend thresholds and interval widths remain configurable research defaults and failed the first real walk-forward calibration gate.
 - The August 5 legacy retrospective evidence contains 109 stored evaluations. The 7-day scorecard rejects the damped-momentum baseline; 30/90/180-day slices are insufficient; all scored horizons have negative no-change-relative lift and under-covered 80% intervals. It predates the 30-day/five-baseline/Unscorable evidence contract and cannot support promotion. Human model promotion remains intentionally empty.

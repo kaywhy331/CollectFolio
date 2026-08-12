@@ -41,8 +41,8 @@ test('unmapped card detail explains the mapping gap and invents no numbers', () 
   const catalogRef = catalogReferenceForItem({ ...item, name: '<script>bad</script>' });
   const html = renderPriceIntelligenceDetail({ origin: 'search', item, catalogRef }, baseState());
   assert.doesNotMatch(html, /<script>bad<\/script>/);
-  assert.match(html, /Tier 0/);
-  assert.match(html, /awaiting|canonical catalog mapping/i);
+  assert.match(html, /Card identified; pricing pending/);
+  assert.match(html, /exact card verification/i);
   assert.match(html, /Nothing here is a fabricated estimate/);
   assert.doesNotMatch(html, /Modeled range \(10–90%\)/);
 });
@@ -52,6 +52,20 @@ test('mapped card without a publication states unavailability honestly', () => {
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef }, baseState());
   assert.match(html, /Why intelligence is unavailable/);
   assert.match(html, /disabled until source rights/);
+});
+
+test('owned card detail renders a local scenario even when public intelligence is disabled', () => {
+  const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
+  const holding = {
+    id: 'owned-local', canonicalVariantId: variantId, item, quantity: 1,
+    manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
+  };
+  const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef, holding }, baseState({ holdings: [holding] }));
+  assert.match(html, /Local scenario outlook/);
+  assert.match(html, /Your estimate/);
+  assert.match(html, /local-scenario-chart/);
+  assert.match(html, /No forecast published/);
+  assert.doesNotMatch(html, /Approved forecast projection/);
 });
 
 test('tier-4 publication renders observed, trend, fair value, forecast, and drivers separately', () => {
@@ -67,7 +81,7 @@ test('tier-4 publication renders observed, trend, fair value, forecast, and driv
     }, 4) }, loading: false, error: '' }
   });
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef }, state);
-  assert.match(html, /Tier 4/);
+  assert.match(html, /Forecast available/);
   assert.match(html, /Strong rise/);
   assert.match(html, /Above modeled range/);
   assert.match(html, /365-day outlook/);

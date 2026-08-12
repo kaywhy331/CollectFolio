@@ -22,8 +22,16 @@ export function safeImageUrl(value = '') {
 }
 
 export function formatCurrency(value, currency = 'USD') {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 })
-    .format(Number(value) || 0);
+  const amount = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const code = String(currency || '').trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(code)) {
+    return `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} (currency unavailable)`;
+  }
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: code, maximumFractionDigits: 2 }).format(amount);
+  } catch {
+    return `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} (currency unavailable)`;
+  }
 }
 
 export function formatPercent(value) {
@@ -114,7 +122,11 @@ export function downloadFile(name, contents, type = 'application/octet-stream') 
 }
 
 export function csvCell(value) {
-  const text = String(value ?? '');
+  const raw = String(value ?? '');
+  // Spreadsheet programs can execute cells beginning with formula sigils even
+  // when the CSV field is quoted. Prefix user-controlled formula-like values
+  // with an apostrophe so exports remain data, not executable instructions.
+  const text = /^(?:[\u0000-\u0020]*[=+\-@]|[\t\r])/.test(raw) ? `'${raw}` : raw;
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

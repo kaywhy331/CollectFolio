@@ -8,19 +8,20 @@ const baseEntry = {
   canonicalVariantId: variantId,
   catalogRef: { name: 'Pikachu ex' },
   targetPrice: 95,
+  targetCurrency: 'USD',
   alertPercentChange: 10,
   alertTrendChange: true,
   alertRangeChange: true,
   alertForecastChange: true
 };
 
-function publication(price = 100, trend = 'stable', position = 'within_range', median = 110) {
+function publication(price = 100, trend = 'stable', position = 'within_range', median = 110, currency = 'USD') {
   return {
     variantId,
     supportTier: 4,
     publishedAt: `2026-08-05T${price}:00:00Z`,
     payload: {
-      observed: { price, currency: 'USD', source: 'Approved source' },
+      observed: { price, currency, source: 'Approved source' },
       trend: { status: trend },
       fairValue: { q10: 80, q25: 90, q50: 100, q75: 110, q90: 120, position },
       forecasts: { 30: { q10: 80, q25: 90, q50: median, q75: 120, q90: 140, probabilityUp: 0.6, modelVersion: 'model-v1' } }
@@ -36,6 +37,24 @@ test('first approved publication establishes a baseline and fires a reached targ
   const repeated = evaluateWatchlistItemAlerts({ ...baseEntry, intelligenceBaseline: first.baseline }, publication(90), '2026-08-05T01:00:00Z');
   assert.deepEqual(repeated.alerts, []);
   assert.equal(repeated.baseline, first.baseline);
+});
+
+test('target alerts do not compare unlike currencies', () => {
+  const result = evaluateWatchlistItemAlerts({ ...baseEntry, targetCurrency: 'EUR' }, publication(90), '2026-08-05T00:00:00Z');
+  assert.deepEqual(result.alerts, []);
+  assert.equal(result.baseline.currency, 'USD');
+});
+
+test('publication currency changes refresh the baseline without mixing percent changes', () => {
+  const original = evaluateWatchlistItemAlerts(baseEntry, publication(100), '2026-08-05T00:00:00Z');
+  const corrected = evaluateWatchlistItemAlerts(
+    { ...baseEntry, intelligenceBaseline: original.baseline },
+    publication(90, 'stable', 'within_range', 110, 'CAD'),
+    '2026-08-06T00:00:00Z'
+  );
+  assert.equal(corrected.baseline.currency, 'CAD');
+  assert.notEqual(corrected.baseline.fingerprint, original.baseline.fingerprint);
+  assert.deepEqual(corrected.alerts, []);
 });
 
 test('subsequent approved publications evaluate percent, trend, range, and forecast changes', () => {

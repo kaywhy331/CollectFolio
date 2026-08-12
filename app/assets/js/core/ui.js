@@ -15,29 +15,62 @@ export function showToast(message, tone = 'success', duration = 3600) {
 export function openModal({ title, content, actions = '', onOpen } = {}) {
   closeCurrent?.();
   const root = document.querySelector('#modal-root');
+  const app = document.querySelector('#app');
   const lastFocus = document.activeElement;
+  const appWasInert = Boolean(app?.inert);
+  const appAriaHidden = app?.getAttribute('aria-hidden');
   const wrapper = document.createElement('div');
   wrapper.className = 'modal-layer';
   wrapper.innerHTML = `<div class="modal-backdrop" data-close-modal></div>
-    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
       <header><h2 id="modal-title">${escapeHTML(title || '')}</h2><button class="icon-button" data-close-modal aria-label="Close">×</button></header>
       <div class="modal-content">${content || ''}</div>
       ${actions ? `<footer class="modal-actions">${actions}</footer>` : ''}
     </section>`;
   root.append(wrapper);
+  if (app) {
+    app.inert = true;
+    app.setAttribute('aria-hidden', 'true');
+  }
   const close = () => {
     wrapper.remove();
+    if (app) {
+      app.inert = appWasInert;
+      if (appAriaHidden === null) app.removeAttribute('aria-hidden');
+      else app.setAttribute('aria-hidden', appAriaHidden);
+    }
     closeCurrent = null;
-    lastFocus?.focus?.();
+    if (lastFocus?.isConnected) lastFocus.focus?.({ preventScroll: true });
   };
   closeCurrent = close;
   wrapper.addEventListener('click', (event) => {
     if (event.target.closest('[data-close-modal]')) close();
   });
   wrapper.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') close();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [...wrapper.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => !element.disabled && !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+    if (!focusable.length) {
+      event.preventDefault();
+      wrapper.querySelector('.modal')?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
-  wrapper.querySelector('input,select,textarea,button')?.focus();
+  wrapper.querySelector('[autofocus], input, select, textarea, button')?.focus({ preventScroll: true });
   onOpen?.(wrapper, close);
   return close;
 }
@@ -131,7 +164,13 @@ export function trendChart(snapshots = [], currency = 'USD') {
   </svg></div><div class="chart-footer"><div class="chart-legend"><span><i class="market-dot"></i>Market value</span><span><i class="cost-dot"></i>Cost basis</span></div><div class="chart-latest"><span>Latest market <strong>${escapeHTML(formatCurrency(latest.marketValue, currency))}</strong></span><span>Cost <strong>${escapeHTML(formatCurrency(latest.costBasis, currency))}</strong></span></div></div>`;
 }
 
-export function forecastProjectionChart(observedPrice, forecasts = [], currency = 'USD') {
+export function forecastProjectionChart(observedPrice, forecasts = [], currency = 'USD', options = {}) {
+  const localMode = options.mode === 'local-scenario';
+  const noun = localMode ? 'scenario' : 'forecast';
+  const sourcePrefix = localMode ? 'locally recorded' : 'approved';
+  const ariaLabel = localMode
+    ? 'Local scenario projection with recorded values and a marked present-date boundary'
+    : 'Approved forecast projection with observed history and a marked present-date boundary';
   const observed = finiteNonNegative(observedPrice);
   const candidates = (Array.isArray(forecasts) ? forecasts : Object.values(forecasts || []))
     .map((forecast) => ({
@@ -149,38 +188,62 @@ export function forecastProjectionChart(observedPrice, forecasts = [], currency 
     .sort((left, right) => left.horizon - right.horizon);
   if (observed === null || !candidates.length) return '';
   const unique = [...new Map(candidates.map((forecast) => [forecast.horizon, forecast])).values()];
-  const points = [{ horizon: 0, q10: observed, q25: observed, q50: observed, q75: observed, q90: observed }, ...unique];
+  const asOfCandidate = Date.parse(options.asOfDate || options.observedAt || '');
+  const historyInput = (Array.isArray(options.history) ? options.history : []).map((point) => ({
+    observedAt: String(point?.observedAt || point?.date || ''),
+    time: Date.parse(point?.observedAt || point?.date || ''),
+    price: finiteNonNegative(point?.price)
+  })).filter((point) => Number.isFinite(point.time) && point.price !== null);
+  const asOfTime = Number.isFinite(asOfCandidate)
+    ? asOfCandidate
+    : historyInput.at(-1)?.time || Date.now();
+  const historical = [...new Map(historyInput
+    .filter((point) => point.time < asOfTime)
+    .map((point) => [Math.round((point.time - asOfTime) / 86_400_000), point]))
+    .entries()].map(([day, point]) => ({ day, value: point.price, observedAt: point.observedAt }))
+    .sort((left, right) => left.day - right.day).slice(-90);
+  const present = { day: 0, q10: observed, q25: observed, q50: observed, q75: observed, q90: observed };
+  const future = unique.map((forecast) => ({ ...forecast, day: forecast.horizon }));
   const width = 760;
   const height = 300;
   const left = 76;
   const right = 742;
   const chartTop = 18;
   const bottom = 252;
-  const top = niceCeiling(Math.max(observed, ...unique.map((forecast) => forecast.q90), 1) * 1.05);
-  const xPositions = new Map(points.map((point, index) => [
-    point.horizon,
-    left + ((index * (right - left)) / Math.max(points.length - 1, 1))
-  ]));
-  const x = (horizon) => xPositions.get(horizon);
+  const top = niceCeiling(Math.max(observed, ...historical.map((point) => point.value), ...unique.map((forecast) => forecast.q90), 1) * 1.05);
+  const minimumDay = Math.min(0, ...historical.map((point) => point.day));
+  const maximumDay = Math.max(...future.map((point) => point.day));
+  const span = Math.max(1, maximumDay - minimumDay);
+  const x = (day) => left + (((day - minimumDay) / span) * (right - left));
   const y = (value) => bottom - ((value / top) * (bottom - chartTop));
-  const coords = (field) => points.map((point) => `${x(point.horizon).toFixed(1)},${y(point[field]).toFixed(1)}`);
+  const forecastPoints = [present, ...future];
+  const coords = (field) => forecastPoints.map((point) => `${x(point.day).toFixed(1)},${y(point[field]).toFixed(1)}`);
   const band = (high, low) => [...coords(high), ...coords(low).reverse()].join(' ');
-  const latest = points.at(-1);
+  const latest = future.at(-1);
   const change = observed > 0 ? ((latest.q50 - observed) / observed) * 100 : null;
   const changeLabel = change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(1)}%`;
-  const xLabels = points.map((point, index) => ({
-    x: x(point.horizon),
-    label: point.horizon ? `${point.horizon}D` : 'Today',
-    anchor: index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'
-  }));
-  return `<div class="projection-chart"><div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Approved forecast projection from today's observed price to modeled future ranges">
+  const earliest = historical[0];
+  const xLabels = [
+    ...(earliest ? [{ x: x(earliest.day), label: shortDate(earliest.observedAt.slice(0, 10)), anchor: 'start' }] : []),
+    { x: x(0), label: 'Today', anchor: earliest ? 'middle' : 'start' },
+    ...future.map((point, index) => ({ x: x(point.day), label: `${point.horizon}D`, anchor: index === future.length - 1 ? 'end' : 'middle' }))
+  ];
+  const historyCoordinates = [...historical.map((point) => `${x(point.day).toFixed(1)},${y(point.value).toFixed(1)}`), `${x(0).toFixed(1)},${y(observed).toFixed(1)}`];
+  const historySummary = historical.length
+    ? `${historical.length} ${sourcePrefix} historical observation${historical.length === 1 ? '' : 's'} precede the present marker.`
+    : localMode
+      ? 'No earlier local value check exists; the scenario begins at the current saved value.'
+      : 'No approved historical series was published; the ribbon begins at the current observation.';
+  return `<div class="projection-chart ${localMode ? 'local-scenario-chart' : ''}"><p class="sr-only">${escapeHTML(historySummary)} ${localMode ? 'Scenario' : 'Forecast'} values are modeled ranges, not observed history.</p><div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}">
     <title>Observed ${escapeHTML(formatCurrency(observed, currency))}; ${latest.horizon}-day median ${escapeHTML(formatCurrency(latest.q50, currency))}; 80% interval ${escapeHTML(formatCurrency(latest.q10, currency))} to ${escapeHTML(formatCurrency(latest.q90, currency))}</title>
     ${axisMarkup({ top, currency, left, right, y, xLabels })}
+    ${historical.length ? `<polyline points="${historyCoordinates.join(' ')}" class="chart-line forecast-history"/>` : ''}
+    <line x1="${x(0).toFixed(1)}" y1="${chartTop}" x2="${x(0).toFixed(1)}" y2="${bottom}" class="forecast-present"/>
     <polygon points="${band('q90', 'q10')}" class="forecast-band forecast-band-80"/>
     <polygon points="${band('q75', 'q25')}" class="forecast-band forecast-band-50"/>
     <polyline points="${coords('q50').join(' ')}" class="chart-line forecast-median"/>
-    ${points.map((point) => `<circle cx="${x(point.horizon).toFixed(1)}" cy="${y(point.q50).toFixed(1)}" r="4.5" class="chart-point forecast-point"/>`).join('')}
-  </svg></div><div class="projection-summary"><span>Observed now <strong>${escapeHTML(formatCurrency(observed, currency))}</strong></span><span>${latest.horizon}D median <strong>${escapeHTML(formatCurrency(latest.q50, currency))}</strong></span><strong class="${change === null ? '' : change >= 0 ? 'positive' : 'negative'}">${escapeHTML(changeLabel)}</strong></div><div class="chart-legend"><span><i class="forecast-median-dot"></i>Median outlook</span><span><i class="forecast-band-50-dot"></i>50% range</span><span><i class="forecast-band-80-dot"></i>80% range</span></div></div>`;
+    ${forecastPoints.map((point) => `<circle cx="${x(point.day).toFixed(1)}" cy="${y(point.q50).toFixed(1)}" r="4.5" class="chart-point forecast-point"/>`).join('')}
+  </svg></div><div class="projection-summary"><span>${localMode ? 'Saved value now' : 'Observed now'} <strong>${escapeHTML(formatCurrency(observed, currency))}</strong></span><span>${latest.horizon}D modeled${localMode ? ' scenario' : ''} median <strong>${escapeHTML(formatCurrency(latest.q50, currency))}</strong></span><strong class="${change === null ? '' : change >= 0 ? 'positive' : 'negative'}">${escapeHTML(changeLabel)}</strong></div><div class="chart-legend">${historical.length ? `<span><i class="forecast-history-dot"></i>${localMode ? 'Local value checks' : 'Observed history'}</span>` : ''}<span><i class="forecast-present-dot"></i>Present boundary</span><span><i class="forecast-median-dot"></i>Modeled${localMode ? ' scenario' : ''} median</span><span><i class="forecast-band-50-dot"></i>50% range</span><span><i class="forecast-band-80-dot"></i>80% range</span></div></div>`;
 }
 
 export function allocationChart(allocation = {}) {

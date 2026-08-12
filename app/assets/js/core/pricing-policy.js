@@ -45,9 +45,27 @@ export function catalogPriceDisclosure(item = {}) {
   return 'Stored provider reference excluded pending licensed source rights';
 }
 
-export function currentPricingSnapshots(snapshots = []) {
+export function currentPricingSnapshots(snapshots = [], currency = 'USD') {
   if (!Array.isArray(snapshots)) return [];
-  return snapshots.filter((snapshot) =>
+  const selectedCurrency = String(currency || 'USD').toUpperCase();
+  const eligible = snapshots.filter((snapshot) =>
     snapshot?.pricingPolicyVersion === PRICING_POLICY_VERSION
+    && String(snapshot.currency || 'USD').toUpperCase() === selectedCurrency
   );
+  const points = new Map();
+  eligible.forEach((snapshot, index) => {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(snapshot.date || '')) ? snapshot.date : '';
+    const key = date || `id:${snapshot.id || index}`;
+    const current = points.get(key);
+    if (!current) {
+      points.set(key, snapshot);
+      return;
+    }
+    const timestampOrder = String(snapshot.updatedAt || '').localeCompare(String(current.updatedAt || ''));
+    const canonicalId = date ? `portfolio:${selectedCurrency}:${date}` : '';
+    if (timestampOrder > 0 || (timestampOrder === 0 && snapshot.id === canonicalId && current.id !== canonicalId)) {
+      points.set(key, snapshot);
+    }
+  });
+  return [...points.values()];
 }

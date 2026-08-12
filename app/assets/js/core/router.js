@@ -1,3 +1,5 @@
+import { INSIGHTS_HORIZONS, INSIGHTS_VIEWS } from './insights.js';
+
 const APP_ORIGIN = 'https://collectfolio.local';
 const PORTFOLIO_SECTIONS = new Set(['holdings', 'watchlist']);
 const DISCOVER_CATEGORIES = new Set(['all', 'pokemon', 'magic', 'yugioh', 'sports', 'comics', 'slab', 'other']);
@@ -56,9 +58,14 @@ function portfolioRoute(url) {
 
 function insightsRoute(url) {
   const requested = bounded(url.searchParams.get('view'), 40) || 'forecasts';
-  return route('insights', 'portfolio', '/insights?view=forecasts', {
-    portfolioSection: 'forecasts',
-    unsupported: requested === 'forecasts' ? '' : `insights-${requested}`
+  const view = INSIGHTS_VIEWS.includes(requested) ? requested : 'forecasts';
+  const requestedHorizon = Number(url.searchParams.get('horizon'));
+  const horizon = INSIGHTS_HORIZONS.includes(requestedHorizon) ? requestedHorizon : 90;
+  const params = new URLSearchParams({ view });
+  if (view === 'forecasts' && horizon !== 90) params.set('horizon', String(horizon));
+  return route('insights', 'insights', `/insights?${params}`, {
+    insights: { view, horizon },
+    unsupported: INSIGHTS_VIEWS.includes(requested) ? '' : `insights-${requested}`
   });
 }
 
@@ -102,11 +109,22 @@ function discoverPath(search = {}) {
 function detailPath(detail = {}) {
   const selected = detail || {};
   if (selected.holding?.id) return `/holdings/${encodeURIComponent(selected.holding.id)}`;
-  const id = selected.catalogRef?.canonicalVariantId
+  const provider = bounded(selected.item?.provider || selected.catalogRef?.provider, 50).toLowerCase();
+  const externalId = bounded(selected.item?.externalId || selected.catalogRef?.externalId, 400);
+  const providerId = provider && externalId ? `${provider}:${externalId}` : '';
+  const id = providerId
+    || selected.catalogRef?.canonicalVariantId
     || selected.catalogRef?.watchKey
-    || selected.item?.externalId
     || selected.item?.id;
   return id ? `/cards/${encodeURIComponent(id)}` : '/portfolio?view=holdings';
+}
+
+function insightsPath(insights = {}) {
+  const view = INSIGHTS_VIEWS.includes(insights.view) ? insights.view : 'forecasts';
+  const horizon = INSIGHTS_HORIZONS.includes(Number(insights.horizon)) ? Number(insights.horizon) : 90;
+  const params = new URLSearchParams({ view });
+  if (view === 'forecasts' && horizon !== 90) params.set('horizon', String(horizon));
+  return `/insights?${params}`;
 }
 
 export function appRouteForLegacyView(view, state = {}, context = {}) {
@@ -117,18 +135,25 @@ export function appRouteForLegacyView(view, state = {}, context = {}) {
     add: '/add',
     scan: '/add?step=review',
     portfolio: portfolioSection === 'forecasts'
-      ? '/insights?view=forecasts'
+      ? insightsPath(context.insights || state.insights)
       : `/portfolio?view=${PORTFOLIO_SECTIONS.has(portfolioSection) ? portfolioSection : 'holdings'}`,
+    insights: insightsPath(context.insights || state.insights),
     profile: '/settings',
     detail: detailPath(context.detail)
   };
-  return parseAppRoute(paths[view] || '/');
+  const resolved = parseAppRoute(paths[view] || '/');
+  return view === 'detail' && context.detail?.origin
+    ? { ...resolved, origin: context.detail.origin }
+    : resolved;
 }
 
 export function routeStatePatch(appRoute, state = {}) {
   const patch = { activeView: appRoute.legacyView, route: appRoute };
   if (appRoute.portfolioSection) {
     patch.portfolio = { ...state.portfolio, section: appRoute.portfolioSection };
+  }
+  if (appRoute.insights) {
+    patch.insights = { ...state.insights, ...appRoute.insights };
   }
   if (appRoute.search) {
     const changed = ['query', 'category', 'provider'].some((key) =>

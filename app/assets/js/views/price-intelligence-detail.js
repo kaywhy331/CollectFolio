@@ -1,10 +1,12 @@
-import { externalImage, priceDisclosure } from '../core/components.js';
+import { externalImage } from '../core/components.js';
+import { holdingCostBasis, holdingCostCurrency, holdingMarketCurrency, holdingMarketValue } from '../core/calculations.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
+import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 
-const TIER_NAMES = ['Identity only', 'Price only', 'Trend supported', 'Fair value supported', 'Forecast supported', 'Fully evaluated'];
+const COVERAGE_NAMES = ['Card identified; pricing pending', 'Current market price', 'Market history available', 'Modeled value available', 'Forecast available', 'Forecast fully evaluated'];
 const POSITION_LABELS = {
   below_range: 'Below modeled range',
   within_range: 'Within modeled range',
@@ -23,7 +25,9 @@ function updatedAgo(iso) {
 
 export function renderPriceIntelligenceDetail(detail, state) {
   if (!detail?.catalogRef) {
-    return '<section class="empty-state"><span class="empty-symbol">◇</span><h2>No card selected</h2><p>Open a card from Search, your holdings, or your watchlist.</p><button class="button" type="button" data-go="portfolio">Back to portfolio</button></section>';
+    if (detail?.loading) return '<section class="empty-state" role="status"><span class="empty-symbol">◇</span><h2>Opening shared card…</h2><p>Checking the linked catalog provider.</p></section>';
+    const message = detail?.error || 'Open a card from Search, your holdings, or your watchlist.';
+    return `<section class="empty-state"><span class="empty-symbol">◇</span><h2>${detail?.error ? 'Shared card unavailable' : 'No card selected'}</h2><p>${escapeHTML(message)}</p><button class="button" type="button" data-go="${detail?.error ? 'search' : 'portfolio'}">${detail?.error ? 'Find a card' : 'Back to portfolio'}</button></section>`;
   }
   const ref = detail.catalogRef;
   const currency = ref.currency || state.settings.currency || 'USD';
@@ -31,43 +35,50 @@ export function renderPriceIntelligenceDetail(detail, state) {
   const intelligence = publication ? normalizeIntelligencePayload(publication) : null;
   const watching = state.watchlistItems.some((entry) => entry.watchKey === ref.watchKey);
   const holding = detail.holding || state.holdings.find((entry) => entry.canonicalVariantId && entry.canonicalVariantId === ref.canonicalVariantId) || null;
+  const scenarioHorizon = [7, 30, 90, 180, 365].includes(Number(state.settings?.defaultForecastHorizon))
+    ? Number(state.settings.defaultForecastHorizon)
+    : 90;
+  const localScenario = holding
+    ? buildHoldingLocalScenario(holding, state.localValueObservations || [], scenarioHorizon)
+    : null;
 
-  return `<header class="page-header"><div><p class="eyebrow">Card detail</p><h1>${escapeHTML(ref.name)}</h1><p class="lede">${escapeHTML([ref.setName, ref.number, ref.rarity].filter(Boolean).join(' · ') || 'Custom catalog entry')}</p></div><button class="button ghost" type="button" data-action="close-detail">← Back</button></header>
-    ${headerCard(detail, ref, intelligence, holding, watching, currency, state)}
-    ${intelligence ? intelligenceSections(intelligence, currency) : unsupportedSection(ref, state)}
-    ${predictionHistorySection()}
-    ${intelligence ? attributionFootnote(intelligence) : ''}`;
+  return `<div class="detail-back"><button class="button ghost small" type="button" data-action="close-detail">← Back</button><span>Card detail</span></div>
+    ${headerCard(detail, ref, intelligence, holding, watching, currency, state, localScenario)}
+    <nav class="detail-tabs" aria-label="Card detail sections"><a href="#detail-overview">Overview</a><a href="#detail-market">Market</a><a href="#detail-forecast">Forecast</a><a href="#detail-sales">Sales</a><a href="#detail-data">Details</a></nav>
+    <div class="detail-sections">${localScenarioSection(holding, localScenario)}${intelligence ? intelligenceSections(intelligence, currency, Boolean(localScenario)) : unsupportedSection(ref, state, Boolean(localScenario))}
+    ${salesSection(ref)}
+    ${dataDetailsSection(ref, intelligence)}
+    ${intelligence ? attributionFootnote(intelligence) : ''}</div>`;
 }
 
-function headerCard(detail, ref, intelligence, holding, watching, currency, state) {
+function headerCard(detail, ref, intelligence, holding, watching, currency, state, localScenario) {
   const observed = intelligence?.observed || null;
   const catalogPrice = catalogPriceForValuation(ref);
-  const price = observed
-    ? `${formatCurrency(observed.price, observed.currency)}`
-    : catalogPrice === null ? 'Price unavailable' : formatCurrency(catalogPrice, currency);
+  const price = observed ? formatCurrency(observed.price, observed.currency) : catalogPrice === null ? '—' : formatCurrency(catalogPrice, currency);
   const tier = intelligence ? intelligence.supportTier : 0;
-  const tone = tier >= 4 ? 'supported' : tier >= 2 ? 'partial' : 'unsupported';
   const freshness = observed ? updatedAgo(observed.observedAt) : '';
   const identityPills = [ref.finish, ref.language?.toUpperCase(), ref.conditionClass, ref.edition !== 'standard' ? ref.edition : '']
     .filter((value) => value && value !== 'unspecified')
     .map((value) => `<span class="pill">${escapeHTML(value)}</span>`).join('');
-  return `<section class="card status-card">${externalImage({ ...ref, userImage: holding?.userImage || '' }, 'holding-image', { loading: 'eager' })}<div>
-      <div class="pill-row">${identityPills}<span class="pill">${escapeHTML(ref.provider)}</span></div>
-      <p class="item-price">${escapeHTML(price)}</p>
-      ${observed ? `<p class="price-source">${escapeHTML(observed.source || 'Approved source')}${observed.quality !== null ? ` · quality ${Math.round(observed.quality * 100)}%` : ''}${freshness ? ` · ${escapeHTML(freshness)}` : ''}</p>` : priceDisclosure(ref, currency)}
-      <span class="support-badge ${tone}">Tier ${tier} · ${escapeHTML(TIER_NAMES[tier])}</span>
-      ${holding ? `<p class="fine-print">In your portfolio · Qty ${holding.quantity}</p>` : ''}
-      <div class="item-actions">
-        <button class="button ghost small" type="button" data-action="toggle-watch" data-detail-watch="1">${watching ? '★ Watching' : '☆ Watch'}</button>
-        ${holding ? '' : '<button class="button secondary small" type="button" data-action="add-from-detail">Add to portfolio</button>'}
-      </div>
-    </div></section>`;
+  const priceStatus = observed ? `${escapeHTML(observed.source || 'Approved source')}${freshness ? ` · ${escapeHTML(freshness)}` : ''}` : catalogPrice === null ? 'Market pricing has not been verified yet.' : `${escapeHTML(ref.priceSource || 'Permitted catalog value')}${ref.priceUpdatedAt ? ` · ${escapeHTML(updatedAgo(ref.priceUpdatedAt))}` : ''}`;
+  const holdingValue = holding ? holdingMarketValue(holding) : 0;
+  const holdingCost = holding ? holdingCostBasis(holding) : 0;
+  const holdingValueCurrency = holding ? holdingMarketCurrency(holding) : currency;
+  const holdingCostCurrencyCode = holding ? holdingCostCurrency(holding) : currency;
+  const imageAvailable = Boolean(ref.image || ref.imageSmall || holding?.userImage);
+  const localAvailable = ['early', 'limited', 'available'].includes(localScenario?.status);
+  const outlookPanel = localAvailable
+    ? `<div class="forecast"><span>Local scenario</span><strong>${escapeHTML(formatCurrency(localScenario.q25, localScenario.currency))}–${escapeHTML(formatCurrency(localScenario.q75, localScenario.currency))}</strong><small>${localScenario.horizon}-day range · ${escapeHTML(localScenario.confidence.label)} confidence</small></div>`
+    : intelligence?.supportTier >= 4 && Object.keys(intelligence.forecasts).length
+      ? `<div class="forecast"><span>Published forecast</span><strong>${Object.keys(intelligence.forecasts).length} horizon${Object.keys(intelligence.forecasts).length === 1 ? '' : 's'}</strong><small>Approved ranges below</small></div>`
+      : '<div class="forecast"><span>Local scenario</span><strong>—</strong><small>Add a saved value to begin</small></div>';
+  return `<section class="detail-product" id="detail-overview"><div class="detail-media"><div class="detail-image-frame">${externalImage({ ...ref, userImage: holding?.userImage || '' }, 'detail-image', { loading: 'eager' })}</div>${imageAvailable ? '<button class="button ghost small" type="button" data-action="zoom-detail-image">Zoom image</button>' : '<span class="fine-print">No verified artwork is available.</span>'}</div><div class="detail-identity"><p class="eyebrow">${escapeHTML(ref.setName || 'Collectible')}</p><h1>${escapeHTML(ref.name || 'Unnamed collectible')}</h1><p class="detail-subtitle">${escapeHTML([ref.setName, ref.number ? `#${ref.number}` : '', ref.rarity].filter(Boolean).join(' · ') || 'Custom catalog entry')}</p><div class="detail-identity-pills">${identityPills || '<span>Variant not specified</span>'}</div><dl class="detail-metadata"><div><dt>Variant</dt><dd>${escapeHTML(ref.finish || 'Not specified')}</dd></div><div><dt>Language</dt><dd>${escapeHTML(ref.language || 'Not specified')}</dd></div><div><dt>State</dt><dd>${escapeHTML(ref.conditionClass === 'graded' ? 'Graded' : ref.conditionClass === 'sealed' ? 'Sealed' : 'Raw')}</dd></div><div><dt>Edition</dt><dd>${escapeHTML(ref.edition || 'Standard')}</dd></div></dl>${holding ? `<section class="detail-holding"><div><span>Your holding</span><strong>${escapeHTML(String(holding.quantity || 0))} owned · ${escapeHTML(holding.grade ? `${holding.gradeCompany || 'Graded'} ${holding.grade}` : holding.condition || 'Condition not set')}</strong></div><dl><div><dt>Portfolio value</dt><dd>${escapeHTML(formatCurrency(holdingValue, holdingValueCurrency))}${holding.manualMarketPrice !== '' && holding.manualMarketPrice != null ? ' · Manual' : ''}</dd></div><div><dt>Cost basis</dt><dd>${escapeHTML(formatCurrency(holdingCost, holdingCostCurrencyCode))}</dd></div></dl>${holdingValueCurrency !== holdingCostCurrencyCode ? `<p class="fine-print">${escapeHTML(holdingValueCurrency)} value and ${escapeHTML(holdingCostCurrencyCode)} cost are kept separate; no exchange rate was guessed.</p>` : ''}${holding.notes ? `<p>${escapeHTML(holding.notes)}</p>` : ''}</section>` : '<p class="detail-not-owned">Not in your portfolio yet. Add this exact printing without leaving the page.</p>'}</div><aside class="detail-market-panel"><div><span>Current market value</span><strong>${escapeHTML(price)}</strong><small>${priceStatus}</small></div>${intelligence?.supportTier >= 2 && intelligence.trend.return30d !== null ? `<div><span>30-day movement</span><strong class="${intelligence.trend.return30d >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${intelligence.trend.return30d >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(intelligence.trend.return30d) * 100))}</strong><small>${escapeHTML(trendLabel(intelligence.trend.status))}</small></div>` : '<div><span>30-day movement</span><strong>—</strong><small>Not enough approved history</small></div>'}${outlookPanel}<div class="detail-primary-actions">${holding ? `<button class="button" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Edit holding</button>` : '<button class="button" type="button" data-action="add-from-detail">Add to portfolio</button>'}<button class="button secondary" type="button" data-action="toggle-watch" data-detail-watch="1">${watching ? 'Watching' : 'Watch'}</button>${watching ? `<button class="button ghost" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(ref.watchKey)}">Compare</button>` : ''}<button class="button ghost" type="button" data-action="share-detail">Share</button></div></aside></section>`;
 }
 
-function intelligenceSections(intelligence, fallbackCurrency) {
+function intelligenceSections(intelligence, fallbackCurrency, hasLocalScenario = false) {
   const currency = intelligence.observed?.currency || fallbackCurrency;
   return `${trendSection(intelligence)}
-    ${forecastSection(intelligence, currency)}
+    ${forecastSection(intelligence, currency, hasLocalScenario)}
     ${fairValueSection(intelligence, currency)}
     ${scorecardSection(intelligence)}
     ${driverSection(intelligence)}`;
@@ -91,12 +102,12 @@ function scorecardSection(intelligence) {
 
 function trendSection(intelligence) {
   if (intelligence.supportTier < 2) {
-    return '<section class="card"><p class="eyebrow">Trend</p><h2>Trend not supported</h2><p class="muted">This card has an approved price but not enough permitted history for trend metrics.</p></section>';
+    return '<section class="card" id="detail-market"><p class="eyebrow">Market movement</p><h2>Trend not supported</h2><p class="muted">This card has an approved price but not enough permitted history for trend metrics.</p></section>';
   }
   const trend = intelligence.trend;
   const horizons = [['7D', trend.return7d], ['30D', trend.return30d], ['90D', trend.return90d], ['180D', trend.return180d], ['1Y', trend.return365d]];
   const cells = horizons.map(([label, value]) => `<div><span>${label}</span><strong class="${value === null ? '' : value >= 0 ? 'positive' : 'negative'}">${value === null ? '—' : escapeHTML(formatPercent(value * 100))}</strong></div>`).join('');
-  return `<section class="card"><div class="section-heading"><div><p class="eyebrow">Trend</p><h2>${escapeHTML(trendLabel(trend.status))}</h2></div>${trend.confidence !== null ? `<span class="pill">Confidence ${Math.round(trend.confidence)}/100</span>` : ''}</div>
+  return `<section class="card" id="detail-market"><div class="section-heading"><div><p class="eyebrow">Market movement</p><h2>${escapeHTML(trendLabel(trend.status))}</h2></div>${trend.confidence !== null ? `<span class="pill">Confidence ${Math.round(trend.confidence)}/100</span>` : ''}</div>
     <div class="forecast-grid">${cells}</div>
     <p class="fine-print">${trend.volatility !== null ? `Volatility ${escapeHTML(formatPercent(trend.volatility * 100))} · ` : ''}${trend.historyDensity !== null ? `History completeness ${Math.round(trend.historyDensity * 100)}% · ` : ''}Returns are historical movement, not a prediction. A charted price series ships once historical series enter the publication contract.</p></section>`;
 }
@@ -114,14 +125,38 @@ function fairValueSection(intelligence, currency) {
     <p class="fine-print">A structural range describes what comparable cards usually trade around. It is not an appraisal and not a forecast.</p></section>`;
 }
 
-function forecastSection(intelligence, currency) {
+function forecastSection(intelligence, currency, hasLocalScenario = false) {
+  const sectionId = hasLocalScenario ? 'detail-published-forecast' : 'detail-forecast';
   const forecasts = Object.values(intelligence.forecasts).sort((left, right) => left.horizon - right.horizon);
   if (intelligence.supportTier < 4 || !forecasts.length) {
-    return '<section class="card"><p class="eyebrow">Forecast</p><h2>No forecast published</h2><p class="muted">Forecasts appear only after a rights-cleared model run passes horizon-specific baseline, leakage, and calibration gates. Unsupported cards never show a fabricated estimate.</p></section>';
+    return `<section class="card" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">Published forecasts appear only after a rights-cleared model run passes horizon-specific baseline, leakage, and calibration gates. The local scenario remains separate above.</p></section>`;
   }
-  const projection = forecastProjectionChart(intelligence.observed?.price, forecasts, currency)
+  const projection = forecastProjectionChart(intelligence.observed?.price, forecasts, currency, {
+    history: intelligence.history,
+    asOfDate: intelligence.publishedAt || intelligence.observed?.observedAt
+  })
     || '<div class="empty-chart">An approved observed price is required before ranges can be anchored on a graph.</div>';
-  return `<section class="card forecast-card product-outlook-card"><div class="section-heading"><div><p class="eyebrow">Approved outlook</p><h2>Observed price to modeled range</h2><p class="muted">Historical trend evidence and approved forecasts stay separate; this graph connects only published observations and model outputs.</p></div><span class="support-badge supported">Tier ${intelligence.supportTier}</span></div>${projection}<div class="forecast-horizon-list">${forecasts.map((forecast) => `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(forecast.q50, currency))} median</h3></div>${forecast.confidence !== null ? `<span class="pill">Confidence ${Math.round(forecast.confidence)}/100</span>` : ''}</div><div class="forecast-grid"><div><span>50% range</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% range</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div></div><p class="fine-print">Origin ${escapeHTML(forecast.origin || 'not disclosed')} · Matures ${escapeHTML(forecast.maturesAt || 'not disclosed')} · Model ${escapeHTML(forecast.modelVersion || 'not disclosed')} · An existing forecast is never rewritten.</p></section>`).join('')}</div></section>`;
+  const horizons = forecasts.map((forecast) => {
+    const status = forecast.forecastStatus === 'limited' ? 'Limited' : 'Available';
+    const confidence = forecast.confidence === null ? 'score not disclosed' : `${Math.round(forecast.confidence)}/100`;
+    const reason = forecast.confidenceReason || 'No additional confidence explanation was included in the approved publication.';
+    return `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(forecast.q50, currency))} median</h3></div><span class="pill">${status} · ${confidence}</span></div><div class="forecast-grid"><div><span>50% range</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% range</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div></div><p class="fine-print">Confidence: ${escapeHTML(reason)}</p><p class="fine-print">As of ${escapeHTML(intelligence.publishedAt || 'not disclosed')} · Matures ${escapeHTML(forecast.maturesAt || 'not disclosed')} · Model ${escapeHTML(forecast.modelVersion || 'not disclosed')} · An existing forecast is never rewritten.</p></section>`;
+  }).join('');
+  return `<section class="card forecast-card product-outlook-card" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Approved outlook</p><h2>Observed price to modeled range</h2><p class="muted">Historical trend evidence and approved forecasts stay separate; this graph connects only published observations and model outputs.</p></div></div>${projection}<div class="forecast-horizon-list">${horizons}</div></section>`;
+}
+
+function localScenarioSection(holding, scenario) {
+  if (!holding || !scenario) return '';
+  const usable = ['early', 'limited', 'available'].includes(scenario.status);
+  if (!usable) return `<section class="card forecast-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Local scenario outlook</p><h2>${scenario.status === 'stale' ? 'Update the saved value' : 'Add a value to start'}</h2><p class="muted">${escapeHTML(scenario.reason || 'No usable local value is saved for this holding.')}</p></div><span class="support-badge unsupported">Unavailable</span></div><p>${escapeHTML(scenario.nextAction || 'Edit this holding to add a catalog or manual unit value.')}</p></section>`;
+  const history = (scenario.history || []).filter((entry) => entry.source === scenario.source && entry.currency === scenario.currency);
+  const projection = forecastProjectionChart(scenario.observed, [scenario], scenario.currency, {
+    mode: 'local-scenario', history, asOfDate: scenario.observedAt
+  });
+  return `<section class="card forecast-card product-outlook-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Local scenario outlook</p><h2>${scenario.horizon}-day range from your saved value</h2><p class="muted">Available without a published market forecast. This is a modeled scenario, not an appraisal.</p></div><span class="support-badge partial">${escapeHTML(scenario.confidence.label)} confidence</span></div>
+    <div class="actual-forecast-split"><div class="actual"><span>Saved unit value</span><strong>${escapeHTML(formatCurrency(scenario.observed, scenario.currency))}</strong><small>${escapeHTML(scenario.source === 'manual' ? 'Your estimate' : scenario.sourceLabel || 'Catalog price')} · value date ${escapeHTML((scenario.valueAsOf || scenario.observedAt).slice(0, 10))}</small></div><div class="forecast"><span>Middle 50% scenario</span><strong>${escapeHTML(formatCurrency(scenario.q25, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q75, scenario.currency))}</strong><small>Midpoint ${escapeHTML(formatCurrency(scenario.q50, scenario.currency))}</small></div></div>${projection}
+    <div class="forecast-grid"><div><span>Broad 80% range</span><strong>${escapeHTML(formatCurrency(scenario.q10, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q90, scenario.currency))}</strong></div><div><span>Local history</span><strong>${scenario.observationCount} same-source check${scenario.observationCount === 1 ? '' : 's'}</strong></div></div>
+    <p class="fine-print">${escapeHTML(scenario.confidence.detail)} Manual and catalog values never create cross-source returns. Model ${escapeHTML(scenario.modelVersion)}.</p><p class="forecast-warning">Scenario only; not a market observation, appraisal, recommendation, or guaranteed return.</p></section>`;
 }
 
 function driverSection(intelligence) {
@@ -138,25 +173,33 @@ function driverSection(intelligence) {
     <p class="fine-print">Drivers reflect recorded model feature contributions, shown in collector-friendly language.</p></section>`;
 }
 
-function unsupportedSection(ref, state) {
+function unsupportedSection(ref, state, hasLocalScenario = false) {
   const reasons = [];
   if (!ref.canonicalVariantId) {
     reasons.push(ref.mappingStatus === 'source_exact'
-      ? 'Exact source identity known, but the canonical catalog mapping has not been operator-approved yet.'
-      : 'This card has identity information only; an exact catalog mapping is required first.');
+      ? 'The source card is known, but exact card verification has not been approved yet.'
+      : 'This card has identity information only; exact card verification is required first.');
   } else if (!state.featureFlags?.publicPriceIntelligence) {
     reasons.push('Public price intelligence is disabled until source rights, mapping, and model validation gates pass.');
   } else {
     reasons.push('No approved intelligence publication exists for this exact variant yet.');
   }
-  return `<section class="card intelligence-gate" role="status"><span class="support-badge unsupported">Tier 0 · Identity only</span>
-    <h2>Why intelligence is unavailable</h2>
-    <ul class="evidence-list">${reasons.map((reason) => `<li>${escapeHTML(reason)}</li>`).join('')}</ul>
-    <p class="muted">You can still watch this exact printing and record a manual value on a holding. Nothing here is a fabricated estimate.</p></section>`;
+  return `<section class="card pricing-unavailable" id="detail-market" role="status"><p class="eyebrow">Card identified</p><h2>Market pricing has not been verified yet.</h2><p class="muted">You can still add this printing, enter a manual portfolio value, or watch it for future pricing.</p><details><summary>Why intelligence is unavailable</summary><ul class="evidence-list">${reasons.map((reason) => `<li>${escapeHTML(reason)}</li>`).join('')}</ul><p class="fine-print">Nothing here is a fabricated estimate.</p></details></section><section class="card" id="${hasLocalScenario ? 'detail-published-forecast' : 'detail-forecast'}"><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">${hasLocalScenario ? 'Your local scenario above remains available and separately labeled.' : 'An unavailable published forecast never prevents collection tracking.'}</p></section>`;
 }
 
-function predictionHistorySection() {
-  return '<section class="card"><p class="eyebrow">Prediction history</p><h2>Not yet available</h2><p class="muted">Once forecasting launches, every forecast becomes an immutable record evaluated automatically at maturity, and its history appears here.</p></section>';
+function salesSection(ref) {
+  return `<section class="card" id="detail-sales"><p class="eyebrow">Verified sales</p><h2>No exact-variant sales published</h2><p class="muted">Sales will appear only when the record identifies whether each transaction is raw, graded, sealed, or another exact variant. This ${escapeHTML(ref.conditionClass || 'raw')} printing has no approved sales feed.</p></section>`;
+}
+
+function dataDetailsSection(ref, intelligence) {
+  const tier = intelligence?.supportTier || 0;
+  const tone = tier >= 4 ? 'supported' : tier >= 2 ? 'partial' : 'unsupported';
+  const verification = ref.canonicalVariantId
+    ? 'Exact card verified'
+    : ref.mappingStatus === 'source_exact'
+      ? 'Source card known; exact verification pending'
+      : 'Exact verification pending';
+  return `<details class="data-details" id="detail-data"><summary><span>Data details</span><span>Source, verification, and model information</span></summary><div><span class="support-badge ${tone}">${escapeHTML(COVERAGE_NAMES[tier])}</span><dl><div><dt>Market source</dt><dd>${escapeHTML(ref.provider || 'Custom entry')}</dd></div><div><dt>Source reference</dt><dd>${escapeHTML(ref.externalId || 'Not available')}</dd></div><div><dt>Verification status</dt><dd>${escapeHTML(verification)}</dd></div><div><dt>Exact card reference</dt><dd>${escapeHTML(ref.canonicalVariantId || 'Not assigned')}</dd></div></dl></div></details>`;
 }
 
 function attributionFootnote(intelligence) {

@@ -10,9 +10,19 @@ const snapshotFont = readFileSync(
   new URL('../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', import.meta.url)
 ).toString('base64');
 
+async function dismissOnboarding(page, destination) {
+  const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
+  const destinationHeading = page.getByRole('heading', { name: destination, exact: true });
+  await expect(onboarding.or(destinationHeading).first()).toBeVisible();
+  if (await onboarding.isVisible()) {
+    await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
+  }
+  await expect(destinationHeading).toBeVisible();
+}
+
 async function openApp(page) {
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await dismissOnboarding(page, 'Overview');
 }
 
 async function stabilizeSnapshotTypography(page) {
@@ -39,11 +49,40 @@ async function stabilizeSnapshotTypography(page) {
   });
 }
 
+async function expectNoBlockingAccessibilityViolations(page) {
+  const report = await new AxeBuilder({ page })
+    .include('#main-content')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  const blocking = report.violations.filter((entry) => ['serious', 'critical'].includes(entry.impact));
+  expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
+}
+
 async function seedLegacyIndexedDB(page) {
-  await openApp(page);
+  // Fulfill a same-origin inert HTML document so the v4 fixture exists before
+  // any v5 application module can open and upgrade it. A real manifest is not
+  // suitable here because production hosts may serve it as a download.
+  const fixturePath = '/__collectfolio-indexeddb-fixture__.html';
+  await page.route(`**${fixturePath}`, (route) => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><title>CollectFolio IndexedDB fixture</title>'
+  }));
+  await page.goto(fixturePath);
+  await page.unroute(`**${fixturePath}`);
   await page.evaluate(async ({ databaseName, databaseVersion, stores }) => {
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(databaseName);
+      request.addEventListener('success', resolve, { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+      request.addEventListener('blocked', () => reject(new Error('Existing CollectFolio database remained open.')), { once: true });
+    });
     const database = await new Promise((resolve, reject) => {
       const request = indexedDB.open(databaseName, databaseVersion);
+      request.addEventListener('upgradeneeded', () => {
+        const keyPaths = { settings: 'key', catalogCache: 'key', intelligenceCache: 'key' };
+        for (const name of Object.keys(stores)) request.result.createObjectStore(name, { keyPath: keyPaths[name] || 'id' });
+        request.result.createObjectStore('demandEventsQueue', { keyPath: 'id' });
+      }, { once: true });
       request.addEventListener('success', () => resolve(request.result), { once: true });
       request.addEventListener('error', () => reject(request.error), { once: true });
     });
@@ -61,33 +100,134 @@ async function seedLegacyIndexedDB(page) {
     });
     database.close();
   }, legacyBackup);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+}
+
+async function configureApprovedPhase4Publication(page) {
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: window.location.origin + '/__phase4-cloud',
+      SUPABASE_ANON_KEY: 'synthetic-browser-key',
+      APP_VERSION: '0.8.0-test',
+      ENABLE_TESSERACT: false,
+      ENABLE_PRICE_INTELLIGENCE: true
+    });`
+  }));
+  await page.route('**/__phase4-cloud/rest/v1/**', (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/product_feature_flags')) {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify([
+        { key: 'watchlists', enabled: true, updated_at: '2026-08-09T00:00:00.000Z' },
+        { key: 'public_price_intelligence', enabled: true, updated_at: '2026-08-09T00:00:00.000Z' }
+      ]) });
+    }
+    if (url.pathname.endsWith('/card_intelligence_publications')) {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify([{
+        catalog_variant_id: '20000000-0000-4000-8000-000000000001',
+        support_tier: 5,
+        publication_status: 'published',
+        reason_codes: [],
+        payload: {
+          observed: { price: 14, currency: 'USD', source: 'Approved synthetic market', observedAt: '2026-08-09T00:00:00.000Z', quality: 0.94 },
+          history: [
+            { price: 11, currency: 'USD', source: 'Approved synthetic market', observedAt: '2026-06-09T00:00:00.000Z' },
+            { price: 12.5, currency: 'USD', source: 'Approved synthetic market', observedAt: '2026-07-09T00:00:00.000Z' }
+          ],
+          trend: { return30d: 0.12, return90d: 0.2, status: 'rise', confidence: 78, historyDensity: 0.9 },
+          forecasts: { 90: {
+            q10: 10, q25: 13, q50: 16, q75: 19, q90: 23,
+            probabilityUp: 0.68, confidence: 72,
+            confidenceReason: 'A reviewed exact-variant history supports this range.',
+            coverageStatus: 'Exact raw variant with approved history',
+            dataFreshness: 'Observed August 9, 2026',
+            whatChanged: 'First approved public forecast for this exact variant.',
+            origin: '2026-08-09T00:00:00.000Z', maturesAt: '2026-11-07T00:00:00.000Z',
+            modelVersion: 'synthetic-90d-v1', modelUpdatedAt: '2026-08-08T00:00:00.000Z'
+          } },
+          drivers: { supporting: ['Consistent approved observations'], limiting: ['A single exact-variant cohort remains narrow'] },
+          scorecards: [{
+            modelVersion: 'synthetic-90d-v1', cohort: 'Magic raw exact variants', horizonDays: 90,
+            maturedForecasts: 24, medianAbsoluteErrorPct: 11.5, directionAccuracy: 0.71,
+            interval80Coverage: 0.83, baselineErrorPct: 16.2, lastTrained: '2026-08-08T00:00:00.000Z'
+          }]
+        },
+        source_attributions: [{ name: 'Approved synthetic market', attribution: 'Synthetic browser acceptance fixture' }],
+        source_policy_hash: 'synthetic-policy',
+        payload_hash: 'synthetic-phase4-v1',
+        published_at: '2026-08-09T00:00:00.000Z',
+        expires_at: '2027-08-09T00:00:00.000Z'
+      }]) });
+    }
+    return route.fulfill({ contentType: 'application/json', body: '[]' });
+  });
+}
+
+async function seedPhase4Alert(page) {
+  await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('collectfolio');
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction('alerts', 'readwrite');
+      transaction.objectStore('alerts').put({
+        id: 'phase4-browser-alert',
+        watchKey: 'variant:20000000-0000-4000-8000-000000000001',
+        variantId: '20000000-0000-4000-8000-000000000001',
+        kind: 'forecast_change',
+        message: 'Synthetic Archive Mage received a revised approved forecast.',
+        triggeredAt: '2026-08-09T01:00:00.000Z',
+        readAt: '',
+        mutedAt: ''
+      });
+      transaction.addEventListener('complete', resolve, { once: true });
+      transaction.addEventListener('abort', () => reject(transaction.error), { once: true });
+      transaction.addEventListener('error', () => reject(transaction.error), { once: true });
+    });
+    database.close();
+  });
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 }
 
 test('guest shell preserves every current primary entry point', async ({ page }) => {
   await openApp(page);
-  await expect(page.getByRole('heading', { name: 'Your collection starts here.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   const navigation = page.getByRole('navigation', { name: 'Primary' });
   await navigation.getByRole('button', { name: 'Discover' }).click();
   await expect(page).toHaveURL(/\/discover\?mode=search$/);
-  await expect(page.getByRole('heading', { name: 'Search collectibles' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
   await navigation.getByRole('button', { name: 'Add' }).click();
   await expect(page).toHaveURL(/\/add$/);
   await expect(page.getByRole('heading', { name: 'Add collectibles' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Scan multiple items/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Scan one item/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Search catalogs/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Choose camera or image/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Search catalog/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Import backup/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Export backup/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Create custom item/ })).toBeVisible();
+  await expect(page.getByText(/detects whether it contains one item or several/i)).toBeVisible();
+  await page.getByRole('button', { name: /Choose camera or image/ }).click();
+  await expect(page.getByText('Take photo', { exact: true })).toBeVisible();
+  await expect(page.getByText('Upload image', { exact: true })).toBeVisible();
+  await expect(page.getByText(/camera permission is denied/i)).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
   await navigation.getByRole('button', { name: 'Portfolio' }).click();
   await expect(page).toHaveURL(/\/portfolio\?view=holdings$/);
   await expect(page.getByRole('heading', { name: 'Portfolio' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Watchlist' }).click();
+  await expect(page).toHaveURL(/\/portfolio\?view=watchlist$/);
+  await expect(page.getByRole('heading', { name: 'Track cards before you buy' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Find a card' })).toBeVisible();
+  await expect(page.locator('.watchlist-controls')).toHaveCount(0);
   await navigation.getByRole('button', { name: 'Insights' }).click();
   await expect(page).toHaveURL(/\/insights\?view=forecasts$/);
-  await expect(page.getByRole('heading', { name: 'Forecasts', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Insights', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Open settings' }).click();
   await expect(page).toHaveURL(/\/settings$/);
-  await expect(page.getByRole('heading', { name: 'Profile' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 });
 
 test('foundation shell stays truthful and keyboard-operable across breakpoints', async ({ page }) => {
@@ -98,7 +238,7 @@ test('foundation shell stays truthful and keyboard-operable across breakpoints',
   }
   await expect(page.getByText('Local portfolio', { exact: true })).toBeVisible();
   await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Search cards' })).toBeVisible();
+  await expect(page.locator('.shell-topbar').getByRole('button', { name: 'Search cards' })).toBeVisible();
   await expect(page.getByRole('button', { name: /notifications/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /switch portfolio/i })).toHaveCount(0);
 
@@ -136,54 +276,216 @@ test('foundation shell stays truthful and keyboard-operable across breakpoints',
   }
 });
 
-test('foundation routes restore filters and browser Back closes holding detail first', async ({ page }) => {
+test('routes restore filters and Quick Inspector preserves context, focus, and full detail', async ({ page }) => {
   await page.goto('/discover?mode=search&q=Lotus&category=magic&provider=scryfall');
-  await expect(page.getByRole('heading', { name: 'Search collectibles' })).toBeVisible();
+  await dismissOnboarding(page, 'Discover');
   await expect(page.locator('#catalog-query')).toHaveValue('Lotus');
   await expect(page.locator('[name="category"]')).toHaveValue('magic');
   await expect(page.locator('[name="provider"]')).toHaveValue('scryfall');
 
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Portfolio' }).click();
-  await page.locator('[data-action="open-detail"][data-holding-id="10000000-0000-4000-8000-000000000001"]').click();
+  const holdingCard = page.locator('[data-action="open-detail"][data-holding-id="10000000-0000-4000-8000-000000000001"]');
+  await holdingCard.click();
   await expect(page).toHaveURL(/\/holdings\/10000000-0000-4000-8000-000000000001$/);
-  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  const inspector = page.getByRole('dialog', { name: 'Synthetic Archive Mage' });
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByRole('button', { name: 'Close card inspector' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL(/\/portfolio\?view=holdings$/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(holdingCard).toBeFocused();
+
+  await holdingCard.click();
+  await page.getByRole('dialog', { name: 'Synthetic Archive Mage' }).getByRole('button', { name: 'Open full details' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.detail-product').getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/\/portfolio\?view=holdings$/);
   await expect(page.getByRole('heading', { name: 'Portfolio' })).toBeVisible();
 
   await page.goto('/holdings/10000000-0000-4000-8000-000000000001');
-  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
 });
 
 test('version-4 local data hydrates calculations, holdings, and scan recovery', async ({ page }) => {
   await seedLegacyIndexedDB(page);
-  await expect(page.getByRole('heading', { name: 'Your collection is moving.' })).toBeVisible();
-  const summary = page.getByRole('region', { name: 'Portfolio summary' });
+  const migration = await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('collectfolio');
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const transaction = database.transaction('localValueObservations');
+    const store = transaction.objectStore('localValueObservations');
+    const rows = await new Promise((resolve, reject) => {
+      const request = store.getAll();
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const result = {
+      version: database.version,
+      indexes: [...store.indexNames],
+      rows: rows.map(({ subjectId, source, unitPrice }) => ({ subjectId, source, unitPrice }))
+    };
+    database.close();
+    return result;
+  });
+  expect(migration.version).toBe(5);
+  expect(migration.indexes).toEqual(expect.arrayContaining(['subjectId', 'observedAt']));
+  expect(migration.rows).toHaveLength(2);
+  expect(migration.rows).toEqual(expect.arrayContaining([
+    expect.objectContaining({ subjectId: '10000000-0000-4000-8000-000000000001', source: 'catalog', unitPrice: 12 }),
+    expect.objectContaining({ subjectId: '10000000-0000-4000-8000-000000000002', source: 'manual' })
+  ]));
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  const summary = page.getByRole('region', { name: 'Portfolio performance' });
   await expect(summary).toContainText('$79.00');
   await expect(summary).toContainText('$89.00');
   await expect(summary).toContainText('3');
-  await expect(page.getByRole('button', { name: 'Resume saved scan (1)' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Saved scan ready/ })).toBeVisible();
 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Portfolio' }).click();
-  await expect(page.getByText('3 results')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await expect(page.getByText('3 holdings')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Rights Gate ex' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Unpriced Comic' })).toBeVisible();
 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Overview' }).click();
-  await page.getByRole('button', { name: 'Resume saved scan (1)' }).click();
-  await expect(page.getByRole('heading', { name: 'Review 2 crops' })).toBeVisible();
+  await page.getByRole('button', { name: /Saved scan ready/ }).click();
+  await expect(page.getByRole('heading', { name: 'Review 2 detected items' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Review queue summary' })).toContainText('Unmatched1');
+  await expect(page.getByText('Apply acquisition details to all')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add 1 approved' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Unmatched crop' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Identify this crop' })).toBeVisible();
+  await expectNoBlockingAccessibilityViolations(page);
+  await page.getByRole('button', { name: 'Add 1 approved' }).click();
+  await expect(page.getByRole('heading', { name: 'Items added' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
+  await page.getByRole('button', { name: 'View portfolio' }).click();
+  await expect(page.getByText('4 holdings')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Synthetic Scan Draft' })).toBeVisible();
 });
 
-test('public forecast presentation remains fail closed', async ({ page }) => {
+test('same-day local value corrections stay append-only in IndexedDB', async ({ page }) => {
+  await seedLegacyIndexedDB(page);
+  const ledger = await page.evaluate(async () => {
+    const [{ getAll, getRecord, saveHolding }, { normalizeLocalObservations }] = await Promise.all([
+      import('/assets/js/core/db.js'),
+      import('/assets/js/core/local-scenarios.js')
+    ]);
+    const original = await getRecord('holdings', '10000000-0000-4000-8000-000000000001');
+    const first = await saveHolding({ ...original, item: { ...original.item, price: 13 } });
+    const second = await saveHolding({ ...first, item: { ...first.item, price: 14 } });
+    await saveHolding(second);
+    const rows = (await getAll('localValueObservations'))
+      .filter((row) => row.subjectId === original.id && row.source === 'catalog');
+    const active = normalizeLocalObservations(rows).at(-1);
+    return {
+      rowCount: rows.length,
+      uniqueIds: new Set(rows.map((row) => row.id)).size,
+      supersedingRows: rows.filter((row) => row.supersedes).length,
+      activePrice: active?.unitPrice,
+      sourceUpdatedAt: active?.sourceUpdatedAt
+    };
+  });
+  expect(ledger).toEqual({
+    rowCount: 3,
+    uniqueIds: 3,
+    supersedingRows: 2,
+    activePrice: 14,
+    sourceUpdatedAt: '2026-08-08T10:00:00.000Z'
+  });
+});
+
+test('Phase 3 collection tools stay selection-scoped and Watchlist removal is confirmed', async ({ page }) => {
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Portfolio' }).click();
-  await page.getByRole('tab', { name: 'Forecasts' }).click();
-  await expect(page.getByRole('heading', { name: 'Forecasts are not publicly available' })).toBeVisible();
-  await expect(page.locator('.projection-chart')).toHaveCount(0);
+  const holding = page.locator('.portfolio-holding-card[data-holding-id="10000000-0000-4000-8000-000000000001"]');
+  await holding.getByRole('button', { name: 'Select Synthetic Archive Mage' }).click();
+  const toolbar = page.getByRole('region', { name: 'Bulk holding actions' });
+  await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button', { name: 'Add tags' }).click();
+  const tagDialog = page.getByRole('dialog', { name: /Tag 1 selected holding/ });
+  await tagDialog.getByRole('textbox', { name: 'Tags' }).fill('favorite');
+  await tagDialog.getByRole('button', { name: 'Add tags' }).click();
+  await expect(holding).toContainText('#favorite');
+
+  await holding.getByRole('button', { name: 'Select Synthetic Archive Mage' }).click();
+  await page.getByRole('region', { name: 'Bulk holding actions' }).getByRole('button', { name: 'Duplicate' }).click();
+  await page.getByRole('dialog', { name: /Duplicate 1 acquisition lot/ }).getByRole('button', { name: 'Create copies' }).click();
+  await expect(page.getByText('4 holdings')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Watchlist' }).click();
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await page.getByRole('button', { name: 'Target & alerts' }).click();
+  const preferences = page.getByRole('dialog', { name: /Watch settings/ });
+  await preferences.getByRole('spinbutton', { name: 'Target price' }).fill('10');
+  await preferences.getByRole('button', { name: 'Save preferences' }).click();
+  await expect(page.locator('.watch-stats dd').filter({ hasText: '$10.00' })).toContainText('$2.00 above target');
+  await expectNoBlockingAccessibilityViolations(page);
+  const remove = page.getByRole('button', { name: 'Remove Synthetic Archive Mage from Watchlist' });
+  await remove.click();
+  await page.getByRole('dialog', { name: 'Remove from Watchlist?' }).getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await remove.click();
+  await page.getByRole('dialog', { name: 'Remove from Watchlist?' }).getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Track cards before you buy' })).toBeVisible();
+});
+
+test('local scenarios work while published forecast presentation remains fail closed', async ({ page }) => {
+  await seedLegacyIndexedDB(page);
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Insights' }).click();
+  await expect(page.getByRole('heading', { name: '90-day portfolio range' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Published market forecasts remain gated' })).toBeVisible();
+  await expect(page.getByRole('img', { name: /Local scenario projection/ }).first()).toBeVisible();
+  await expect(page.getByRole('img', { name: /Approved forecast projection/ })).toHaveCount(0);
+});
+
+test('Phase 4 Insights separates actuals and forecasts, persists alert state, and gates track-record metrics', async ({ page }) => {
+  await configureApprovedPhase4Publication(page);
+  await seedLegacyIndexedDB(page);
+  await seedPhase4Alert(page);
+
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Insights' }).click();
+  await expect(page).toHaveURL(/\/insights\?view=forecasts$/);
+  const summary = page.locator('.portfolio-forecast-summary').filter({ hasText: 'Portfolio forecast summary' });
+  await expect(summary).toContainText('Current recorded portfolio value');
+  await expect(summary).toContainText('$79.00');
+  await expect(summary).toContainText('$26.00–$38.00');
+  await expect(summary).toContainText('1 of 3 holdings');
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
+  await expect(page.getByRole('img', { name: /Approved forecast projection/ })).toBeVisible();
+  await expect(page.getByText('Present boundary').first()).toBeVisible();
+  await expect(page.getByText(/reviewed exact-variant history supports/i)).toBeVisible();
+  await expectNoBlockingAccessibilityViolations(page);
+
+  await page.getByRole('button', { name: '30 days' }).click();
+  await expect(page).toHaveURL(/\/insights\?view=forecasts&horizon=30$/);
+  await expect(page.getByText(/No approved 30-day forecast/)).toBeVisible();
+  await expect(page.getByText(/Choose an available horizon: 90 days/)).toBeVisible();
+
+  await page.getByRole('tab', { name: /Alerts/ }).click();
+  await expect(page).toHaveURL(/\/insights\?view=alerts$/);
+  const alert = page.locator('.alert-history-card').filter({ hasText: 'revised approved forecast' });
+  await expect(alert).toContainText('Unread');
+  await expect(alert).toContainText('Model-based forecast change');
+  await alert.getByRole('button', { name: 'Mark read' }).click();
+  await expect(alert).toContainText('Read');
+  await alert.getByRole('button', { name: 'Mute notification' }).click();
+  await expect(alert).toContainText('Muted');
+  await page.reload();
+  await expect(page).toHaveURL(/\/insights\?view=alerts$/);
+  await expect(page.locator('.alert-history-card')).toContainText('Muted');
+  await expectNoBlockingAccessibilityViolations(page);
+
+  await page.getByRole('tab', { name: 'Track Record' }).click();
+  await expect(page).toHaveURL(/\/insights\?view=track-record$/);
+  await expect(page.getByRole('heading', { name: 'Approved model scorecard' })).toBeVisible();
+  await expect(page.getByText('24 matured')).toBeVisible();
+  await expect(page.getByText('71.0%')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Forecast history' })).toBeVisible();
+  await expect(page.getByText(/Open · not included in metrics/)).toBeVisible();
 });
 
 test('first-use Overview has no serious or critical accessibility violations', async ({ page }) => {
@@ -195,10 +497,11 @@ test('first-use Overview has no serious or critical accessibility violations', a
   expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
 });
 
-test('first-use Overview visual baseline', async ({ page }) => {
+test('core vertical slice first-use Overview visual baseline', async ({ page }) => {
   await openApp(page);
+  await expect(page.locator('.toast')).toHaveCount(0);
   await stabilizeSnapshotTypography(page);
-  await expect(page).toHaveScreenshot('legacy-overview-empty.png', {
+  await expect(page).toHaveScreenshot('core-slice-overview-empty.png', {
     animations: 'disabled',
     caret: 'hide',
     fullPage: true,

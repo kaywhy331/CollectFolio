@@ -1,11 +1,17 @@
 import { dataUrlBytes } from '../core/utils.js';
 import { isUUID } from '../core/catalog-identity.js';
-import { deleteRecord, getAll, putRecord, recordDailySnapshot } from '../core/db.js';
+import { portfolioSnapshotId } from '../core/calculations.js';
+import { deleteRecord, getAll, putRecord, recordDailySnapshot, recordLocalHoldingObservations } from '../core/db.js';
 import { PRICING_POLICY_VERSION } from '../core/pricing-policy.js';
 import { mergeWatchlistItems, mergeWatchlistTombstones } from './watchlist.js';
 
 const SESSION_KEY = 'collectfolio:supabase-session';
 const INLINE_IMAGE_LIMIT = 180 * 1024;
+export const SUPABASE_REQUEST_TIMEOUT_MS = 12_000;
+export const SYNC_PAGE_SIZE = 500;
+export const SYNC_WRITE_BATCH_SIZE = 20;
+export const SYNC_DELETE_CONCURRENCY = 10;
+export const SYNC_RECORD_LIMIT = 100_000;
 
 function config() {
   return globalThis.window?.COLLECTFOLIO_CONFIG || {};
@@ -51,21 +57,95 @@ export async function fetchPublishedIntelligence(variantIds = []) {
 }
 
 function requireConfig() {
-  if (!isSupabaseConfigured()) throw new Error('Supabase public-key configuration is not enabled.');
+  if (!isSupabaseConfigured()) throw new Error('Cloud backup is not available in this build.');
   return { url: String(config().SUPABASE_URL).replace(/\/$/, ''), key: config().SUPABASE_ANON_KEY };
 }
 
-export async function request(path, { method = 'GET', body, session, headers = {} } = {}) {
+export async function request(path, { method = 'GET', body, session, headers = {}, timeout = SUPABASE_REQUEST_TIMEOUT_MS, withMetadata = false } = {}) {
   const { url, key } = requireConfig();
-  const response = await fetch(`${url}${path}`, {
-    method,
-    headers: { apikey: key, Authorization: `Bearer ${session?.access_token || key}`, 'Content-Type': 'application/json', ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body)
-  });
-  const text = await response.text();
-  const value = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(value?.msg || value?.message || value?.error_description || `Supabase request failed (${response.status}).`);
-  return value;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, Number(timeout) || SUPABASE_REQUEST_TIMEOUT_MS));
+  try {
+    const response = await fetch(`${url}${path}`, {
+      method,
+      signal: controller.signal,
+      headers: { apikey: key, Authorization: `Bearer ${session?.access_token || key}`, 'Content-Type': 'application/json', ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const text = await response.text();
+    const value = text ? JSON.parse(text) : null;
+    if (!response.ok) throw new Error(value?.msg || value?.message || value?.error_description || `Cloud request failed (${response.status}).`);
+    return withMetadata
+      ? { value, contentRange: response.headers?.get?.('content-range') || '' }
+      : value;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw Object.assign(new Error(`Cloud request timed out after ${Math.ceil((Number(timeout) || SUPABASE_REQUEST_TIMEOUT_MS) / 1000)} seconds.`), { name: 'TimeoutError' });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function chunkRecords(records = [], size = SYNC_WRITE_BATCH_SIZE) {
+  const width = Math.max(1, Math.trunc(Number(size) || SYNC_WRITE_BATCH_SIZE));
+  const values = Array.isArray(records) ? records : [];
+  return Array.from({ length: Math.ceil(values.length / width) }, (_, index) =>
+    values.slice(index * width, (index + 1) * width));
+}
+
+function contentRangeTotal(value) {
+  const match = /\/(\d+)$/.exec(String(value || ''));
+  return match ? Number(match[1]) : null;
+}
+
+export async function requestAllPages(path, {
+  session,
+  pageSize = SYNC_PAGE_SIZE,
+  maximumRecords = SYNC_RECORD_LIMIT,
+  requester = request
+} = {}) {
+  const width = Math.max(1, Math.trunc(Number(pageSize) || SYNC_PAGE_SIZE));
+  const maximum = Math.max(1, Math.trunc(Number(maximumRecords) || SYNC_RECORD_LIMIT));
+  const rows = [];
+  while (true) {
+    const start = rows.length;
+    const result = await requester(path, {
+      session,
+      headers: { Range: `${start}-${start + width - 1}`, 'Range-Unit': 'items', Prefer: 'count=exact' },
+      withMetadata: true
+    });
+    const page = Array.isArray(result) ? result : result?.value;
+    if (!Array.isArray(page)) throw new Error('Cloud backup returned an invalid paginated response.');
+    const total = contentRangeTotal(Array.isArray(result) ? '' : result?.contentRange);
+    if (total !== null && total > maximum) {
+      throw new Error(`Cloud backup exceeds the ${maximum.toLocaleString('en-US')}-record safety limit.`);
+    }
+    if (rows.length + page.length > maximum) {
+      throw new Error(`Cloud backup exceeds the ${maximum.toLocaleString('en-US')}-record safety limit.`);
+    }
+    rows.push(...page);
+    // Exact counts disambiguate a final short page from a deployment whose
+    // server-side row cap is smaller than the requested range. If an older
+    // endpoint omits the count, a short page remains the compatibility stop.
+    if (!page.length || (total !== null ? rows.length >= total : page.length < width)) return rows;
+  }
+}
+
+export async function upsertInBatches(path, rows, {
+  session,
+  headers = {},
+  batchSize = SYNC_WRITE_BATCH_SIZE,
+  requester = request
+} = {}) {
+  for (const batch of chunkRecords(rows, batchSize)) {
+    await requester(path, { method: 'POST', session, headers, body: batch });
+  }
+}
+
+export async function forEachInBatches(values, callback, concurrency = SYNC_DELETE_CONCURRENCY) {
+  for (const batch of chunkRecords(values, concurrency)) await Promise.all(batch.map(callback));
 }
 
 function normalizeSession(payload) {
@@ -113,7 +193,7 @@ export function consumeAuthCallback() {
 }
 
 export async function refreshSession(session = loadSession()) {
-  if (!session?.refresh_token) throw new Error('Your Supabase session has expired. Sign in again.');
+  if (!session?.refresh_token) throw new Error('Your cloud session has expired. Sign in again.');
   return storeSession(await request('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: { refresh_token: session.refresh_token } }));
 }
 
@@ -170,12 +250,28 @@ function normalizeISODateTime(value) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
 }
 
+function canonicalPortfolioSnapshotId(value, date, currency) {
+  const id = String(value || '');
+  const canonical = portfolioSnapshotId(date, currency);
+  if (id === `portfolio:${date}`) return canonical;
+  const qualified = /^portfolio:([A-Z]{3}):(\d{4}-\d{2}-\d{2})$/i.exec(id);
+  return qualified && qualified[1].toUpperCase() === currency && qualified[2] === date
+    ? canonical
+    : '';
+}
+
 export function normalizePortfolioSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   if (typeof snapshot.id !== 'string' || typeof snapshot.date !== 'string') return null;
-  const match = /^portfolio:(\d{4}-\d{2}-\d{2})$/.exec(snapshot.id);
-  if (!match || !isCalendarDate(match[1]) || snapshot.date !== match[1]) return null;
+  if (!isCalendarDate(snapshot.date)) return null;
   if (snapshot.pricingPolicyVersion !== PRICING_POLICY_VERSION) return null;
+  // Pre-currency snapshots contained provider USD amounts even when the UI
+  // relabeled them. Treat that legacy numeric history as USD, never as the
+  // collector's later display preference.
+  const currency = String(snapshot.currency || 'USD').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) return null;
+  const id = canonicalPortfolioSnapshotId(snapshot.id, snapshot.date, currency);
+  if (!id) return null;
   const updatedAt = normalizeISODateTime(snapshot.updatedAt);
   if (!updatedAt) return null;
   if (typeof snapshot.marketValue !== 'number' || !Number.isFinite(snapshot.marketValue) || snapshot.marketValue < 0) return null;
@@ -183,9 +279,10 @@ export function normalizePortfolioSnapshot(snapshot) {
   if (!Number.isInteger(snapshot.uniqueItems) || snapshot.uniqueItems < 0) return null;
   if (!Number.isInteger(snapshot.totalQuantity) || snapshot.totalQuantity < 0) return null;
   return {
-    id: snapshot.id,
+    id,
     date: snapshot.date,
     pricingPolicyVersion: PRICING_POLICY_VERSION,
+    currency,
     marketValue: snapshot.marketValue === 0 ? 0 : snapshot.marketValue,
     costBasis: snapshot.costBasis === 0 ? 0 : snapshot.costBasis,
     uniqueItems: snapshot.uniqueItems === 0 ? 0 : snapshot.uniqueItems,
@@ -198,7 +295,8 @@ export function remotePortfolioSnapshot(row = {}) {
   if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
   const embedded = normalizePortfolioSnapshot(row.data);
   const updatedAt = normalizeISODateTime(row.updated_at);
-  if (!embedded || !updatedAt || row.id !== embedded.id || row.snapshot_date !== embedded.date) return null;
+  const rowId = embedded ? canonicalPortfolioSnapshotId(row.id, embedded.date, embedded.currency) : '';
+  if (!embedded || !updatedAt || rowId !== embedded.id || row.snapshot_date !== embedded.date) return null;
   return { ...embedded, updatedAt };
 }
 
@@ -241,7 +339,7 @@ export async function syncPortfolioSnapshots(session, userId) {
   await recordDailySnapshot();
   const [localSnapshots, remoteRows] = await Promise.all([
     getAll('snapshots'),
-    request('/rest/v1/portfolio_snapshots?select=id,data,snapshot_date,updated_at', { session })
+    requestAllPages('/rest/v1/portfolio_snapshots?select=id,data,snapshot_date,updated_at&order=id.asc', { session })
   ]);
   const remoteSnapshots = Array.isArray(remoteRows)
     ? remoteRows.map(remotePortfolioSnapshot).filter(Boolean)
@@ -249,11 +347,10 @@ export async function syncPortfolioSnapshots(session, userId) {
   const merged = mergePortfolioSnapshots(localSnapshots, remoteSnapshots);
   for (const snapshot of merged) await putRecord('snapshots', snapshot);
   if (merged.length) {
-    await request('/rest/v1/portfolio_snapshots?on_conflict=user_id,id', {
-      method: 'POST',
+    await upsertInBatches('/rest/v1/portfolio_snapshots?on_conflict=user_id,id',
+      merged.map((snapshot) => portfolioSnapshotRow(snapshot, userId)), {
       session,
-      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: merged.map((snapshot) => portfolioSnapshotRow(snapshot, userId))
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
     });
   }
   return merged.length;
@@ -267,6 +364,7 @@ export function remoteWatchlistItem(row) {
     canonicalVariantId: row.catalog_variant_id || catalogRef.canonicalVariantId || '',
     catalogRef,
     targetPrice: row.target_price === null || row.target_price === undefined ? '' : Number(row.target_price),
+    targetCurrency: String(catalogRef.targetCurrency || catalogRef.currency || 'USD').toUpperCase(),
     alertPercentChange: row.alert_percent_change === null || row.alert_percent_change === undefined ? '' : Number(row.alert_percent_change),
     alertTrendChange: Boolean(row.alert_trend_change),
     alertRangeChange: Boolean(row.alert_range_change),
@@ -284,7 +382,7 @@ export function watchlistRow(entry, userId, watchlistId) {
     user_id: userId,
     watch_key: entry.watchKey,
     catalog_variant_id: isUUID(entry.canonicalVariantId) ? entry.canonicalVariantId : null,
-    catalog_snapshot: entry.catalogRef || {},
+    catalog_snapshot: { ...(entry.catalogRef || {}), targetCurrency: entry.targetCurrency || entry.catalogRef?.currency || 'USD' },
     target_price: entry.targetPrice === '' || entry.targetPrice === null || entry.targetPrice === undefined ? null : Number(entry.targetPrice),
     alert_percent_change: entry.alertPercentChange === '' || entry.alertPercentChange === null || entry.alertPercentChange === undefined ? null : Number(entry.alertPercentChange),
     alert_trend_change: Boolean(entry.alertTrendChange),
@@ -298,7 +396,7 @@ export function watchlistRow(entry, userId, watchlistId) {
 
 function jwtSubject(token) {
   const segment = token?.split('.')[1];
-  if (!segment) throw new Error('Supabase session token is invalid. Sign in again.');
+  if (!segment) throw new Error('Your cloud session is invalid. Sign in again.');
   const normalized = segment.replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
   return JSON.parse(atob(padded)).sub;
@@ -309,27 +407,36 @@ export async function syncPortfolio() {
   const userId = session.user?.id || jwtSubject(session.access_token);
   const [localHoldings, localTombstones, remoteHoldingRows, remoteTombstoneRows] = await Promise.all([
     getAll('holdings'), getAll('deletions'),
-    request('/rest/v1/holdings?select=id,data,user_image,updated_at', { session }),
-    request('/rest/v1/holding_deletions?select=holding_id,deleted_at', { session })
+    requestAllPages('/rest/v1/holdings?select=id,data,user_image,updated_at&order=id.asc', { session }),
+    requestAllPages('/rest/v1/holding_deletions?select=holding_id,deleted_at&order=holding_id.asc', { session })
   ]);
   const remoteHoldings = (remoteHoldingRows || []).map(remoteHolding);
   const remoteTombstones = (remoteTombstoneRows || []).map((row) => ({ id: row.holding_id, deletedAt: row.deleted_at, dirty: false }));
   const tombstones = mergeTombstones(localTombstones, remoteTombstones);
 
   if (tombstones.length) {
-    await request('/rest/v1/holding_deletions?on_conflict=user_id,holding_id', { method: 'POST', session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: tombstones.map((entry) => ({ user_id: userId, holding_id: entry.id, deleted_at: entry.deletedAt })) });
+    await upsertInBatches('/rest/v1/holding_deletions?on_conflict=user_id,holding_id',
+      tombstones.map((entry) => ({ user_id: userId, holding_id: entry.id, deleted_at: entry.deletedAt })), {
+        session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
+      });
   }
 
   const deletedIds = new Set(tombstones.map((entry) => entry.id));
-  for (const id of deletedIds) {
-    await deleteRecord('holdings', id);
-    await request(`/rest/v1/holdings?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', session, headers: { Prefer: 'return=minimal' } });
-  }
+  for (const id of deletedIds) await deleteRecord('holdings', id);
+  await forEachInBatches([...deletedIds], (id) =>
+    request(`/rest/v1/holdings?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE', session, headers: { Prefer: 'return=minimal' }
+    }));
 
   const merged = mergeHoldings(localHoldings, remoteHoldings, deletedIds);
   for (const holding of merged) await putRecord('holdings', { ...holding, dirty: false });
+  // Cloud holding rows do not carry the device-owned local scenario ledger.
+  // Capture their reconciled current values locally after LWW resolution.
+  await recordLocalHoldingObservations(merged);
   if (merged.length) {
-    await request('/rest/v1/holdings?on_conflict=id', { method: 'POST', session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: merged.map((holding) => holdingRow(holding, userId)) });
+    await upsertInBatches('/rest/v1/holdings?on_conflict=id', merged.map((holding) => holdingRow(holding, userId)), {
+      session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
+    });
   }
   for (const tombstone of tombstones) await putRecord('deletions', { ...tombstone, dirty: false });
   const snapshots = await syncPortfolioSnapshots(session, userId);
@@ -348,8 +455,8 @@ export async function syncWatchlist() {
   const [localItems, localTombstones, remoteRows, remoteDeletionRows] = await Promise.all([
     getAll('watchlistItems'),
     getAll('watchlistDeletions'),
-    request(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at`, { session }),
-    request(`/rest/v1/watchlist_deletions?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,deleted_at`, { session })
+    requestAllPages(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc`, { session }),
+    requestAllPages(`/rest/v1/watchlist_deletions?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,deleted_at&order=watch_key.asc`, { session })
   ]);
 
   const remoteItems = (remoteRows || []).map(remoteWatchlistItem);
@@ -359,34 +466,33 @@ export async function syncWatchlist() {
   const tombstones = mergeWatchlistTombstones(localTombstones, remoteTombstones);
 
   if (tombstones.length) {
-    await request('/rest/v1/watchlist_deletions?on_conflict=watchlist_id,watch_key', {
-      method: 'POST', session,
-      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: tombstones.map((entry) => ({
+    await upsertInBatches('/rest/v1/watchlist_deletions?on_conflict=watchlist_id,watch_key',
+      tombstones.map((entry) => ({
         watchlist_id: watchlistId,
         user_id: userId,
         watch_key: entry.id,
         deleted_at: entry.deletedAt,
         updated_at: entry.deletedAt
-      }))
+      })), {
+      session,
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     });
   }
 
   const deletedKeys = new Set(tombstones.map((entry) => entry.id));
-  for (const watchKey of deletedKeys) {
-    await deleteRecord('watchlistItems', watchKey);
-    await request(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&watch_key=eq.${encodeURIComponent(watchKey)}`, {
+  for (const watchKey of deletedKeys) await deleteRecord('watchlistItems', watchKey);
+  await forEachInBatches([...deletedKeys], (watchKey) =>
+    request(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&watch_key=eq.${encodeURIComponent(watchKey)}`, {
       method: 'DELETE', session, headers: { Prefer: 'return=minimal' }
-    });
-  }
+    }));
 
   const merged = mergeWatchlistItems(localItems, remoteItems, deletedKeys);
   for (const entry of merged) await putRecord('watchlistItems', { ...entry, dirty: false });
   if (merged.length) {
-    await request('/rest/v1/watchlist_items?on_conflict=watchlist_id,watch_key', {
-      method: 'POST', session,
+    await upsertInBatches('/rest/v1/watchlist_items?on_conflict=watchlist_id,watch_key',
+      merged.map((entry) => watchlistRow(entry, userId, watchlistId)), {
+      session,
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: merged.map((entry) => watchlistRow(entry, userId, watchlistId))
     });
   }
   for (const tombstone of tombstones) await putRecord('watchlistDeletions', { ...tombstone, dirty: false });
@@ -428,4 +534,13 @@ export async function syncAll() {
   } catch (error) {
     return { ...portfolio, watchlist: null, watchlistError: error.message || 'Watchlist sync is not available.' };
   }
+}
+
+export async function removeCloudData() {
+  const session = await validSession();
+  return request('/rest/v1/rpc/remove_my_cloud_data', {
+    method: 'POST',
+    session,
+    body: {}
+  });
 }

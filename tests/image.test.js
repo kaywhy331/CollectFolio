@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { connectedComponents, detectBoundaries, differenceHash, gridBoxes, hashSimilarity, mergeBoxes } from '../app/assets/js/services/image-algorithms.js';
-import { extractOCRQuery, withTimeout } from '../app/assets/js/services/image.js';
+import {
+  analyzeOCRText,
+  buildOCRQueryVariants,
+  candidateEvidenceScore,
+  extractCollectorNumber,
+  extractOCRQuery,
+  fileToImageDataURL,
+  MAX_IMAGE_FILE_BYTES,
+  queryEvidenceFromText,
+  validateImageFile,
+  withTimeout
+} from '../app/assets/js/services/image.js';
 
 test('four-neighbor components keep diagonally separated shapes distinct', () => {
   const mask = new Uint8Array([
@@ -55,10 +66,47 @@ test('64-bit dHash and Hamming similarity are deterministic', () => {
 
 test('OCR query extraction favors distinctive words and number tokens', () => {
   const query = extractOCRQuery('POKEMON\nCharizard VMAX\nBrilliant Stars\nTG20/TG30\nCopyright 2026');
-  assert.match(query, /Charizard/);
-  assert.match(query, /Brilliant/);
-  assert.match(query, /TG20\/TG30/);
-  assert.doesNotMatch(query, /Copyright/i);
+  assert.equal(query, 'Charizard VMAX TG20/TG30');
+});
+
+test('OCR analysis rejects symbol soup and boilerplate instead of surfacing random queries', () => {
+  for (const text of ['||| 1lI rrrr ???', 'Copyright 2026 Pokémon Illustration']) {
+    const result = analyzeOCRText(text);
+    assert.equal(result.accepted, false);
+    assert.equal(result.query, '');
+    assert.deepEqual(result.queries, []);
+  }
+  assert.equal(analyzeOCRText('Charizard ex\n223/197', { confidence: 20 }).accepted, false);
+});
+
+test('OCR analysis preserves names, punctuation, and collector-number search order', () => {
+  const fixtures = [
+    ['Charizard ex\n223/197', ['Charizard ex 223/197', 'Charizard ex', 'Charizard']],
+    ['Blue-Eyes White Dragon\nLOB-001', ['Blue-Eyes White Dragon LOB-001', 'Blue-Eyes White Dragon']],
+    ['Fable of the Mirror-Breaker\n141', ['Fable of the Mirror-Breaker 141', 'Fable of the Mirror-Breaker']]
+  ];
+  for (const [text, queries] of fixtures) {
+    const result = analyzeOCRText(text, { confidence: 82 });
+    assert.equal(result.accepted, true);
+    assert.deepEqual(result.queries, queries);
+  }
+  assert.equal(extractCollectorNumber('Mewtwo GX 78/73'), '78/73');
+  assert.equal(extractCollectorNumber("Fable of the Mirror-Breaker 141"), '141');
+  assert.equal(extractCollectorNumber('Charizard ex\n330 HP\n223/197'), '223/197');
+  assert.deepEqual(buildOCRQueryVariants({ title: "Farmer's Charm", number: 'RA01-EN001' }), ["Farmer's Charm RA01-EN001", "Farmer's Charm"]);
+});
+
+test('typed-query evidence and candidate ranking reward an agreeing collector number', () => {
+  const evidence = queryEvidenceFromText('Charizard ex 223/197');
+  assert.equal(evidence.title, 'Charizard ex');
+  assert.equal(evidence.number, '223/197');
+  const exact = candidateEvidenceScore({ name: 'Charizard ex', number: '223' }, evidence);
+  const wrongPrinting = candidateEvidenceScore({ name: 'Charizard ex', number: '125' }, evidence);
+  const wrongName = candidateEvidenceScore({ name: 'Charmander', number: '223' }, evidence);
+  assert.ok(exact > 0.9);
+  assert.ok(exact > wrongPrinting);
+  assert.ok(exact > wrongName);
+  for (const score of [exact, wrongPrinting, wrongName]) assert.ok(Number.isFinite(score) && score >= 0 && score <= 1);
 });
 
 test('OCR deadlines resolve completed work and reject stalled work', async () => {
@@ -67,4 +115,13 @@ test('OCR deadlines resolve completed work and reject stalled work', async () =>
     withTimeout(new Promise(() => {}), 5, 'OCR deadline reached.'),
     (error) => error.name === 'TimeoutError' && error.message === 'OCR deadline reached.'
   );
+});
+
+test('image files are bounded before FileReader allocates their payload', () => {
+  const valid = { size: MAX_IMAGE_FILE_BYTES };
+  assert.equal(validateImageFile(valid), valid);
+  assert.throws(() => validateImageFile({ size: 0 }), /empty/i);
+  assert.throws(() => validateImageFile({ size: MAX_IMAGE_FILE_BYTES + 1 }), /25 MB or smaller/i);
+  assert.throws(() => validateImageFile({}), /valid image file/i);
+  assert.throws(() => fileToImageDataURL({ size: MAX_IMAGE_FILE_BYTES + 1 }), /25 MB or smaller/i);
 });

@@ -22,6 +22,7 @@ export function intelligenceAlertBaseline(publication, capturedAt = new Date().t
   const value = normalizeIntelligencePayload(publication);
   const fingerprint = [
     value.variantId, value.supportTier, value.observed?.price ?? '',
+    value.observed?.currency || '',
     value.trend.status, value.fairValue?.position || '', forecastSignature(value.forecasts),
     publication?.publishedAt || '', publication?.expiresAt || ''
   ].join('|');
@@ -67,17 +68,21 @@ export function evaluateWatchlistItemAlerts(entry, publication, now = new Date()
   const alerts = [];
   const currentPrice = value.observed?.price ?? null;
   const previousPrice = finite(previous?.observedPrice);
+  const previousCurrency = String(previous?.currency || '').toUpperCase();
+  const previousPriceComparable = previousPrice !== null && previousCurrency === baseline.currency;
   const targetPrice = finite(entry.targetPrice);
-  if (currentPrice !== null && targetPrice !== null && currentPrice <= targetPrice && (previousPrice === null || previousPrice > targetPrice)) {
+  const targetCurrency = String(entry.targetCurrency || entry.catalogRef?.currency || 'USD').toUpperCase();
+  const targetComparable = targetCurrency === baseline.currency;
+  if (targetComparable && currentPrice !== null && targetPrice !== null && currentPrice <= targetPrice && (!previousPriceComparable || previousPrice > targetPrice)) {
     alerts.push(event(
       entry, value, baseline, 'target_price',
       `${entry.catalogRef?.name || 'Watched card'} reached the target price.`,
-      { currentPrice, targetPrice, currency: baseline.currency }, now
+      { currentPrice, targetPrice, currency: baseline.currency, targetCurrency }, now
     ));
   }
 
   const percentThreshold = finite(entry.alertPercentChange);
-  if (currentPrice !== null && previousPrice !== null && previousPrice > 0 && percentThreshold !== null && percentThreshold > 0) {
+  if (currentPrice !== null && previousPriceComparable && previousPrice > 0 && percentThreshold !== null && percentThreshold > 0) {
     const percentChange = (currentPrice / previousPrice - 1) * 100;
     if (Math.abs(percentChange) >= percentThreshold) {
       alerts.push(event(

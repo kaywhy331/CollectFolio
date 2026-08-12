@@ -173,7 +173,9 @@ price, a currency, or a card name:
 `provider_error`, `unauthorized`, `not_configured`, or `method_not_allowed`.
 The Profile screen's "Prioritize my cards" button shows this as a plain-text
 status line, never a new price — clicking it does not change anything a
-collector sees elsewhere in the app.
+collector sees elsewhere in the app. The browser aborts the request if the
+connection or response body does not finish within 20 seconds and restores the
+button for a safe retry.
 
 Accepted, documented residual: an `alreadyFresh` count lets a user infer that
 *someone* recently refreshed a card they also hold. No price or specific

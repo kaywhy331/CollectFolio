@@ -1,16 +1,79 @@
-import { getRecord, putRecord } from '../core/db.js';
+import { deleteRecords, getAll, getRecord, putRecord } from '../core/db.js';
 import { normalizeQuery, textSimilarity } from '../core/utils.js';
-import { getPokemonCard, searchPokemon } from './providers/pokemon.js';
+import { clearPokemonSetCache, getPokemonCard, searchPokemon } from './providers/pokemon.js';
 import { getScryfallCard, searchScryfall } from './providers/scryfall.js';
 import { getYGOCard, searchYGOPRODeck } from './providers/ygoprodeck.js';
 
 const CACHE_MS = 30 * 60 * 1000;
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
+export const CATALOG_CACHE_MAX_ENTRIES = 250;
+let initialCacheMaintenance;
 const providers = {
   pokemon: { category: 'pokemon', label: 'Pokémon TCG API', search: searchPokemon, detail: getPokemonCard },
   scryfall: { category: 'magic', label: 'Scryfall', search: searchScryfall, detail: getScryfallCard },
   ygoprodeck: { category: 'yugioh', label: 'YGOPRODeck', search: searchYGOPRODeck, detail: getYGOCard }
 };
+
+export function clearCatalogProviderCaches() {
+  clearPokemonSetCache();
+}
+
+export function catalogCacheKeysToPrune(records = [], now = Date.now(), maximumEntries = CATALOG_CACHE_MAX_ENTRIES) {
+  const maximum = Math.max(0, Math.trunc(Number(maximumEntries) || 0));
+  const expired = [];
+  const active = [];
+  for (const record of Array.isArray(records) ? records : []) {
+    if (!record?.key) continue;
+    if (!Number.isFinite(Number(record.expiresAt)) || Number(record.expiresAt) <= now) expired.push(record.key);
+    else active.push(record);
+  }
+  active.sort((left, right) => Number(right.expiresAt) - Number(left.expiresAt)
+    || String(left.key).localeCompare(String(right.key)));
+  return [...new Set([...expired, ...active.slice(maximum).map((record) => record.key)])];
+}
+
+export async function pruneCatalogCache(now = Date.now(), maximumEntries = CATALOG_CACHE_MAX_ENTRIES) {
+  const records = await getAll('catalogCache');
+  const keys = catalogCacheKeysToPrune(records, now, maximumEntries);
+  await deleteRecords('catalogCache', keys);
+  return keys.length;
+}
+
+async function maintainCatalogCache({ afterWrite = false } = {}) {
+  if (afterWrite) return pruneCatalogCache().catch(() => 0);
+  initialCacheMaintenance ||= pruneCatalogCache().catch(() => 0);
+  return initialCacheMaintenance;
+}
+
+async function cacheCatalogRecord(record) {
+  await putRecord('catalogCache', record);
+  await maintainCatalogCache({ afterWrite: true });
+}
+
+export function catalogRouteId(item = {}) {
+  const provider = String(item.provider || '').trim().toLowerCase();
+  const externalId = String(item.externalId || '').trim();
+  return providers[provider] && externalId ? `${provider}:${externalId}` : '';
+}
+
+export async function getCatalogRouteItem(routeId, { bypassCache = false } = {}) {
+  await maintainCatalogCache();
+  const value = String(routeId || '').trim();
+  const separator = value.indexOf(':');
+  const provider = separator > 0 ? value.slice(0, separator).toLowerCase() : '';
+  const externalId = separator > 0 ? value.slice(separator + 1) : '';
+  const config = providers[provider];
+  if (!config || !externalId) throw new Error('This card link does not contain a supported provider identity.');
+  const key = `catalog:${CACHE_VERSION}:detail:${provider}:${externalId}`;
+  if (!bypassCache) {
+    const cached = await getRecord('catalogCache', key).catch(() => null);
+    if (cached?.expiresAt > Date.now() && cached.value) return cached.value;
+  }
+  const item = await config.detail(externalId);
+  if (!item) throw new Error('The linked card could not be found at its catalog provider.');
+  await cacheCatalogRecord({ key, expiresAt: Date.now() + CACHE_MS, value: item }).catch(() => {});
+  return item;
+}
 
 export function prepareCatalogQuery(query = '') {
   const raw = String(query).trim();
@@ -30,14 +93,16 @@ export function rankCatalogItems(items, query) {
 export function collectSettledProviders(settled, selected) {
   const results = [];
   const warnings = [];
+  let fulfilledProviders = 0;
   settled.forEach((result, index) => {
-    if (result.status === 'fulfilled') results.push(...result.value);
+    if (result.status === 'fulfilled') { fulfilledProviders++; results.push(...result.value); }
     else warnings.push(`${selected[index][1].label} was unavailable: ${result.reason?.message || 'request failed'}`);
   });
-  return { results, warnings };
+  return { results, warnings, fulfilledProviders, failedProviders: selected.length - fulfilledProviders };
 }
 
 export async function searchCatalog({ query, category = 'all', provider = 'all', bypassCache = false } = {}) {
+  await maintainCatalogCache();
   const { raw, normalized } = prepareCatalogQuery(query);
   if (!normalized) throw new Error('Enter a name, set, number, character, or player.');
   if (['sports', 'comics', 'slab', 'other'].includes(category)) return { results: [], warnings: [], manual: true, cached: false };
@@ -52,9 +117,11 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
   // Provider syntax can depend on punctuation (for example, "Blue-Eyes").
   // Keep the normalized form for cache/ranking, but search with the user's text.
   const settled = await Promise.allSettled(selected.map(([, config]) => config.search(raw)));
-  const { results, warnings } = collectSettledProviders(settled, selected);
-  const value = { results: rankCatalogItems(results, normalized), warnings, manual: false };
-  await putRecord('catalogCache', { key, expiresAt: Date.now() + CACHE_MS, value }).catch(() => {});
+  const { results, warnings, fulfilledProviders, failedProviders } = collectSettledProviders(settled, selected);
+  const value = { results: rankCatalogItems(results, normalized), warnings, manual: false, fulfilledProviders, failedProviders };
+  // A total upstream outage must stay retryable; caching it would turn a brief
+  // provider failure into a false no-match for the full cache window.
+  if (fulfilledProviders > 0 && failedProviders === 0) await cacheCatalogRecord({ key, expiresAt: Date.now() + CACHE_MS, value }).catch(() => {});
   return { ...value, cached: false };
 }
 

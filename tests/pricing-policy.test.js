@@ -51,3 +51,20 @@ test('only rights-aware portfolio snapshots remain eligible for trend display', 
   assert.deepEqual(currentPricingSnapshots([legacy, current]), [current]);
   assert.deepEqual(currentPricingSnapshots(null), []);
 });
+
+test('trend snapshots keep currencies separate and deduplicate legacy daily identities', () => {
+  const legacyUsd = {
+    id: 'portfolio:2026-08-11', date: '2026-08-11', currency: 'USD', marketValue: 10,
+    pricingPolicyVersion: PRICING_POLICY_VERSION, updatedAt: '2026-08-11T10:00:00.000Z'
+  };
+  const currentUsd = {
+    ...legacyUsd, id: 'portfolio:USD:2026-08-11', marketValue: 12,
+    updatedAt: '2026-08-11T11:00:00.000Z'
+  };
+  const currentCad = {
+    ...legacyUsd, id: 'portfolio:CAD:2026-08-11', currency: 'CAD', marketValue: 14,
+    updatedAt: '2026-08-11T12:00:00.000Z'
+  };
+  assert.deepEqual(currentPricingSnapshots([legacyUsd, currentUsd, currentCad], 'USD'), [currentUsd]);
+  assert.deepEqual(currentPricingSnapshots([legacyUsd, currentUsd, currentCad], 'CAD'), [currentCad]);
+});

@@ -9,15 +9,16 @@ const errors = [];
 const placeholderPattern = new RegExp(`\\b(?:${['TO' + 'DO', 'FIX' + 'ME', 'CHANGE' + 'ME', 'YOUR_' + '[A-Z_]+' ].join('|')})\\b`);
 const required = [
   'package.json', 'package-lock.json', 'playwright.config.js', 'netlify.toml', 'README.md',
-  'app/index.html', 'app/manifest.webmanifest', 'app/sw.js',
+  'app/index.html', 'app/manifest.webmanifest', 'app/runtime-config.js', 'app/sw.js',
   'app/assets/css/app.css', 'app/assets/js/app.js', 'app/assets/js/core/db.js', 'app/assets/js/core/calculations.js',
-  'app/assets/js/core/router.js', 'app/assets/js/core/view-models.js',
+  'app/assets/js/core/router.js', 'app/assets/js/core/view-models.js', 'app/assets/js/core/settings.js',
   'app/assets/js/services/catalog.js', 'app/assets/js/services/image-algorithms.js', 'app/assets/js/services/image.js',
   'app/assets/js/services/scan-workbench.js', 'app/assets/js/services/scan-review.js', 'app/assets/js/services/supabase.js',
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
   'app/assets/js/services/justtcg-refresh.js',
   'app/assets/js/core/catalog-identity.js', 'app/assets/js/core/intelligence-contract.js',
-  'app/assets/js/core/intelligence-alerts.js',
+  'app/assets/js/core/intelligence-alerts.js', 'app/assets/js/core/insights.js', 'app/assets/js/core/local-scenarios.js',
+  'app/assets/js/views/insights.js', 'app/assets/js/views/onboarding.js', 'app/assets/js/views/profile.js',
   'analytics/pyproject.toml', 'analytics/README.md',
   'analytics/src/collectfolio_analytics/observations.py', 'analytics/src/collectfolio_analytics/trends.py',
   'analytics/src/collectfolio_analytics/catalog_mapping.py',
@@ -67,8 +68,11 @@ const required = [
   'supabase/migrations/0006_price_intelligence_governance_hardening.sql',
   'supabase/migrations/0009_pull_rate_registry.sql',
   'supabase/migrations/0014_pull_rate_unavailability_registry.sql',
+  'supabase/migrations/0015_remove_my_cloud_data.sql',
   'PRD/redesign.md', 'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
-  'docs/REDESIGN_COMPATIBILITY.md', 'docs/REDESIGN_FOUNDATION.md',
+  'docs/REDESIGN_COMPATIBILITY.md', 'docs/REDESIGN_FOUNDATION.md', 'docs/REDESIGN_CORE_VERTICAL_SLICE.md',
+  'docs/REDESIGN_INTAKE_COLLECTION_MANAGEMENT.md', 'docs/REDESIGN_FORECASTING_INSIGHTS.md',
+  'docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md', 'docs/REDESIGN_FINAL_ACCEPTANCE.md',
   'docs/PRICE_INTELLIGENCE_FOUNDATION.md', 'docs/PRICE_INTELLIGENCE_RUNBOOK.md',
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
   'docs/PULL_RATE_REGISTRY.md',
@@ -78,12 +82,17 @@ const required = [
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
   'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md',
   'tests/redesign-protection.test.js',
-  'tests/router.test.js', 'tests/view-models.test.js',
+  'tests/local-scenarios.test.js',
+  'tests/router.test.js', 'tests/view-models.test.js', 'tests/overview.test.js',
+  'tests/discover.test.js', 'tests/portfolio-redesign.test.js',
+  'tests/intake-management.test.js', 'tests/watchlist-management.test.js', 'tests/insights.test.js',
+  'tests/settings.test.js', 'tests/phase5-migration.test.js', 'tests/phase5-ui.test.js',
   'tests/fixtures/redesign/indexeddb-v4-backup-v2.json',
   'tests/fixtures/redesign/cloud-sync.json',
   'tests/fixtures/redesign/legacy-routes.json',
-  'tests/e2e/protection-baseline.spec.js',
-  'tests/e2e/protection-baseline.spec.js-snapshots/legacy-overview-empty-chromium-linux.png'
+  'tests/e2e/protection-baseline.spec.js', 'tests/e2e/phase5.spec.js', 'tests/e2e/service-worker.spec.js',
+  'tests/e2e/protection-baseline.spec.js-snapshots/legacy-overview-empty-chromium-linux.png',
+  'tests/e2e/protection-baseline.spec.js-snapshots/core-slice-overview-empty-chromium-linux.png'
 ];
 
 async function filesUnder(directory) {
@@ -102,9 +111,13 @@ async function exists(path) {
 for (const name of required) if (!await exists(resolve(root, name))) errors.push(`Missing required file: ${name}`);
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
+if (packageJSON.version !== '0.8.1' || packageLock.version !== '0.8.1' || packageLock.packages?.['']?.version !== '0.8.1') {
+  errors.push('Application and lockfile versions must agree on 0.8.1.');
+}
 const dependencies = packageJSON.dependencies || {};
-if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '10.7.12') {
-  errors.push('The only runtime package must be the pinned @netlify/blobs 10.7.12 server dependency.');
+if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
+  errors.push('The only runtime package must be the audit-safe pinned @netlify/blobs 9.1.5 server dependency.');
 }
 const approvedDevDependencies = {
   '@axe-core/playwright': '4.12.1',
@@ -247,12 +260,36 @@ for (const unsupported of ['notifications', 'switch-portfolio']) if (index.inclu
 
 const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
+const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
+const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.1-dev'")) errors.push('Local runtime config must identify the 0.8.1 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.1'")) errors.push('Production builds must default APP_VERSION to 0.8.1.');
+
+const ordinaryUiFiles = [
+  resolve(app, 'index.html'), resolve(app, 'assets/js/app.js'),
+  resolve(app, 'assets/js/core/components.js'), resolve(app, 'assets/js/core/view-models.js'),
+  resolve(app, 'assets/js/core/settings.js'),
+  ...(await filesUnder(resolve(app, 'assets/js/views'))).filter((path) => extname(path) === '.js')
+];
+const forbiddenUiTerms = [
+  ['Supabase', /\bsupabase\b/i], ['public key', /\bpublic\s+key\b/i],
+  ['Tier 0', /\btier\s*0\b/i], ['canonical', /\bcanonical\b/i],
+  ['provider price', /\bprovider\s+price\b/i], ['Demand analytics', /\bdemand\s+analytics\b/i],
+  ['Local mode', /\blocal\s+mode\b/i]
+];
+for (const file of ordinaryUiFiles) {
+  const source = (await readFile(file, 'utf8'))
+    .replace(/(?:from\s+|import\s*\()\s*(['"])[^'"]+\1/g, '');
+  for (const [term, pattern] of forbiddenUiTerms) {
+    if (pattern.test(source)) errors.push(`Ordinary UI source contains backend terminology ${term}: ${relative(root, file)}`);
+  }
+}
 
 const stylesheet = await readFile(resolve(app, 'assets/css/app.css'), 'utf8');
 const semanticTokens = [
   'canvas', 'workspace', 'surface', 'interactive', 'selected', 'border', 'border-strong',
   'text-primary', 'text-secondary', 'text-muted', 'action', 'action-hover', 'action-ink',
-  'positive', 'negative', 'forecast', 'warning', 'error', 'focus'
+  'positive', 'negative', 'forecast', 'warning', 'warning-ink', 'error', 'focus'
 ];
 for (const token of semanticTokens) if (!stylesheet.includes(`--color-${token}:`)) errors.push(`Design system is missing semantic token --color-${token}.`);
 for (const token of ['space-1', 'space-2', 'space-3', 'space-4', 'space-6', 'space-8', 'space-12', 'radius-control', 'radius-panel', 'radius-dialog']) {
@@ -262,14 +299,77 @@ const tokenValue = (token) => stylesheet.match(new RegExp(`--color-${token}:\\s*
 if (tokenValue('action') === tokenValue('positive')) errors.push('Primary action and positive movement must use distinct token values.');
 if (!stylesheet.includes('.positive { color: var(--positive); }')) errors.push('Positive movement must consume the positive semantic token.');
 if (!stylesheet.includes('.negative { color: var(--color-negative); }')) errors.push('Negative movement must consume the negative semantic token.');
+if ((stylesheet.match(/--color-warning-ink:\s*[^;]+;/g) || []).length < 3) errors.push('Warning ink must be defined for dark, light, and system-light themes.');
+if (!stylesheet.includes('--warning-ink: var(--color-warning-ink);')) errors.push('Warning ink must expose the shared semantic alias.');
+const warningStatusRule = stylesheet.match(/\.account-status-card\[data-account-status="pending"\]\s+\.account-status-icon,\s*\.account-status-card\[data-account-status="syncing"\]\s+\.account-status-icon\s*\{([^}]*)\}/)?.[1];
+if (!warningStatusRule?.includes('color: var(--warning-ink);')) errors.push('Pending and syncing account status must consume the warning-ink semantic token.');
+for (const match of stylesheet.matchAll(/\.account-status-card\[data-account-status="([^"]+)"\][^{]*\{([^}]*)\}/g)) {
+  if (/#[0-9a-f]{3,8}\b/i.test(match[2])) errors.push(`Account status ${match[1]} must not use a hard-coded color.`);
+}
 
 const foundationDoc = await readFile(resolve(root, 'docs/REDESIGN_FOUNDATION.md'), 'utf8');
 for (const contract of ['Supported route map', 'Normalized view-model contracts', 'Semantic token reference', 'Component inventory', 'Deferred capabilities']) {
   if (!foundationDoc.includes(contract)) errors.push(`Redesign foundation documentation is missing ${contract}.`);
 }
+const verticalSliceDoc = await readFile(resolve(root, 'docs/REDESIGN_CORE_VERTICAL_SLICE.md'), 'utf8');
+for (const contract of ['Completed slice', 'Overview contract', 'Discover and inspector contract', 'Portfolio and detail contract', 'Compatibility and safety', 'Deferred capabilities']) {
+  if (!verticalSliceDoc.includes(contract)) errors.push(`Core vertical-slice documentation is missing ${contract}.`);
+}
+const intakeManagementDoc = await readFile(resolve(root, 'docs/REDESIGN_INTAKE_COLLECTION_MANAGEMENT.md'), 'utf8');
+for (const contract of ['Completed tranche', 'Unified intake and review contract', 'Acquisition and submission contract', 'Watchlist contract', 'Collection management and portability', 'Compatibility and safety', 'Deferred capabilities']) {
+  if (!intakeManagementDoc.includes(contract)) errors.push(`Intake and collection-management documentation is missing ${contract}.`);
+}
+const forecastingInsightsDoc = await readFile(resolve(root, 'docs/REDESIGN_FORECASTING_INSIGHTS.md'), 'utf8');
+for (const contract of ['Completed tranche', 'Performance contract', 'Forecast summary and availability contract', 'Forecast Ribbon and explanation contract', 'Immutable history and Track Record contract', 'Alerts contract', 'Compatibility and safety', 'Deferred capabilities']) {
+  if (!forecastingInsightsDoc.includes(contract)) errors.push(`Forecasting and Insights documentation is missing ${contract}.`);
+}
+const accountSyncReleaseDoc = await readFile(resolve(root, 'docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md'), 'utf8');
+for (const contract of ['Completed tranche', 'Settings and synchronization contract', 'Onboarding contract', 'Data portability and deletion contract', 'Migration and compatibility', 'Performance, motion, and accessibility acceptance', 'Release procedure', 'Rollback plan', 'Qualification receipt', 'Deferred hosted work']) {
+  if (!accountSyncReleaseDoc.includes(contract)) errors.push(`Account, sync, and release documentation is missing ${contract}.`);
+}
+const finalAcceptanceDoc = await readFile(resolve(root, 'docs/REDESIGN_FINAL_ACCEPTANCE.md'), 'utf8');
+for (const contract of ['Repository-qualified candidate', 'Global Definition of Done evidence', 'Open product decision dispositions', 'Final release acceptance matrix', 'Production promotion blockers', 'Qualification receipt']) {
+  if (!finalAcceptanceDoc.includes(contract)) errors.push(`Final acceptance documentation is missing ${contract}.`);
+}
+for (const decision of ['Watchlist stays inside Portfolio', 'Add remains hybrid', 'Single portfolio only', 'Tier 4+', 'Tier 5 scorecard', 'Fair value remains optional', 'Sold remains deferred', 'Custom items cannot receive manual forecasts', 'Card Aura remains deferred']) {
+  if (!finalAcceptanceDoc.includes(decision)) errors.push(`Final acceptance documentation is missing product disposition ${decision}.`);
+}
+for (const disposition of [
+  "release owner's authorization to promote the safe",
+  'immutable candidate `6a7bf73c1c0748c0e87115bf`',
+  '`ENABLE_CLOUD_DATA_REMOVAL=false`',
+  'Migration 0015 remains unapplied'
+]) {
+  if (!finalAcceptanceDoc.includes(disposition)) errors.push(`Final acceptance documentation is missing release disposition ${disposition}.`);
+}
+const implementationPlan = await readFile(resolve(root, 'docs/IMPLEMENTATION_PLAN.md'), 'utf8');
+for (const contract of ['Redesign account, sync, polish, and release qualification', '126 required files', '206 Node tests', '194 Python analytics tests', '13 Chromium tests', 'Service-worker shell v0.7.0']) {
+  if (!implementationPlan.includes(contract)) errors.push(`Phase 5 qualification receipt is missing ${contract}.`);
+}
+for (const contract of ['Redesign final acceptance disposition', '127 required files', 'Repository-qualified candidate', 'docs/REDESIGN_FINAL_ACCEPTANCE.md']) {
+  if (!implementationPlan.includes(contract)) errors.push(`Final acceptance implementation-plan receipt is missing ${contract}.`);
+}
+const readme = await readFile(resolve(root, 'README.md'), 'utf8');
+if (!readme.includes('[docs/REDESIGN_FINAL_ACCEPTANCE.md](docs/REDESIGN_FINAL_ACCEPTANCE.md)')) errors.push('README must link the final acceptance receipt.');
+
+const settingsModule = await readFile(resolve(app, 'assets/js/core/settings.js'), 'utf8');
+for (const contract of ['SETTINGS_SCHEMA_VERSION = 1', 'migrateSettingsRecords', 'pendingSyncChanges', 'appendSyncHistory', 'syncDiagnosticReference', 'friendlyCloudError', 'formatStorageBytes']) {
+  if (!settingsModule.includes(contract)) errors.push(`Phase 5 settings module is missing ${contract}.`);
+}
+if (!application.includes("await persistSettings({ currency, onboardingStep: 'add' }")) errors.push('Onboarding currency submission must await durable settings persistence.');
+if (!runtimeConfig.includes('ENABLE_WATCHLISTS: true') || !runtimeConfig.includes('ENABLE_PRICE_INTELLIGENCE: false') || !runtimeConfig.includes('ENABLE_CLOUD_DATA_REMOVAL: false')) {
+  errors.push('Runtime defaults must keep Watchlist independent and unqualified hosted capabilities fail-closed.');
+}
+if (!buildScript.includes("ENABLE_WATCHLISTS ?? 'true'") || !buildScript.includes("ENABLE_PRICE_INTELLIGENCE ?? 'false'") || !buildScript.includes("ENABLE_CLOUD_DATA_REMOVAL ?? 'false'")) {
+  errors.push('Build-time feature defaults must keep Watchlist independent and unqualified hosted capabilities fail-closed.');
+}
+const database = await readFile(resolve(app, 'assets/js/core/db.js'), 'utf8');
+for (const contract of ['export function validateBackup', 'const plan = validateBackup(backup)', "db.transaction(plan.map(([name]) => name), 'readwrite')"]) {
+  if (!database.includes(contract)) errors.push(`Portable-backup import is missing atomic preflight contract ${contract}.`);
+}
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.3.0'")) errors.push('Service worker cache name must be collectfolio-shell-v0.3.0.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.1'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.1.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
@@ -460,6 +560,22 @@ for (const contract of [
 ]) {
   if (!pullRateMissingMigration.includes(contract)) errors.push(`Pull-rate missing-data migration lacks contract ${contract}.`);
 }
+
+const cloudRemovalMigration = await readFile(resolve(root, 'supabase/migrations/0015_remove_my_cloud_data.sql'), 'utf8');
+for (const contract of [
+  'Intentionally checked in but not applied',
+  'create or replace function public.remove_my_cloud_data()',
+  'security definer', 'current_user_id uuid := auth.uid()',
+  'revoke all on function public.remove_my_cloud_data() from public, anon, authenticated, service_role',
+  'grant execute on function public.remove_my_cloud_data() to authenticated'
+]) {
+  if (!cloudRemovalMigration.includes(contract)) errors.push(`Cloud-data removal migration lacks contract ${contract}.`);
+}
+for (const table of ['holdings', 'holding_deletions', 'portfolio_snapshots', 'scan_sessions', 'watchlists', 'watchlist_items', 'watchlist_deletions', 'demand_events']) {
+  if (!cloudRemovalMigration.includes(`delete from public.${table} where user_id = current_user_id`)) errors.push(`Cloud-data removal migration must scope ${table} deletion to auth.uid().`);
+}
+if (/delete\s+from\s+(?:auth\.users|public\.profiles)/i.test(cloudRemovalMigration)) errors.push('Cloud-data removal must retain the authentication account and profile.');
+if (!/^begin;/m.test(cloudRemovalMigration) || !/commit;\s*$/.test(cloudRemovalMigration)) errors.push('Cloud-data removal migration must install its RPC transactionally.');
 
 const netlify = await readFile(resolve(root, 'netlify.toml'), 'utf8');
 for (const text of ['command = "npm run build"', 'publish = "dist"', 'NODE_VERSION = "22"', 'to = "/index.html"', 'for = "/sw.js"']) if (!netlify.includes(text)) errors.push(`netlify.toml missing ${text}`);
