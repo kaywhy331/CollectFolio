@@ -53,7 +53,7 @@ The current provider decision recommends a $19/month JustTCG Starter license, bu
 
 Netlify builds with `npm run build` and publishes `dist/`. The base PWA remains static; the optional JustTCG bootstrap uses one scheduled Function plus one user-triggered Function, both writing only to the same private Netlify Blobs storage. Supabase schema setup, environment variables, Auth redirect configuration, collector checks, and the two-browser deletion-sync qualification are documented in [docs/NETLIFY_DEPLOY.md](docs/NETLIFY_DEPLOY.md).
 
-The local scenario release target is `0.8.0` with service-worker shell `collectfolio-shell-v0.8.0`. IndexedDB v5 is additive and preserves the version-4 migration fixture. Migration `0015_remove_my_cloud_data.sql` is checked in but intentionally not applied; its separate rollout, qualification, and rollback boundary is documented in [docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md](docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md).
+The current application patch is `0.8.1` with service-worker shell `collectfolio-shell-v0.8.1`; it retains the `0.8.0` local-scenario foundation. IndexedDB v5 is additive and preserves the version-4 migration fixture. Migration `0015_remove_my_cloud_data.sql` is checked in but intentionally not applied; its separate rollout, qualification, and rollback boundary is documented in [docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md](docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md).
 
 The consolidated PRD sections 18–20 evidence matrix, final product-decision
 dispositions, and remaining production-promotion blockers are documented in

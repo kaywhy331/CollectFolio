@@ -24,7 +24,7 @@ function acquisitionFields(acquisition, { bulk = false } = {}) {
     <label>Purchase date<input ${marker('purchaseDate')} name="purchaseDate" type="date" value="${escapeAttribute(value.purchaseDate)}"></label>
     <label>Seller / source<input ${marker('seller')} name="seller" maxlength="160" value="${escapeAttribute(value.seller)}" placeholder="Optional"></label>
     <label>Storage location<input ${marker('folder')} name="folder" maxlength="80" value="${escapeAttribute(value.folder)}" placeholder="Binder, box…"></label>
-    <label>Manual current value<input ${marker('manualMarketPrice')} name="manualMarketPrice" type="number" min="0" step="0.01" value="${escapeAttribute(value.manualMarketPrice)}" placeholder="Only if needed"></label>
+    <label>Manual current value<input ${marker('manualMarketPrice')} name="manualMarketPrice" type="number" min="0" step="0.01" value="${escapeAttribute(value.manualMarketPrice)}" placeholder="Optional"><span class="fine-print">Your private estimate starts a local scenario without waiting for published pricing.</span></label>
     <label>Manual-value currency<select ${marker('manualMarketCurrency')} name="manualMarketCurrency">${CURRENCIES.map((entry) => option(entry, value.manualMarketCurrency)).join('')}</select></label>
     <label>Grading company<input ${marker('gradeCompany')} name="gradeCompany" maxlength="40" value="${escapeAttribute(value.gradeCompany)}" placeholder="PSA, CGC, BGS"></label>
     <label>Grade<input ${marker('grade')} name="grade" maxlength="20" value="${escapeAttribute(value.grade)}" placeholder="10"></label>
@@ -63,8 +63,8 @@ function selectedMatch(crop, selected, state) {
   const watching = state.watchlistItems?.some((entry) => entry.watchKey === watchKeyForItem(selected));
   const [bucket, label] = matchStatus(crop, selected);
   return `<section class="selected-match">
-    <div><p class="eyebrow">Selected exact variant</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>
-    <div class="button-row"><button class="button ${crop.approved ? 'secondary' : ''}" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="${crop.approved}">${crop.approved ? 'Approved · remove approval' : 'Approve this exact item'}</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
+    <div><p class="eyebrow">Selected catalog candidate</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>
+    <div class="button-row"><button class="button ${crop.approved ? 'secondary' : ''}" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="${crop.approved}">${crop.approved ? 'Approved · remove approval' : 'Use this card'}</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
   </section>`;
 }
 
@@ -72,7 +72,8 @@ function candidateList(crop) {
   if (!crop.candidates.length) return '';
   return `<details class="candidate-disclosure" ${crop.selectedId ? '' : 'open'}><summary>Choose or replace match <span>${crop.candidates.length} candidates</span></summary><div class="candidate-list">${crop.candidates.slice(0, 9).map((candidate) => {
     const price = catalogPriceForValuation(candidate);
-    return `<button class="candidate ${candidate.id === crop.selectedId ? 'selected' : ''}" type="button" data-action="select-candidate" data-id="${escapeAttribute(crop.id)}" data-candidate="${escapeAttribute(candidate.id)}">${externalImage(candidate, 'candidate-image', { loading: 'eager' })}<strong>${escapeHTML(candidate.name)}</strong><span>${escapeHTML([candidate.setName, candidate.number, candidate.variant].filter(Boolean).join(' · '))}</span><span>${price === null ? 'No approved price' : escapeHTML(formatCurrency(price, candidate.currency || 'USD'))} · ${Math.round((candidate.matchScore || 0) * 100)}%</span></button>`;
+    const similarity = candidate.matchScore >= 0.72 ? 'Strong similarity' : candidate.matchScore >= 0.45 ? 'Moderate similarity' : 'Possible candidate';
+    return `<button class="candidate ${candidate.id === crop.selectedId ? 'selected' : ''}" type="button" data-action="select-candidate" data-id="${escapeAttribute(crop.id)}" data-candidate="${escapeAttribute(candidate.id)}">${externalImage(candidate, 'candidate-image', { loading: 'eager' })}<strong>${escapeHTML(candidate.name)}</strong><span>${escapeHTML([candidate.setName, candidate.number, candidate.variant].filter(Boolean).join(' · '))}</span><span>${price === null ? 'Current value unavailable' : escapeHTML(formatCurrency(price, candidate.currency || 'USD'))} · ${similarity}</span></button>`;
   }).join('')}</div></details>`;
 }
 
@@ -82,7 +83,7 @@ function cropCard(crop, index, state) {
   return `<article class="review-card ${crop.approved ? 'approved' : ''}" data-crop-id="${escapeAttribute(crop.id)}">
     <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Crop ${index + 1}" referrerpolicy="no-referrer"><div><div class="review-item-kicker"><span>Item ${index + 1}</span><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span>${crop.approved ? '<span class="approval-state">Approved</span>' : ''}</div><h2>${escapeHTML(selected?.name || 'Identify this crop')}</h2><p class="muted">${crop.approved ? 'This item will be included with the acquisition details below.' : selected ? 'Confirm the identity, fill acquisition details, then approve it.' : 'Search with OCR or a typed query, or create a custom identity.'}</p></div></div>
     <div class="match-workspace"><label>OCR or catalog query<input data-crop-query value="${escapeAttribute(crop.query)}" placeholder="Type a name, set, or number"></label>
-      ${crop.ocrEngine ? `<p class="fine-print">OCR: ${escapeHTML(crop.ocrEngine)}${crop.ocrText ? ` · ${escapeHTML(crop.ocrText.slice(0, 120))}` : ''}</p>` : ''}
+      ${crop.ocrEngine ? `<p class="fine-print">OCR: ${escapeHTML(crop.ocrEngine)}${crop.query ? ' · reliable card text selected locally' : ''}</p>` : ''}
       ${crop.status === 'identifying' ? '<p class="fine-print" role="status">Identifying locally. First-use OCR may take a few seconds.</p>' : ''}
       ${crop.error ? `<p class="fine-print negative" role="status">${escapeHTML(crop.error)}</p>` : ''}
       <div class="button-row"><button class="button secondary small" type="button" data-action="identify-crop" data-id="${escapeAttribute(crop.id)}" ${crop.status === 'identifying' ? 'disabled' : ''}>${crop.status === 'identifying' ? 'Identifying…' : crop.query ? 'Search / retry' : 'Run OCR'}</button><button class="button ghost small" type="button" data-action="custom-crop" data-id="${escapeAttribute(crop.id)}">Create custom</button><button class="button ghost small" type="button" data-action="delete-crop" data-id="${escapeAttribute(crop.id)}">Exclude item</button></div>

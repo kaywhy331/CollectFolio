@@ -3,7 +3,7 @@ import { deleteRecords, getAll, putRecord, saveHolding } from '../core/db.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { matchBucketFor } from '../core/view-models.js';
 import { searchCatalog } from './catalog.js';
-import { recognizeText, rerankCandidates } from './image.js';
+import { candidateEvidenceScore, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
 import { recordDemandEvent } from './demand-events.js';
 
 export const ACQUISITION_FIELDS = Object.freeze([
@@ -21,6 +21,22 @@ const currency = (value, fallback = 'USD') => {
   const normalized = String(value || '').trim().toUpperCase();
   return /^[A-Z]{3}$/.test(normalized) ? normalized : fallback;
 };
+
+export async function searchCatalogCandidates(queries = [], evidence = {}, search = searchCatalog) {
+  const candidates = new Map();
+  const warnings = new Set();
+  let allAttemptsFailed = true;
+  for (const query of queries.slice(0, 3)) {
+    const response = await search({ query });
+    (response.warnings || []).forEach((warning) => warnings.add(warning));
+    if ((response.fulfilledProviders ?? 1) > 0 || response.manual) allAttemptsFailed = false;
+    const useful = (response.results || []).filter((candidate) => candidateEvidenceScore(candidate, evidence) >= 0.28);
+    useful.slice(0, 24).forEach((candidate) => candidates.set(candidate.id, candidate));
+    const strong = useful.some((candidate) => candidateEvidenceScore(candidate, evidence) >= (evidence.number ? 0.8 : 0.72));
+    if (strong || candidates.size >= 18) break;
+  }
+  return { candidates: [...candidates.values()], warnings: [...warnings], allAttemptsFailed };
+}
 
 export function normalizeAcquisition(value = {}) {
   return {
@@ -190,26 +206,36 @@ export async function identifyCrop(draft, cropId, editedQuery = '') {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
   crop.status = 'identifying'; crop.error = ''; crop.approved = false;
+  crop.candidates = []; crop.selectedId = ''; crop.customItem = null;
   await saveScanDraft(draft);
   try {
+    let evidence;
     if (!editedQuery.trim()) {
       const ocr = await recognizeText(crop.image);
-      crop.ocrText = ocr.text;
       crop.ocrEngine = ocr.engine;
-      crop.query = ocr.query;
+      crop.ocrText = ocr.accepted ? ocr.text : '';
+      crop.query = ocr.accepted ? ocr.query : '';
+      evidence = ocr;
     } else {
       crop.query = editedQuery.trim();
+      crop.ocrText = '';
+      crop.ocrEngine = '';
+      evidence = queryEvidenceFromText(crop.query);
     }
-    if (!crop.query) {
+    const queries = evidence?.queries?.length ? evidence.queries : crop.query ? [crop.query] : [];
+    if (!queries.length) {
       crop.status = 'unmatched';
-      crop.error = 'OCR found no useful query. Enter one manually.';
+      crop.error = 'Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.';
       await saveScanDraft(draft);
       return crop;
     }
-    const response = await searchCatalog({ query: crop.query });
-    crop.candidates = await rerankCandidates(crop.image, response.results.slice(0, 18), crop.query);
+    const recovered = await searchCatalogCandidates(queries, evidence);
+    if (recovered.allAttemptsFailed && recovered.warnings.length) throw new Error('Card catalogs are temporarily unavailable. Check your connection and retry.');
+    crop.candidates = await rerankCandidates(crop.image, recovered.candidates.slice(0, 24), evidence);
     crop.status = crop.candidates.length ? 'matched' : 'unmatched';
-    crop.error = response.warnings.join(' ');
+    crop.error = crop.candidates.length
+      ? recovered.warnings.join(' ')
+      : ['No catalog match found. Try the card name or collector number, or create a custom item.', ...recovered.warnings].join(' ');
   } catch (error) {
     crop.status = 'error';
     crop.error = error.message || 'Identification failed. Enter a query or create a custom item.';

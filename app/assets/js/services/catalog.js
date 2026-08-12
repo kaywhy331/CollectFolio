@@ -5,7 +5,7 @@ import { getScryfallCard, searchScryfall } from './providers/scryfall.js';
 import { getYGOCard, searchYGOPRODeck } from './providers/ygoprodeck.js';
 
 const CACHE_MS = 30 * 60 * 1000;
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 export const CATALOG_CACHE_MAX_ENTRIES = 250;
 let initialCacheMaintenance;
 const providers = {
@@ -93,11 +93,12 @@ export function rankCatalogItems(items, query) {
 export function collectSettledProviders(settled, selected) {
   const results = [];
   const warnings = [];
+  let fulfilledProviders = 0;
   settled.forEach((result, index) => {
-    if (result.status === 'fulfilled') results.push(...result.value);
+    if (result.status === 'fulfilled') { fulfilledProviders++; results.push(...result.value); }
     else warnings.push(`${selected[index][1].label} was unavailable: ${result.reason?.message || 'request failed'}`);
   });
-  return { results, warnings };
+  return { results, warnings, fulfilledProviders, failedProviders: selected.length - fulfilledProviders };
 }
 
 export async function searchCatalog({ query, category = 'all', provider = 'all', bypassCache = false } = {}) {
@@ -116,9 +117,11 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
   // Provider syntax can depend on punctuation (for example, "Blue-Eyes").
   // Keep the normalized form for cache/ranking, but search with the user's text.
   const settled = await Promise.allSettled(selected.map(([, config]) => config.search(raw)));
-  const { results, warnings } = collectSettledProviders(settled, selected);
-  const value = { results: rankCatalogItems(results, normalized), warnings, manual: false };
-  await cacheCatalogRecord({ key, expiresAt: Date.now() + CACHE_MS, value }).catch(() => {});
+  const { results, warnings, fulfilledProviders, failedProviders } = collectSettledProviders(settled, selected);
+  const value = { results: rankCatalogItems(results, normalized), warnings, manual: false, fulfilledProviders, failedProviders };
+  // A total upstream outage must stay retryable; caching it would turn a brief
+  // provider failure into a false no-match for the full cache window.
+  if (fulfilledProviders > 0 && failedProviders === 0) await cacheCatalogRecord({ key, expiresAt: Date.now() + CACHE_MS, value }).catch(() => {});
   return { ...value, cached: false };
 }
 

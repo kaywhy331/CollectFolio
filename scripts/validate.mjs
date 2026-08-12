@@ -112,8 +112,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.0' || packageLock.version !== '0.8.0' || packageLock.packages?.['']?.version !== '0.8.0') {
-  errors.push('Application and lockfile versions must agree on 0.8.0.');
+if (packageJSON.version !== '0.8.1' || packageLock.version !== '0.8.1' || packageLock.packages?.['']?.version !== '0.8.1') {
+  errors.push('Application and lockfile versions must agree on 0.8.1.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -262,8 +262,8 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.0-dev'")) errors.push('Local runtime config must identify the 0.8.0 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.0'")) errors.push('Production builds must default APP_VERSION to 0.8.0.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.1-dev'")) errors.push('Local runtime config must identify the 0.8.1 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.1'")) errors.push('Production builds must default APP_VERSION to 0.8.1.');
 
 const ordinaryUiFiles = [
   resolve(app, 'index.html'), resolve(app, 'assets/js/app.js'),
@@ -369,7 +369,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.0'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.0.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.1'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.1.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;

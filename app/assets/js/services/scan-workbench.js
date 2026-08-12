@@ -102,11 +102,13 @@ export class ScanWorkbench {
   }
 
   setAddMode() {
+    if (this.single) return;
     this.mode = 'add';
     this.render();
   }
 
   deleteSelected() {
+    if (this.single) return;
     if (this.selected < 0) return;
     this.boxes.splice(this.selected, 1);
     this.selected = Math.min(this.boxes.length - 1, this.selected);
@@ -115,6 +117,7 @@ export class ScanWorkbench {
   }
 
   applyGrid(rows, columns) {
+    if (this.single) return;
     this.boxes = gridBoxes(this.canvas.width, this.canvas.height, rows, columns);
     this.selected = 0;
     this.onChange(this.boxes);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { catalogCacheKeysToPrune, catalogRouteId, collectSettledProviders, prepareCatalogQuery, rankCatalogItems, refreshCatalogItem } from '../app/assets/js/services/catalog.js';
+import { catalogCacheKeysToPrune, catalogRouteId, collectSettledProviders, prepareCatalogQuery, rankCatalogItems, refreshCatalogItem, searchCatalog } from '../app/assets/js/services/catalog.js';
 import { buildPokemonQuery, clearPokemonSetCache, getPokemonCard, normalizePokemonCard, normalizeTCGDexCard, parsePokemonQuery, searchPokemon } from '../app/assets/js/services/providers/pokemon.js';
 import { getScryfallCard, normalizeScryfallCard, searchScryfall } from '../app/assets/js/services/providers/scryfall.js';
 import { getYGOCard, normalizeYGOCard, searchYGOPRODeck } from '../app/assets/js/services/providers/ygoprodeck.js';
@@ -372,5 +372,24 @@ test('provider failure isolation retains every successful provider result', () =
   ], selected);
   assert.deepEqual(combined.results.map((item) => item.id), ['pokemon:one', 'ygo:one']);
   assert.equal(combined.warnings.length, 1);
+  assert.equal(combined.fulfilledProviders, 2);
+  assert.equal(combined.failedProviders, 1);
   assert.match(combined.warnings[0], /Scryfall/);
+});
+
+test('complete catalog outages are retryable and never cached as false no-matches', async () => {
+  const previousFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new TypeError('offline'); };
+  try {
+    const first = await searchCatalog({ query: 'Outage Sentinel', category: 'magic', provider: 'scryfall' });
+    const firstRequests = requests;
+    const second = await searchCatalog({ query: 'Outage Sentinel', category: 'magic', provider: 'scryfall' });
+    assert.equal(first.fulfilledProviders, 0);
+    assert.equal(second.fulfilledProviders, 0);
+    assert.ok(first.warnings.length && second.warnings.length);
+    assert.ok(requests > firstRequests);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });

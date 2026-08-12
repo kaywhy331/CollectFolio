@@ -6,6 +6,7 @@ import {
   completedScanRetentionPlan,
   createScanDraft,
   normalizeAcquisition,
+  searchCatalogCandidates,
   scanReviewSummary,
   scanReviewTotals
 } from '../app/assets/js/services/scan-review.js';
@@ -80,6 +81,52 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   assert.match(html, /\$22\.00 USD cost basis/);
   assert.match(html, /Add 1 approved/);
   assert.match(html, /Unapproved and unmatched items are skipped/);
+});
+
+test('review labels candidates as similarity evidence rather than calibrated confidence', () => {
+  const draft = reviewDraft();
+  draft.crops[0].approved = false;
+  const html = renderScanReview(draft, {
+    settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }
+  });
+  assert.match(html, /Selected catalog candidate/);
+  assert.match(html, /Use this card/);
+  assert.match(html, /Strong similarity/);
+  assert.doesNotMatch(html, /100%/);
+  assert.doesNotMatch(html, /Approve this exact item/);
+});
+
+test('catalog candidate search relaxes in order, recovers, and deduplicates useful matches', async () => {
+  const evidence = { title: 'Charizard ex', number: '223/197', query: 'Charizard ex 223/197' };
+  const queries = ['Charizard ex 223/197', 'Charizard ex', 'Charizard'];
+  const calls = [];
+  const recovered = await searchCatalogCandidates(queries, evidence, async ({ query }) => {
+    calls.push(query);
+    if (query.includes('223/197')) return { results: [], warnings: [], fulfilledProviders: 3 };
+    return {
+      results: [
+        { ...card, id: 'pokemon:charizard-223', name: 'Charizard ex', number: '223' },
+        { ...card, id: 'pokemon:charizard-223', name: 'Charizard ex', number: '223' }
+      ],
+      warnings: ['One provider was unavailable.'], fulfilledProviders: 2
+    };
+  });
+  assert.deepEqual(calls, ['Charizard ex 223/197', 'Charizard ex']);
+  assert.equal(recovered.candidates.length, 1);
+  assert.equal(recovered.allAttemptsFailed, false);
+  assert.deepEqual(recovered.warnings, ['One provider was unavailable.']);
+});
+
+test('catalog candidate search distinguishes a full provider outage from a valid no-match', async () => {
+  const evidence = { title: 'Unknown Card', query: 'Unknown Card' };
+  const outage = await searchCatalogCandidates(['Unknown Card'], evidence, async () => ({
+    results: [], warnings: ['Catalog unavailable'], fulfilledProviders: 0
+  }));
+  const noMatch = await searchCatalogCandidates(['Unknown Card'], evidence, async () => ({
+    results: [], warnings: [], fulfilledProviders: 3
+  }));
+  assert.equal(outage.allAttemptsFailed, true);
+  assert.equal(noMatch.allAttemptsFailed, false);
 });
 
 test('completed intake reports added, skipped, and unresolved counts before navigation', () => {

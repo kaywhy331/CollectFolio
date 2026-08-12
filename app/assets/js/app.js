@@ -992,8 +992,11 @@ function openCompareModal() {
   openModal({ title: 'Compare watched cards', content, actions: '<button class="button" type="button" data-close-modal>Close</button>' });
 }
 
-function chooseScanImage() {
-  openModal({ title: 'Scan or upload cards', content: `<p>Use the camera or choose an existing image. Both enter the same automatic single- or multi-card detection flow.</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
+function chooseScanImage({ single = false } = {}) {
+  const description = single
+    ? 'Use the camera or choose one card image. The whole image starts as one editable card boundary.'
+    : 'Use the camera or choose an existing image. CollectFolio detects one or several card boundaries.';
+  openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelectorAll('[data-scan-source]').forEach((input) => input.addEventListener('change', async (event) => {
       const file = event.target.files[0];
       if (!file) return;
@@ -1001,7 +1004,7 @@ function chooseScanImage() {
         const source = await fileToImageDataURL(file);
         const image = await loadImage(source);
         closeModal();
-        openWorkbench(image);
+        openWorkbench(image, { single });
       } catch (error) {
         showToast(error.message || 'Could not open image', 'error');
       }
@@ -1009,12 +1012,15 @@ function chooseScanImage() {
   }});
 }
 
-function openWorkbench(image) {
+function openWorkbench(image, { single = false } = {}) {
   let editor;
-  openModal({ title: 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">Tap a box to select it, drag inside to move, or drag its lower-right handle to resize.</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div><div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="add">Draw new</button><button class="button secondary small" type="button" data-workbench="delete">Delete selected</button><button class="button secondary small" type="button" data-workbench="retry">Retry detection</button></div><div class="grid-controls"><label>Rows<input id="grid-rows" type="number" min="1" max="12" value="3"></label><label>Columns<input id="grid-columns" type="number" min="1" max="12" value="3"></label><button class="button secondary" type="button" data-workbench="grid">Apply grid</button></div><p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Create review crops</button>', onOpen(layer) {
+  const tools = single
+    ? '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Reset full-card boundary</button></div>'
+    : '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="add">Draw new</button><button class="button secondary small" type="button" data-workbench="delete">Delete selected</button><button class="button secondary small" type="button" data-workbench="retry">Retry detection</button></div><div class="grid-controls"><label>Rows<input id="grid-rows" type="number" min="1" max="12" value="3"></label><label>Columns<input id="grid-columns" type="number" min="1" max="12" value="3"></label><button class="button secondary" type="button" data-workbench="grid">Apply grid</button></div>';
+  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag inside the box to move it, or drag its lower-right handle to tighten the crop around the card.' : 'Tap a box to select it, drag inside to move, or drag its lower-right handle to resize.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Create review crops</button>', onOpen(layer) {
     const count = layer.querySelector('#boundary-count');
     const updateCount = (boxes) => { count.textContent = `${boxes.length} editable ${boxes.length === 1 ? 'boundary' : 'boundaries'}`; };
-    editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, { single: false, onChange: updateCount });
+    editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, { single, onChange: updateCount });
     editor.detect();
     updateCount(editor.boxes);
     layer.addEventListener('click', async (event) => {
@@ -1024,13 +1030,13 @@ function openWorkbench(image) {
       if (action === 'add') editor.setAddMode();
       if (action === 'delete') editor.deleteSelected();
       if (action === 'retry') editor.detect();
-      if (action === 'grid') editor.applyGrid(layer.querySelector('#grid-rows').value, layer.querySelector('#grid-columns').value);
+      if (action === 'grid' && !single) editor.applyGrid(layer.querySelector('#grid-rows').value, layer.querySelector('#grid-columns').value);
       if (action === 'continue') {
         if (!editor.boxes.length) { showToast('Add at least one crop boundary', 'warning'); return; }
         button.disabled = true;
         const draft = createScanDraft(
           cropsFromBoxes(image, editor.boxes),
-          editor.boxes.length === 1 ? 'single' : 'multi',
+          single ? 'single' : 'multi',
           {
             condition: getState().settings.defaultCondition,
             purchaseCurrency: getState().settings.currency,
@@ -1328,8 +1334,8 @@ root.addEventListener('click', async (event) => {
     showToast('Signed out; local portfolio is unchanged');
   }
   if (action.dataset.action === 'refresh-prices') refreshPrices();
-  if (action.dataset.action === 'start-multi-scan') chooseScanImage();
-  if (action.dataset.action === 'start-single-scan') chooseScanImage();
+  if (action.dataset.action === 'start-multi-scan') chooseScanImage({ single: false });
+  if (action.dataset.action === 'start-single-scan') chooseScanImage({ single: true });
   if (action.dataset.action === 'resume-scan') resumeScan();
   if (action.dataset.action === 'save-scan' && activeDraft) { await saveScanDraft(activeDraft); await loadLocal(); showToast('Scan saved on this device'); }
   if (action.dataset.action === 'apply-acquisition-all' && activeDraft) {
