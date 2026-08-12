@@ -1,6 +1,7 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
 import { holdingMarketCurrency, holdingMarketValue, portfolioAllocation, portfolioSummary, snapshotFor } from '../core/calculations.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
+import { localPortfolioInsights, localPortfolioScenario } from '../core/local-scenarios.js';
 import { allocationChart, trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
@@ -97,14 +98,17 @@ function movementMarkup(change, range, currency) {
 }
 
 function forecastCoverage(state) {
-  if (!state.featureFlags?.publicPriceIntelligence) return { count: 0, label: 'Not available', detail: 'No approved public forecast is enabled.' };
-  const count = state.holdings.filter((holding) => {
-    const publication = holding.canonicalVariantId ? state.intelligence?.byVariant?.[holding.canonicalVariantId] : null;
-    return publication && holdingViewModel(holding, { publication }).forecasts.length > 0;
-  }).length;
-  return count
-    ? { count, label: `${count} of ${state.holdings.length}`, detail: 'Holdings with an approved outlook.' }
-    : { count: 0, label: 'Not available', detail: 'No approved forecast has been published.' };
+  const currency = state.settings.currency || 'USD';
+  const scenario = localPortfolioScenario(state.holdings, state.localValueObservations || [], 90, { currency });
+  const published = state.featureFlags?.publicPriceIntelligence
+    ? state.holdings.filter((holding) => {
+      const publication = holding.canonicalVariantId ? state.intelligence?.byVariant?.[holding.canonicalVariantId] : null;
+      return publication && holdingViewModel(holding, { publication }).forecasts.length > 0;
+    }).length
+    : 0;
+  return scenario.coveredHoldings
+    ? { count: scenario.coveredHoldings, label: `${scenario.coveredHoldings} of ${state.holdings.length}`, detail: `Local 90-day scenarios · ${published} published market outlook${published === 1 ? '' : 's'}.` }
+    : { count: 0, label: 'Needs values', detail: 'Add a current value to start local scenarios.' };
 }
 
 function attentionModule(state, coverage) {
@@ -154,6 +158,7 @@ export function renderHome(state) {
   const gainTone = summary.gain >= 0 ? 'positive' : 'negative';
   const coverage = pricingCoverage(state.holdings, state.intelligence?.byVariant);
   const forecast = forecastCoverage(state);
+  const localInsights = localPortfolioInsights(state.holdings, currency);
   const asOf = series.at(-1)?.date
     ? new Date(`${series.at(-1).date}T00:00:00.000Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
     : '';
@@ -176,8 +181,9 @@ export function renderHome(state) {
       <aside class="overview-summary" aria-label="Portfolio summary">
         <article class="summary-stat"><span>Cost basis</span><strong>${escapeHTML(formatCurrency(summary.costBasis, currency))}</strong><small>Purchase price + fees</small></article>
         <article class="summary-stat"><span>Comparable unrealized gain or loss</span><strong class="${gainTone}"><span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}</strong><small>${escapeHTML(formatPercent(summary.returnPercent))} all time${summary.excludedGainItems ? ` · ${summary.excludedGainItems} mixed-currency excluded` : ''}</small></article>
-        <article class="summary-stat forecast"><span>Forecast coverage</span><strong>${escapeHTML(forecast.label)}</strong><small>${escapeHTML(forecast.detail)}</small></article>
+        <article class="summary-stat forecast"><span>Scenario coverage</span><strong>${escapeHTML(forecast.label)}</strong><small>${escapeHTML(forecast.detail)}</small></article>
         <article class="summary-stat"><span>Pricing sources</span><strong>${coverage.covered} of ${coverage.total}</strong><small>${coverage.market} market · ${coverage.manual} manual · ${coverage.unpriced} unpriced</small></article>
+        <article class="summary-stat"><span>Value concentration</span><strong>${escapeHTML(localInsights.concentration[0].toUpperCase() + localInsights.concentration.slice(1))}</strong><small>${localInsights.topHolding ? `${escapeHTML(localInsights.topHolding.name)} is ${escapeHTML(formatPercent(localInsights.topHolding.share * 100))}` : 'Add a locally valued holding'}</small></article>
       </aside>
     </section>
     ${attentionModule(state, coverage)}

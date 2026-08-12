@@ -1,7 +1,7 @@
 import { dataUrlBytes } from '../core/utils.js';
 import { isUUID } from '../core/catalog-identity.js';
 import { portfolioSnapshotId } from '../core/calculations.js';
-import { deleteRecord, getAll, putRecord, recordDailySnapshot } from '../core/db.js';
+import { deleteRecord, getAll, putRecord, recordDailySnapshot, recordLocalHoldingObservations } from '../core/db.js';
 import { PRICING_POLICY_VERSION } from '../core/pricing-policy.js';
 import { mergeWatchlistItems, mergeWatchlistTombstones } from './watchlist.js';
 
@@ -430,6 +430,9 @@ export async function syncPortfolio() {
 
   const merged = mergeHoldings(localHoldings, remoteHoldings, deletedIds);
   for (const holding of merged) await putRecord('holdings', { ...holding, dirty: false });
+  // Cloud holding rows do not carry the device-owned local scenario ledger.
+  // Capture their reconciled current values locally after LWW resolution.
+  await recordLocalHoldingObservations(merged);
   if (merged.length) {
     await upsertInBatches('/rest/v1/holdings?on_conflict=id', merged.map((holding) => holdingRow(holding, userId)), {
       session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }

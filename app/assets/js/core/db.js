@@ -1,10 +1,11 @@
 import { holdingCostBasis, holdingCostCurrency, holdingMarketCurrency, holdingMarketValue, snapshotFor, unitMarketValue } from './calculations.js';
 import { catalogReferenceForItem } from './catalog-identity.js';
 import { catalogPriceDisclosure } from './pricing-policy.js';
+import { appendOnlyLocalObservation, localObservationForHolding } from './local-scenarios.js';
 import { createId, csvCell } from './utils.js';
 
 const NAME = 'collectfolio';
-const VERSION = 4;
+const VERSION = 5;
 const moneyCurrency = (value, fallback = 'USD') => {
   const normalized = String(value || '').trim().toUpperCase();
   return /^[A-Z]{3}$/.test(normalized) ? normalized : fallback;
@@ -19,6 +20,7 @@ const STORE_CONFIG = {
   watchlistItems: { keyPath: 'id' },
   watchlistDeletions: { keyPath: 'id' },
   intelligenceCache: { keyPath: 'key' },
+  localValueObservations: { keyPath: 'id' },
   alerts: { keyPath: 'id' },
   // Private, limited-retention outbox for first-party demand signals
   // (PRD Sec 15.7). Entries are deleted locally once synced.
@@ -47,7 +49,7 @@ export function openDatabase() {
   if (databasePromise) return databasePromise;
   databasePromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(NAME, VERSION);
-    request.addEventListener('upgradeneeded', () => {
+    request.addEventListener('upgradeneeded', (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains('holdings')) {
         const holdings = db.createObjectStore('holdings', { keyPath: 'id' });
@@ -67,6 +69,24 @@ export function openDatabase() {
       if (!watchlist.indexNames.contains('canonicalVariantId')) watchlist.createIndex('canonicalVariantId', 'canonicalVariantId', { unique: false });
       const alerts = request.transaction.objectStore('alerts');
       if (!alerts.indexNames.contains('triggeredAt')) alerts.createIndex('triggeredAt', 'triggeredAt', { unique: false });
+      const localObservations = request.transaction.objectStore('localValueObservations');
+      if (!localObservations.indexNames.contains('subjectId')) localObservations.createIndex('subjectId', 'subjectId', { unique: false });
+      if (!localObservations.indexNames.contains('observedAt')) localObservations.createIndex('observedAt', 'observedAt', { unique: false });
+      // Version 5 is additive. Seed one truthful current-value anchor for each
+      // legacy holding inside the upgrade transaction; no historical values are
+      // invented and every existing store remains untouched.
+      if (event.oldVersion > 0 && event.oldVersion < 5) {
+        const observedAt = new Date().toISOString();
+        const holdings = request.transaction.objectStore('holdings');
+        const cursorRequest = holdings.openCursor();
+        cursorRequest.addEventListener('success', () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+          const observation = localObservationForHolding(cursor.value, observedAt);
+          if (observation) localObservations.put(observation);
+          cursor.continue();
+        });
+      }
     });
     request.addEventListener('success', () => resolve(request.result), { once: true });
     request.addEventListener('error', () => reject(request.error), { once: true });
@@ -161,9 +181,42 @@ export async function saveHolding(input) {
     lastPriceRefresh: input.lastPriceRefresh || '',
     dirty: true
   };
-  await putRecord('holdings', holding);
+  const observation = localObservationForHolding(holding, now);
+  const db = await openDatabase();
+  const stores = observation ? ['holdings', 'localValueObservations'] : ['holdings'];
+  const transaction = db.transaction(stores, 'readwrite');
+  const done = transactionDone(transaction);
+  transaction.objectStore('holdings').put(holding);
+  if (observation) await appendLocalObservation(transaction.objectStore('localValueObservations'), observation);
+  await done;
   await recordDailySnapshot();
   return holding;
+}
+
+export async function recordLocalHoldingObservations(holdings = [], observedAt = new Date().toISOString()) {
+  const observations = (Array.isArray(holdings) ? holdings : [])
+    .map((holding) => localObservationForHolding(holding, observedAt))
+    .filter(Boolean);
+  if (!observations.length) return [];
+  const db = await openDatabase();
+  const transaction = db.transaction('localValueObservations', 'readwrite');
+  const done = transactionDone(transaction);
+  const store = transaction.objectStore('localValueObservations');
+  const appended = [];
+  for (const observation of observations) {
+    const revision = await appendLocalObservation(store, observation);
+    if (revision) appended.push(revision);
+  }
+  await done;
+  return appended;
+}
+
+async function appendLocalObservation(store, observation) {
+  const existing = await requestResult(store.index('subjectId').getAll(observation.subjectId));
+  const revision = appendOnlyLocalObservation(existing, observation,
+    `local-value:v1:${encodeURIComponent(observation.subjectId)}:${observation.source}:${observation.observedAt}:${createId()}`);
+  if (revision) store.add(revision);
+  return revision;
 }
 
 export async function removeHolding(id) {
@@ -299,6 +352,19 @@ function validIntelligenceCacheRecord(record) {
     && optionalBoolean(record.immutable);
 }
 
+function validLocalValueObservation(record) {
+  return typeof record.subjectId === 'string' && Boolean(record.subjectId.trim())
+    && typeof record.observedAt === 'string'
+    && typeof record.currency === 'string' && /^[A-Z]{3}$/.test(record.currency)
+    && ['sourceLabel', 'sourceUpdatedAt', 'supersedes', 'createdAt'].every((field) => optionalString(record[field]))
+    && ['manual', 'catalog'].includes(record.source)
+    && typeof record.unitPrice === 'number' && Number.isFinite(record.unitPrice)
+    && record.unitPrice > 0 && record.unitPrice <= 1_000_000_000_000
+    && Number.isFinite(Date.parse(record.observedAt))
+    && (record.sourceUpdatedAt === undefined || record.sourceUpdatedAt === '' || Number.isFinite(Date.parse(record.sourceUpdatedAt)))
+    && (record.createdAt === undefined || Number.isFinite(Date.parse(record.createdAt)));
+}
+
 function validAlertRecord(record) {
   return ['watchKey', 'variantId', 'kind', 'message', 'triggeredAt', 'publicationFingerprint',
     'readAt', 'mutedAt', 'updatedAt'].every((field) => optionalString(record[field]))
@@ -315,6 +381,7 @@ const BACKUP_RECORD_VALIDATORS = Object.freeze({
   watchlistItems: validWatchlistRecord,
   watchlistDeletions: validTombstoneRecord,
   intelligenceCache: validIntelligenceCacheRecord,
+  localValueObservations: validLocalValueObservation,
   alerts: validAlertRecord
 });
 
@@ -385,6 +452,9 @@ export async function importBackup(backup) {
     }
   }
   await transactionDone(transaction);
+  // Version-1/2 portable backups predate local scenario observations. Give
+  // every imported holding one current anchor without manufacturing history.
+  await recordLocalHoldingObservations(await getAll('holdings'));
   await recordDailySnapshot();
 }
 

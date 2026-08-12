@@ -1,6 +1,7 @@
 import { externalImage } from '../core/components.js';
 import { watchKeyForItem } from '../core/catalog-identity.js';
 import { searchResultViewModel } from '../core/view-models.js';
+import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 
 function pricingSummary(model) {
@@ -27,6 +28,10 @@ export function renderQuickInspector(detail, state) {
     ? state.intelligence?.byVariant?.[canonicalId]
     : null;
   const model = searchResultViewModel({ ...item, canonicalVariantId: canonicalId }, { publication, currency: state.settings.currency });
+  const localScenario = detail.holding
+    ? buildHoldingLocalScenario(detail.holding, state.localValueObservations || [], state.settings?.defaultForecastHorizon || 90)
+    : null;
+  const localScenarioAvailable = ['early', 'limited', 'available'].includes(localScenario?.status);
   const watching = state.watchlistItems.some((entry) => entry.watchKey === watchKeyForItem(item, {
     canonicalVariantId: canonicalId,
     conditionClass: detail.catalogRef?.conditionClass
@@ -38,7 +43,7 @@ export function renderQuickInspector(detail, state) {
     <div class="quick-inspector-body">
       <div class="inspector-art">${externalImage(item, 'inspector-image', { loading: 'eager' })}<span class="match-badge ${model.matchBucket}">${escapeHTML(model.matchBucket === 'exact' ? 'Exact identity' : model.matchBucket === 'likely' ? 'Likely match' : model.matchBucket === 'possible' ? 'Possible match' : 'Review identity')}</span></div>
       <div class="inspector-identity"><strong>${escapeHTML(identity || 'Identity details pending')}</strong><span>${escapeHTML([model.category, model.sourceId].filter(Boolean).join(' · '))}</span></div>
-      <div class="inspector-stats">${pricingSummary(model)}${movementSummary(model)}<div class="inspector-stat forecast"><span>Forecast</span><strong>${model.forecastStatus === 'available' ? 'Available' : '—'}</strong><small>${model.forecastStatus === 'available' ? 'Approved outlook published' : 'No approved outlook published'}</small></div></div>
+      <div class="inspector-stats">${pricingSummary(model)}${movementSummary(model)}<div class="inspector-stat forecast"><span>${localScenarioAvailable ? 'Local scenario' : 'Published forecast'}</span><strong>${localScenarioAvailable ? `${escapeHTML(formatCurrency(localScenario.q25, localScenario.currency))}–${escapeHTML(formatCurrency(localScenario.q75, localScenario.currency))}` : model.forecastStatus === 'available' ? 'Available' : '—'}</strong><small>${localScenarioAvailable ? `${localScenario.horizon}-day range · ${escapeHTML(localScenario.confidence.label)} confidence` : model.forecastStatus === 'available' ? 'Approved outlook published' : detail.holding ? 'Add a value to start a local scenario' : 'No approved outlook published'}</small></div></div>
       ${detail.holding ? `<div class="inspector-holding"><span>In your portfolio</span><strong>${escapeHTML(String(detail.holding.quantity || 0))} owned · ${escapeHTML(detail.holding.condition || 'Condition not set')}</strong></div>` : ''}
     </div>
     <footer><button class="button" type="button" data-action="add-from-detail">${detail.holding ? 'Add another' : 'Add to portfolio'}</button>${state.featureFlags?.watchlists !== false ? `<button class="button secondary" type="button" data-action="toggle-watch" data-detail-watch="true">${watching ? 'Watching' : 'Watch'}</button>` : ''}<button class="button ghost inspector-full-detail" type="button" data-action="open-full-detail">Open full details</button></footer>

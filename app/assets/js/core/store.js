@@ -7,6 +7,7 @@ let state = {
   route: { key: 'overview', legacyView: 'home', canonicalPath: '/' },
   holdings: [],
   snapshots: [],
+  localValueObservations: [],
   scanDrafts: [],
   watchlistItems: [],
   alerts: [],

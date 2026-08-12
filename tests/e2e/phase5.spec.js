@@ -34,7 +34,7 @@ async function configureCloud(page, { failSync = false } = {}) {
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
       SUPABASE_URL: window.location.origin + '/__phase5-cloud',
       SUPABASE_ANON_KEY: 'synthetic-browser-key',
-      APP_VERSION: '0.7.0-test',
+      APP_VERSION: '0.8.0-test',
       ENABLE_TESSERACT: false,
       ENABLE_PRICE_INTELLIGENCE: false,
       ENABLE_CLOUD_DATA_REMOVAL: false

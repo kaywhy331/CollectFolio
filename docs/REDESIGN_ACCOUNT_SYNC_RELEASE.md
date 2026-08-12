@@ -16,6 +16,11 @@ remediation, and release discipline. It preserves IndexedDB version 4 and the
 existing local-first rule: an account is optional, local records remain usable while
 offline, and a failed cloud operation never removes the local portfolio.
 
+The subsequent 0.8.0 scenario release additively upgrades IndexedDB to version 5.
+It adds only the local value-observation ledger and indexes; all Phase 5 stores and
+the representative version-4 migration fixture remain intact. The account, sync,
+cloud-removal, and public-publication boundaries documented here are unchanged.
+
 The checked-in `0015_remove_my_cloud_data.sql` migration is a separately reviewed
 hosted operation. It was not applied, and the client keeps its control disabled with
 `ENABLE_CLOUD_DATA_REMOVAL=false`. Immutable candidate
@@ -122,11 +127,15 @@ RPC.
 
 ## Migration and compatibility
 
-- IndexedDB remains database version 4; no object store or index is replaced.
+- The accepted 0.7.0 base used database version 4. Release 0.8.0 opens version 5,
+  adds `localValueObservations` plus `subjectId`/`observedAt` indexes, and replaces
+  no existing object store or index.
 - The settings schema is a normalized set of records inside the existing store, not
   an IndexedDB upgrade. Re-running migration produces no further writes.
 - Existing holdings, snapshots, scans, Watchlist records, alerts, intelligence cache,
-  tombstones, and version-1/version-2 backups remain readable.
+  tombstones, and version-1/version-2 backups remain readable. Upgrade and legacy
+  backup import create only one current anchor per valued holding; they do not
+  manufacture price history.
 - Newly saved settings and synchronization history are ignored safely by older
   clients that do not recognize their keys.
 - Migration `0015` only installs the account-scoped removal RPC. Installing it does
@@ -157,9 +166,10 @@ RPC.
 2. Run `npm run check`, `npm run test:browser`, and `git diff --check` from a clean
    qualification environment.
 3. Confirm `package.json`, the build default, runtime display, and the release
-   environment all identify `0.7.0`.
-4. Confirm `collectfolio-shell-v0.7.0` precaches both `core/settings.js` and
-   `views/onboarding.js`, then verify an installed PWA replaces the prior shell.
+   environment all identify the intended release (`0.8.0` for local scenarios).
+4. Confirm `collectfolio-shell-v0.8.0` precaches `core/settings.js`,
+   `core/local-scenarios.js`, and `views/onboarding.js`, then verify an installed
+   PWA replaces the prior shell.
 5. Review `0015_remove_my_cloud_data.sql` separately. Before applying it, capture an
    independently restorable hosted backup, rehearse installation and RPC revocation
    in a rollback transaction, and obtain explicit hosted-change approval.
@@ -176,9 +186,10 @@ RPC.
 
 ## Rollback plan
 
-For a client-only regression, publish the last accepted static artifact with a new
-service-worker cache name. Do not clear browser storage. IndexedDB remains at version
-4, so the prior client can continue reading holdings and ignore the new settings keys.
+For a client-only regression, publish the last accepted application logic with a new
+service-worker cache name and a forward-compatible database opener. Do not clear
+browser storage. Once a browser opens version 5, the unchanged 0.7.0 client cannot
+open its version-4 request; retain the additive observation store and roll forward.
 Disable the affected hosted route or roll back the static artifact before asking a
 collector to retry; local data remains the recovery source of truth.
 

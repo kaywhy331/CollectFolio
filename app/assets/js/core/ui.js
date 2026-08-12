@@ -165,6 +165,12 @@ export function trendChart(snapshots = [], currency = 'USD') {
 }
 
 export function forecastProjectionChart(observedPrice, forecasts = [], currency = 'USD', options = {}) {
+  const localMode = options.mode === 'local-scenario';
+  const noun = localMode ? 'scenario' : 'forecast';
+  const sourcePrefix = localMode ? 'locally recorded' : 'approved';
+  const ariaLabel = localMode
+    ? 'Local scenario projection with recorded values and a marked present-date boundary'
+    : 'Approved forecast projection with observed history and a marked present-date boundary';
   const observed = finiteNonNegative(observedPrice);
   const candidates = (Array.isArray(forecasts) ? forecasts : Object.values(forecasts || []))
     .map((forecast) => ({
@@ -224,9 +230,11 @@ export function forecastProjectionChart(observedPrice, forecasts = [], currency 
   ];
   const historyCoordinates = [...historical.map((point) => `${x(point.day).toFixed(1)},${y(point.value).toFixed(1)}`), `${x(0).toFixed(1)},${y(observed).toFixed(1)}`];
   const historySummary = historical.length
-    ? `${historical.length} approved historical observation${historical.length === 1 ? '' : 's'} precede the present marker.`
-    : 'No approved historical series was published; the ribbon begins at the current observation.';
-  return `<div class="projection-chart"><p class="sr-only">${escapeHTML(historySummary)} Forecast values are modeled ranges, not observed history.</p><div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Approved forecast projection with observed history and a marked present-date boundary">
+    ? `${historical.length} ${sourcePrefix} historical observation${historical.length === 1 ? '' : 's'} precede the present marker.`
+    : localMode
+      ? 'No earlier local value check exists; the scenario begins at the current saved value.'
+      : 'No approved historical series was published; the ribbon begins at the current observation.';
+  return `<div class="projection-chart ${localMode ? 'local-scenario-chart' : ''}"><p class="sr-only">${escapeHTML(historySummary)} ${localMode ? 'Scenario' : 'Forecast'} values are modeled ranges, not observed history.</p><div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}">
     <title>Observed ${escapeHTML(formatCurrency(observed, currency))}; ${latest.horizon}-day median ${escapeHTML(formatCurrency(latest.q50, currency))}; 80% interval ${escapeHTML(formatCurrency(latest.q10, currency))} to ${escapeHTML(formatCurrency(latest.q90, currency))}</title>
     ${axisMarkup({ top, currency, left, right, y, xLabels })}
     ${historical.length ? `<polyline points="${historyCoordinates.join(' ')}" class="chart-line forecast-history"/>` : ''}
@@ -235,7 +243,7 @@ export function forecastProjectionChart(observedPrice, forecasts = [], currency 
     <polygon points="${band('q75', 'q25')}" class="forecast-band forecast-band-50"/>
     <polyline points="${coords('q50').join(' ')}" class="chart-line forecast-median"/>
     ${forecastPoints.map((point) => `<circle cx="${x(point.day).toFixed(1)}" cy="${y(point.q50).toFixed(1)}" r="4.5" class="chart-point forecast-point"/>`).join('')}
-  </svg></div><div class="projection-summary"><span>Observed now <strong>${escapeHTML(formatCurrency(observed, currency))}</strong></span><span>${latest.horizon}D modeled median <strong>${escapeHTML(formatCurrency(latest.q50, currency))}</strong></span><strong class="${change === null ? '' : change >= 0 ? 'positive' : 'negative'}">${escapeHTML(changeLabel)}</strong></div><div class="chart-legend">${historical.length ? '<span><i class="forecast-history-dot"></i>Observed history</span>' : ''}<span><i class="forecast-present-dot"></i>Present boundary</span><span><i class="forecast-median-dot"></i>Modeled median</span><span><i class="forecast-band-50-dot"></i>50% range</span><span><i class="forecast-band-80-dot"></i>80% range</span></div></div>`;
+  </svg></div><div class="projection-summary"><span>${localMode ? 'Saved value now' : 'Observed now'} <strong>${escapeHTML(formatCurrency(observed, currency))}</strong></span><span>${latest.horizon}D modeled${localMode ? ' scenario' : ''} median <strong>${escapeHTML(formatCurrency(latest.q50, currency))}</strong></span><strong class="${change === null ? '' : change >= 0 ? 'positive' : 'negative'}">${escapeHTML(changeLabel)}</strong></div><div class="chart-legend">${historical.length ? `<span><i class="forecast-history-dot"></i>${localMode ? 'Local value checks' : 'Observed history'}</span>` : ''}<span><i class="forecast-present-dot"></i>Present boundary</span><span><i class="forecast-median-dot"></i>Modeled${localMode ? ' scenario' : ''} median</span><span><i class="forecast-band-50-dot"></i>50% range</span><span><i class="forecast-band-80-dot"></i>80% range</span></div></div>`;
 }
 
 export function allocationChart(allocation = {}) {

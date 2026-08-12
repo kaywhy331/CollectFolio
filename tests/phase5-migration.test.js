@@ -58,6 +58,22 @@ test('backup preflight validates store schemas before malformed records can reac
   const malformedCache = validBackup();
   malformedCache.stores.catalogCache = [{ key: 'catalog:v1:bad', expiresAt: Date.now() + 1000, value: 'bad' }];
   assert.throws(() => validateBackup(malformedCache), /catalogCache data section contains an invalid record/i);
+
+  const validObservation = validBackup();
+  validObservation.stores.localValueObservations = [{
+    id: 'local-value:v1:holding-one:manual:2026-08-12', subjectId: 'holding-one',
+    observedAt: '2026-08-12T12:00:00.000Z', unitPrice: 25, currency: 'USD',
+    source: 'manual', sourceLabel: 'Your estimate', sourceUpdatedAt: '', supersedes: '',
+    createdAt: '2026-08-12T12:00:00.000Z'
+  }];
+  assert.deepEqual(validateBackup(validObservation).map(([name]) => name), ['holdings', 'settings', 'localValueObservations']);
+
+  const malformedObservation = validBackup();
+  malformedObservation.stores.localValueObservations = [{
+    id: 'local-value:v1:bad', subjectId: '', observedAt: 'not-a-date',
+    unitPrice: -1, currency: 'usd', source: 'catalog'
+  }];
+  assert.throws(() => validateBackup(malformedObservation), /localValueObservations data section contains an invalid record/i);
 });
 
 test('backup files are bounded before the browser reads and parses them', async () => {
@@ -77,11 +93,11 @@ test('backup files are bounded before the browser reads and parses them', async 
 test('device clearing removes every CollectFolio CacheStorage bucket only', async () => {
   const deleted = [];
   const count = await clearApplicationCacheStorage({
-    keys: async () => ['collectfolio-shell-v0.7.0', 'collectfolio-provider-images-v1', 'unrelated-site-cache'],
+    keys: async () => ['collectfolio-shell-v0.8.0', 'collectfolio-provider-images-v1', 'unrelated-site-cache'],
     delete: async (key) => { deleted.push(key); return true; }
   });
   assert.equal(count, 2);
-  assert.deepEqual(deleted, ['collectfolio-shell-v0.7.0', 'collectfolio-provider-images-v1']);
+  assert.deepEqual(deleted, ['collectfolio-shell-v0.8.0', 'collectfolio-provider-images-v1']);
 });
 
 test('cloud removal migration is auth-scoped, transactional, and retains the account', async () => {

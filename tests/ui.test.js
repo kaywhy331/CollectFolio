@@ -35,3 +35,18 @@ test('forecast chart fails closed without an observation or with unordered range
   assert.equal(forecastProjectionChart(null, [{ horizon: 30, q10: 1, q25: 2, q50: 3, q75: 4, q90: 5 }]), '');
   assert.equal(forecastProjectionChart(10, [{ horizon: 30, q10: 5, q25: 4, q50: 3, q75: 2, q90: 1 }]), '');
 });
+
+test('forecast chart has an honestly labeled local-scenario mode', () => {
+  const html = forecastProjectionChart(100, [
+    { horizon: 30, q10: 70, q25: 85, q50: 100, q75: 118, q90: 142 }
+  ], 'USD', {
+    mode: 'local-scenario',
+    history: [{ price: 95, observedAt: '2026-07-01T00:00:00.000Z' }],
+    asOfDate: '2026-08-01T00:00:00.000Z'
+  });
+  assert.match(html, /Local scenario projection/);
+  assert.match(html, /Saved value now/);
+  assert.match(html, /30D modeled scenario median/);
+  assert.match(html, /Local value checks/);
+  assert.doesNotMatch(html, /Approved forecast projection/);
+});

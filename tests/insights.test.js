@@ -144,9 +144,11 @@ test('Insights renders actual and forecast values separately with an accessible 
   assert.match(html, /never added to current portfolio value/);
 });
 
-test('Insights remains fail closed and does not render projection data while publication is disabled', () => {
+test('Insights keeps published forecasts fail closed while local scenarios remain available', () => {
   const html = renderInsights(state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } }));
-  assert.match(html, /Forecasts are not publicly available/);
-  assert.doesNotMatch(html, /projection-chart/);
-  assert.doesNotMatch(html, /\$110/);
+  assert.match(html, /Local scenario outlook/);
+  assert.match(html, /Published market forecasts remain gated/);
+  assert.match(html, /local-scenario-chart/);
+  assert.doesNotMatch(html, /Approved forecast projection/);
+  assert.doesNotMatch(html, /Probability of gain/);
 });

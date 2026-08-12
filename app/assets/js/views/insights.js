@@ -11,6 +11,7 @@ import {
   predictionHistoryModels,
   publishedScorecards
 } from '../core/insights.js';
+import { localPortfolioInsights, localPortfolioScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart, trendChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { overviewChange, overviewSeries, OVERVIEW_RANGES } from './home.js';
@@ -37,7 +38,7 @@ export function renderInsights(state) {
   const selected = INSIGHTS_VIEWS.includes(state.insights?.view) ? state.insights.view : 'forecasts';
   const subtitles = {
     performance: 'Recorded portfolio history stays separate from every modeled future value.',
-    forecasts: 'Approved ranges, explicit uncertainty, and useful unavailable states.',
+    forecasts: 'Local scenario ranges work now; published market forecasts remain a separate evidence tier.',
     alerts: 'Local notification history for exact watched variants.',
     'track-record': 'Immutable forecast receipts and approved matured-model scorecards.'
   };
@@ -58,6 +59,7 @@ function performanceSection(state) {
   const currency = state.settings.currency || 'USD';
   const summary = portfolioSummary(state.holdings, { currency });
   const breakdown = performanceValueBreakdown(state.holdings, currency);
+  const localInsights = localPortfolioInsights(state.holdings, currency);
   const range = OVERVIEW_RANGES.includes(state.overview?.range) ? state.overview.range : '3M';
   const series = overviewSeries(state.holdings, state.snapshots, range, new Date(), currency);
   const change = overviewChange(series);
@@ -65,14 +67,16 @@ function performanceSection(state) {
     ? '<strong>Tracking began today</strong><small>No earlier local snapshot exists.</small>'
     : `<strong class="${change.amount >= 0 ? 'positive' : 'negative'}">${change.amount >= 0 ? '↗' : '↘'} ${escapeHTML(formatCurrency(Math.abs(change.amount), currency))}</strong><small>${change.percent === null ? 'Starting value was zero' : escapeHTML(formatPercent(change.percent))} over ${escapeHTML(range)}</small>`;
   return `<section class="insights-performance" aria-labelledby="performance-title">
-    <div class="section-heading"><div><p class="eyebrow">Observed local history</p><h2 id="performance-title">Portfolio performance</h2><p class="muted">Recorded market and manual values only. Modeled fair value and future forecasts are excluded.</p></div></div>
+    <div class="section-heading"><div><p class="eyebrow">Observed local history</p><h2 id="performance-title">Portfolio performance</h2><p class="muted">Recorded catalog and manual values only. Every modeled future scenario is excluded.</p></div></div>
     <div class="insights-metric-grid">
       <article><span>Recorded portfolio value</span><strong>${escapeHTML(formatCurrency(summary.marketValue, currency))}</strong><small>Market + explicit manual values</small></article>
       <article><span>Approved/catalog market values</span><strong>${escapeHTML(formatCurrency(breakdown.marketValue, currency))}</strong><small>${breakdown.marketHoldings} holding${breakdown.marketHoldings === 1 ? '' : 's'}</small></article>
-      <article><span>Manual values</span><strong>${escapeHTML(formatCurrency(breakdown.manualValue, currency))}</strong><small>${breakdown.manualHoldings} holding${breakdown.manualHoldings === 1 ? '' : 's'} · never forecasted</small></article>
+      <article><span>Manual values</span><strong>${escapeHTML(formatCurrency(breakdown.manualValue, currency))}</strong><small>${breakdown.manualHoldings} holding${breakdown.manualHoldings === 1 ? '' : 's'} · used only as labeled local scenario anchors</small></article>
       <article><span>Cost basis</span><strong>${escapeHTML(formatCurrency(summary.costBasis, currency))}</strong><small>Purchase price + fees</small></article>
       <article><span>Comparable unrealized gain or loss</span><strong class="${summary.gain >= 0 ? 'positive' : 'negative'}">${escapeHTML(formatCurrency(summary.gain, currency))}</strong><small>${escapeHTML(formatPercent(summary.returnPercent))}${summary.excludedGainItems ? ` · ${summary.excludedGainItems} mixed-currency excluded` : ''}</small></article>
       <article><span>${escapeHTML(range)} movement</span>${changeMarkup}</article>
+      <article><span>Largest holding share</span><strong>${localInsights.topHolding ? escapeHTML(formatPercent(localInsights.topHolding.share * 100)) : '—'}</strong><small>${localInsights.topHolding ? escapeHTML(localInsights.topHolding.name) : 'No locally valued holding'}</small></article>
+      <article><span>Value concentration</span><strong>${escapeHTML(localInsights.concentration[0].toUpperCase() + localInsights.concentration.slice(1))}</strong><small>Top five represent ${escapeHTML(formatPercent(localInsights.topFiveShare * 100))} of saved local value</small></article>
     </div>
     ${summary.excludedMarketItems || summary.excludedCostItems ? `<p class="fine-print" role="status">Amounts in ${escapeHTML(summary.excludedCurrencies.join(', '))} are excluded from this ${escapeHTML(currency)} view; no exchange rate was guessed.</p>` : ''}
     <article class="card insights-history-chart"><div class="section-heading compact"><div><p class="eyebrow">Actual values</p><h3>Recorded value and cost basis</h3></div><div class="range-control" role="group" aria-label="Performance chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>${trendChart(series, currency)}<p class="fine-print">Local snapshots reflect only values recorded in ${escapeHTML(currency)}. They are not backfilled with forecasts, exchange-rate guesses, or later market observations.</p></article>
@@ -85,28 +89,73 @@ function intelligenceStatus(state) {
 
 function forecastsSection(state) {
   const publicEnabled = Boolean(state.featureFlags?.publicPriceIntelligence);
-  if (!publicEnabled) return `<section class="card intelligence-gate" role="status">
-    <span class="support-badge restricted">Research gate active</span>
-    <h2>Forecasts are not publicly available</h2>
-    <p>Performance and local alert settings still work. Public forecasts remain disabled until source rights, exact mapping, model validation, feature-flag, and operator-review gates all pass.</p>
-    <ul class="evidence-list"><li>No trend is extrapolated into a forecast.</li><li>Manual values remain outside modeled ranges.</li><li>No archived research output is presented as public guidance.</li></ul>
-  </section>`;
-
   const horizon = INSIGHTS_HORIZONS.includes(Number(state.insights?.horizon)) ? Number(state.insights.horizon) : 90;
   const currency = state.settings.currency || 'USD';
-  const summary = portfolioForecastSummary(state.holdings, state.intelligence?.byVariant || {}, horizon, { publicEnabled, currency });
-  const assets = forecastAssets(state.holdings, state.watchlistItems, state.intelligence?.byVariant || {}, horizon, { publicEnabled, currency });
+  const localSummary = localPortfolioScenario(state.holdings, state.localValueObservations || [], horizon, { currency });
+  const summary = publicEnabled
+    ? portfolioForecastSummary(state.holdings, state.intelligence?.byVariant || {}, horizon, { publicEnabled, currency })
+    : null;
+  const assets = publicEnabled
+    ? forecastAssets(state.holdings, state.watchlistItems, state.intelligence?.byVariant || {}, horizon, { publicEnabled, currency })
+    : [];
   const history = predictionHistoryModels(state.intelligence?.history || [], state.intelligence?.byVariant || {});
   const latestHistory = new Map();
   history.filter((entry) => entry.horizon === horizon).forEach((entry) => {
     if (!latestHistory.has(entry.canonicalId)) latestHistory.set(entry.canonicalId, entry);
   });
-  return `${intelligenceStatus(state)}<section class="forecast-workspace">
+  return `${publicEnabled ? intelligenceStatus(state) : ''}<section class="forecast-workspace">
     <div class="forecast-horizon-control" role="group" aria-label="Forecast horizon">${INSIGHTS_HORIZONS.map((value) => `<button type="button" data-insights-horizon="${value}" aria-pressed="${value === horizon}">${value === 365 ? '1 year' : `${value} days`}</button>`).join('')}</div>
-    ${forecastSummaryCard(summary, currency)}
-    <div class="section-heading"><div><p class="eyebrow">Exact-item evidence</p><h2>Forecast availability</h2><p class="muted">Every owned or watched item gets either its approved ${horizon}-day range or a specific reason it is unavailable.</p></div></div>
-    ${assets.length ? `<div class="insights-forecast-list">${assets.map((asset) => forecastAssetCard(asset, state, latestHistory.get(asset.publication?.variantId), currency)).join('')}</div>` : emptyState('Nothing to evaluate yet', 'Add or watch an exact card to see its forecast availability.', '<button class="button" type="button" data-go="search">Find a card</button>')}
+    ${localScenarioSummaryCard(localSummary, currency)}
+    <div class="section-heading"><div><p class="eyebrow">Your saved values</p><h2>Card scenario outlooks</h2><p class="muted">Each owned holding gets a ${horizon}-day range from its own source-separated local value checks. One value is enough for a deliberately broad starting range.</p></div></div>
+    ${localSummary.rows.length ? `<div class="insights-forecast-list">${localSummary.rows.map((row) => localScenarioAssetCard(row, horizon)).join('')}</div>` : emptyState('Add a holding to start', 'A current catalog value or your own estimate creates the first local scenario anchor.', '<button class="button" type="button" data-go="add">Add collectible</button>')}
+    ${publicEnabled ? `${forecastSummaryCard(summary, currency)}
+      <div class="section-heading"><div><p class="eyebrow">Published market evidence</p><h2>Approved forecast availability</h2><p class="muted">Published forecasts, when available, stay distinct from your local scenarios and retain their independent review gates.</p></div></div>
+      ${assets.length ? `<div class="insights-forecast-list">${assets.map((asset) => forecastAssetCard(asset, state, latestHistory.get(asset.publication?.variantId), currency)).join('')}</div>` : emptyState('No published forecasts for these items', 'Local scenarios above remain available without an approved publication.', '<button class="button ghost" type="button" data-go="portfolio">Open portfolio</button>')}` : publicationGateNotice()}
   </section>`;
+}
+
+function usableLocalScenario(scenario) {
+  return ['early', 'limited', 'available'].includes(scenario?.status);
+}
+
+function localScenarioSummaryCard(summary, currency) {
+  const covered = summary.coveredHoldings > 0;
+  const usableRows = summary.rows.filter(({ scenario }) => usableLocalScenario(scenario) && scenario.currency === currency);
+  const manualCount = usableRows.filter(({ scenario }) => scenario.source === 'manual').length;
+  const catalogCount = usableRows.length - manualCount;
+  const sourceDetail = [manualCount ? `${manualCount} your estimate${manualCount === 1 ? '' : 's'}` : '', catalogCount ? `${catalogCount} catalog price${catalogCount === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+  const confidenceOrder = ['Early', 'Low', 'Developing', 'Moderate'];
+  const confidence = usableRows.length
+    ? usableRows.map(({ scenario }) => scenario.confidence.label).sort((a, b) => confidenceOrder.indexOf(a) - confidenceOrder.indexOf(b))[0]
+    : 'Unavailable';
+  const projection = covered ? forecastProjectionChart(summary.currentValue, [{
+    horizon: summary.horizon, q10: summary.q10, q25: summary.q25, q50: summary.q50, q75: summary.q75, q90: summary.q90
+  }], currency, { mode: 'local-scenario' }) : '';
+  return `<section class="card portfolio-forecast-summary local-scenario-summary" aria-labelledby="local-scenario-summary-title"><div class="section-heading"><div><p class="eyebrow">Local scenario outlook</p><h2 id="local-scenario-summary-title">${summary.horizon === 365 ? '1-year' : `${summary.horizon}-day`} portfolio range</h2><p class="muted">Available from values saved on this device. It is not a market appraisal or a published forecast.</p></div><span class="support-badge ${covered ? 'partial' : 'unsupported'}">${covered ? `${summary.coveredHoldings} modeled` : 'Needs a value'}</span></div>
+    <div class="forecast-summary-values"><div class="actual"><span>Current saved value in scenario</span><strong>${covered ? escapeHTML(formatCurrency(summary.currentValue, currency)) : '—'}</strong><small>${sourceDetail || 'Add a current value to begin'}</small></div><div class="forecast"><span>Middle 50% scenario range</span><strong>${covered ? `${escapeHTML(formatCurrency(summary.q25, currency))}–${escapeHTML(formatCurrency(summary.q75, currency))}` : 'Unavailable'}</strong><small>${covered ? `Modeled midpoint ${escapeHTML(formatCurrency(summary.q50, currency))}` : 'No value anchors in this currency'}</small></div><div class="forecast"><span>Broad 80% scenario range</span><strong>${covered ? `${escapeHTML(formatCurrency(summary.q10, currency))}–${escapeHTML(formatCurrency(summary.q90, currency))}` : 'Unavailable'}</strong><small>Uncertainty is intentionally wide with short local histories</small></div></div>
+    ${projection}<dl class="forecast-summary-meta"><div><dt>Confidence</dt><dd>${escapeHTML(confidence)}<small>Qualitative disclosure, not an accuracy percentage</small></dd></div><div><dt>Coverage</dt><dd>${summary.coveredHoldings} of ${summary.totalHoldings} holdings<small>${summary.excludedCurrencyHoldings ? `${summary.excludedCurrencyHoldings} other-currency excluded` : 'No exchange rate guessed'}</small></dd></div></dl>
+    <p class="forecast-warning">Modeled scenario only. It never changes current portfolio value and does not claim a future sale price.</p></section>`;
+}
+
+function localScenarioAssetCard({ holding, scenario }, horizon) {
+  const name = holding.item?.name || 'Unnamed holding';
+  const identity = [holding.item?.setName, holding.item?.number, holding.item?.finish || holding.item?.variant].filter(Boolean).join(' · ');
+  const detail = `<button class="button ghost small" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">Open card detail</button>`;
+  if (!usableLocalScenario(scenario)) {
+    return `<article class="card forecast-availability-card unavailable"><div class="forecast-asset-head">${externalImage(holding.item, 'forecast-product-image')}<div><p class="eyebrow">Owned holding · Local scenario</p><h3>${escapeHTML(name)}</h3><p class="item-meta">${escapeHTML(identity || 'Saved collectible')}</p></div><span class="support-badge unsupported">${scenario.status === 'stale' ? 'Value stale' : 'Needs a value'}</span></div><p class="availability-reason">${escapeHTML(scenario.reason || 'No usable local value is saved.')}</p><p class="muted">${escapeHTML(scenario.nextAction || 'Edit the holding and add a current value.')}</p><div class="item-actions">${detail}</div></article>`;
+  }
+  const history = (scenario.history || []).filter((entry) => entry.source === scenario.source && entry.currency === scenario.currency);
+  const projection = forecastProjectionChart(scenario.observed, [scenario], scenario.currency, {
+    mode: 'local-scenario', history, asOfDate: scenario.observedAt
+  });
+  return `<article class="card forecast-availability-card local-scenario-card ${scenario.status}"><div class="forecast-asset-head">${externalImage(holding.item, 'forecast-product-image')}<div><p class="eyebrow">Owned holding · Local scenario</p><h3>${escapeHTML(name)}</h3><p class="item-meta">${escapeHTML(identity || 'Saved collectible')}</p></div><span class="support-badge partial">${escapeHTML(scenario.confidence.label)} confidence</span></div>
+    <div class="actual-forecast-split"><div class="actual"><span>Saved unit value</span><strong>${escapeHTML(formatCurrency(scenario.observed, scenario.currency))}</strong><small>${escapeHTML(scenario.source === 'manual' ? 'Your estimate' : scenario.sourceLabel || 'Catalog price')} · value date ${escapeHTML(dateLabel(scenario.valueAsOf || scenario.observedAt))}</small></div><div class="forecast"><span>${horizon}-day local scenario</span><strong>${escapeHTML(formatCurrency(scenario.q25, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q75, scenario.currency))}</strong><small>Middle 50% · midpoint ${escapeHTML(formatCurrency(scenario.q50, scenario.currency))}</small></div></div>${projection}
+    <dl class="forecast-explanation"><div><dt>Confidence</dt><dd>${escapeHTML(scenario.confidence.label)}<small>${escapeHTML(scenario.confidence.detail)}</small></dd></div><div><dt>Local history</dt><dd>${scenario.observationCount} same-source check${scenario.observationCount === 1 ? '' : 's'}<small>Manual and catalog series never create cross-source returns</small></dd></div><div><dt>Broad range</dt><dd>${escapeHTML(formatCurrency(scenario.q10, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q90, scenario.currency))}<small>80% modeled scenario range</small></dd></div><div><dt>Model</dt><dd>${escapeHTML(scenario.modelVersion)}<small>${scenario.excludedChangeCount ? `${scenario.excludedChangeCount} extreme change excluded` : 'No extreme changes entered the model'}</small></dd></div></dl>
+    <p class="forecast-warning">Your local scenario is not a market observation, appraisal, investment recommendation, or guaranteed return.</p><div class="item-actions">${detail}</div></article>`;
+}
+
+function publicationGateNotice() {
+  return `<section class="card intelligence-gate publication-gate" role="status"><span class="support-badge restricted">Research gate active</span><h2>Published market forecasts remain gated</h2><p>The local scenarios above do not wait for an approved source. Separately, public market forecasts remain hidden until their source-rights, exact-mapping, validation, feature-flag, and operator-review gates pass.</p><ul class="evidence-list"><li>Local ranges are labeled modeled scenarios from your saved values.</li><li>They never become measured Track Record outcomes.</li><li>No private research output is presented as public market guidance.</li></ul></section>`;
 }
 
 function forecastSummaryCard(summary, currency) {

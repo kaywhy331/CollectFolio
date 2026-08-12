@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.7.0';
+const CACHE = 'collectfolio-shell-v0.8.0';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
 const SHELL = [
@@ -9,7 +9,7 @@ const SHELL = [
   './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js',
   './assets/js/core/pricing-policy.js', './assets/js/core/compare.js', './assets/js/core/router.js',
   './assets/js/core/view-models.js', './assets/js/core/settings.js',
-  './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/db.js',
+  './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/local-scenarios.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
   './assets/js/views/insights.js', './assets/js/views/onboarding.js',
   './assets/js/views/price-intelligence-detail.js', './assets/js/views/quick-inspector.js', './assets/js/views/holding-form.js',

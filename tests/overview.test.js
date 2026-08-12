@@ -57,7 +57,7 @@ test('Overview discloses partial pricing and never fabricates forecast coverage'
     holdings: [holding('market'), holding('manual', { provider: 'custom', category: 'other', name: 'Manual item' }, { manualMarketPrice: 12 })]
   }));
   assert.match(html, /1 market · 1 manual · 0 unpriced/);
-  assert.match(html, /No approved public forecast is enabled/);
+  assert.match(html, /Local 90-day scenarios/);
   assert.match(html, /data-overview-range="3M" aria-pressed="true"/);
   assert.match(html, /Tracking began today/);
 });

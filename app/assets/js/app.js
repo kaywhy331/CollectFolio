@@ -1,4 +1,4 @@
-import { clearApplicationCacheStorage, clearLocalData, exportBackup, exportHoldingsCSV, getAll, importBackup, putRecord, readBackupFile, recordDailySnapshot, removeHolding, saveHolding } from './core/db.js';
+import { clearApplicationCacheStorage, clearLocalData, exportBackup, exportHoldingsCSV, getAll, importBackup, putRecord, readBackupFile, recordDailySnapshot, recordLocalHoldingObservations, removeHolding, saveHolding } from './core/db.js';
 import { portfolioSnapshotId } from './core/calculations.js';
 import { evaluateWatchlistAlerts } from './core/intelligence-alerts.js';
 import { INSIGHTS_HORIZONS, INSIGHTS_VIEWS } from './core/insights.js';
@@ -119,11 +119,18 @@ function runtimeFlag(name, fallback = false) {
 }
 
 async function loadLocal() {
-  const [holdings, snapshots, settingsRecords, scans, watchlistItems, alerts, deletions, watchlistDeletions, demandEvents] = await Promise.all([
-    getAll('holdings'), getAll('snapshots'), getAll('settings'), getAll('scans'),
-    getAll('watchlistItems'), getAll('alerts'), getAll('deletions'),
+  const [holdings, snapshots, initialLocalValueObservations, settingsRecords, scans, watchlistItems, alerts, deletions, watchlistDeletions, demandEvents] = await Promise.all([
+    getAll('holdings'), getAll('snapshots'), getAll('localValueObservations'), getAll('settings'),
+    getAll('scans'), getAll('watchlistItems'), getAll('alerts'), getAll('deletions'),
     getAll('watchlistDeletions'), getAll('demandEventsQueue')
   ]);
+  // Covers a v5 database populated from an older portable fixture after the
+  // upgrade already ran. Normal v4 upgrades are seeded atomically in db.js.
+  let localValueObservations = initialLocalValueObservations;
+  if (holdings.length && !localValueObservations.length) {
+    await recordLocalHoldingObservations(holdings);
+    localValueObservations = await getAll('localValueObservations');
+  }
   const retainedScans = await maintainCompletedScans(scans);
   const migration = migrateSettingsRecords(settingsRecords, { hasHoldings: holdings.length > 0 });
   if (migration.updates.length) await Promise.all(migration.updates.map((record) => putRecord('settings', record)));
@@ -141,6 +148,7 @@ async function loadLocal() {
     ...getState(),
     holdings,
     snapshots: currentPricingSnapshots(snapshots, settings.currency).sort((a, b) => a.date.localeCompare(b.date)),
+    localValueObservations,
     scanDrafts,
     watchlistItems: watchlistItems.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))),
     compare: (getState().compare || []).filter((key) => watchlistItems.some((entry) => entry.watchKey === key)),

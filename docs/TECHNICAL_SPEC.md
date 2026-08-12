@@ -132,7 +132,7 @@ The current view is rendered after state mutation. Complex modal workflows own t
 
 ### 4.2 IndexedDB
 
-Database: `collectfolio`, version 4. New exports use interchange version 2; version 1 backups remain importable.
+Database: `collectfolio`, additive version 5. New exports use interchange version 2; version 1 backups remain importable. Version 5 adds `localValueObservations` and seeds one current anchor for already-valued version-4 holdings without inventing history.
 
 | Store | Key | Contents |
 |---|---|---|
@@ -145,10 +145,14 @@ Database: `collectfolio`, version 4. New exports use interchange version 2; vers
 | `watchlistItems` | `id` | Exact source or canonical variant snapshot plus alert preferences |
 | `watchlistDeletions` | `id` | Watch-key tombstones for deterministic cross-device deletion sync |
 | `intelligenceCache` | `key` | Last approved public intelligence payloads; no research data |
+| `localValueObservations` | `id` | Source-separated, append-only daily unit-value checks for owned holdings; same-day corrections link with `supersedes` |
 | `alerts` | `id` | Local in-app alert state |
 | `demandEventsQueue` | `id` | Private limited-retention signed-in analytics outbox; excluded from portable backups |
 
-Indexes on holdings include `catalogId` and `updatedAt`.
+Indexes on holdings include `catalogId` and `updatedAt`. Local value observations
+are indexed by `subjectId` and `observedAt`. Their `observedAt` is the device capture
+time; optional `sourceUpdatedAt` retains the catalog's declared price date and governs
+freshness without being mislabeled as device-observed market history.
 
 Optional cloud sync records the current day's valuation after holdings merge, then reconciles only well-formed `rights-aware-v1` snapshots by canonical currency/day ID and ISO `updatedAt`. New rows use `portfolio:CCC:YYYY-MM-DD`; existing `portfolio:YYYY-MM-DD` rows are read as their embedded currency and canonicalized without deleting the compatibility row. Local and hosted identities must agree on currency, date, and `snapshot_date`; legacy-policy, mismatched, negative, non-finite, or fractional-count records do not cross the sync boundary. Equal timestamps use a stable payload tie-break, and the client never treats an absent hosted snapshot as a deletion.
 
@@ -422,9 +426,9 @@ The browser requests publications only for deduplicated canonical UUIDs represen
 
 The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid or above-tier layers are omitted rather than repaired or guessed. A Tier-4 product outlook plots an approved history line when one is published, marks the present boundary, and renders future medians as a dotted path inside distinct 50%/80% quantile bands. The browser never reconstructs history from trend percentages or extrapolates a forecast from them; without both an approved observation and approved forecast, the projection graph is absent.
 
-Insights has independent restorable Performance, Forecasts, Alerts, and Track Record routes. Performance consumes only local portfolio snapshots. Portfolio forecast aggregation excludes manual values, unmapped holdings, missing horizons, missing approved observations, and currencies that would require an unapproved conversion. Confidence scores are preserved item-by-item as a score or range rather than averaged into a new claim. Actual current value and modeled future range remain separate in markup, copy, and visual treatment.
+Insights has independent restorable Performance, Forecasts, Alerts, and Track Record routes. Performance consumes only local portfolio snapshots. Local Scenario Outlooks use source-separated saved unit values and qualitative confidence, work from a single deliberately broad anchor, refuse values stale beyond 180 days, and never feed Track Record. Published portfolio forecast aggregation remains separate and excludes manual values, unmapped holdings, missing horizons, missing approved observations, and currencies that would require an unapproved conversion. Confidence scores are preserved item-by-item as a score or range rather than averaged into a new claim. Actual current value and either modeled future product remain separate in markup, copy, and visual treatment.
 
-The latest publication keeps the bounded `intelligence:v1:` TTL cache. Refresh also writes a content-addressed `intelligence-history:v1:` receipt into the existing version-4 `intelligenceCache` store only when its key does not exist. These public-payload receipts support revision links and open/matured status without exposing private prediction ledgers. The browser never derives maturity outcomes or accuracy from a later current price. It shows evaluation fields only when a complete approved record exists and aggregate percentages only from Tier 5 scorecards. Alert read and per-notification mute timestamps remain optional backward-compatible fields in the existing `alerts` store.
+The latest publication keeps the bounded `intelligence:v1:` TTL cache. Refresh also writes a content-addressed `intelligence-history:v1:` receipt into the existing `intelligenceCache` store only when its key does not exist. These public-payload receipts support revision links and open/matured status without exposing private prediction ledgers. The browser never derives maturity outcomes or accuracy from a later current price. It shows evaluation fields only when a complete approved record exists and aggregate percentages only from Tier 5 scorecards. Alert read and per-notification mute timestamps remain optional backward-compatible fields in the existing `alerts` store.
 
 The Python analytics core requires exact series identity plus `observed_at` and `available_at`; only accepted records knowable at the feature cutoff enter a snapshot. Outliers remain in the immutable ledger and its audit hash but never become features or realized targets. It implements deterministic canonical rows, conservative mapping candidates, rights-gated observation packets, descriptive features, no-change/damped-momentum baselines, quantile validation, pull-scarcity formulas, and the research-only legacy formula. Evaluation uses the seven-day maturity median and reports point, direction, probability, interval, and baseline-relative metrics.
 
@@ -454,7 +458,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.7.0` includes the Settings and onboarding modules. Navigation
+`collectfolio-shell-v0.8.0` includes the Settings, onboarding, and local-scenario modules. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth.

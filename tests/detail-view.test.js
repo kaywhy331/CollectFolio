@@ -54,6 +54,20 @@ test('mapped card without a publication states unavailability honestly', () => {
   assert.match(html, /disabled until source rights/);
 });
 
+test('owned card detail renders a local scenario even when public intelligence is disabled', () => {
+  const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
+  const holding = {
+    id: 'owned-local', canonicalVariantId: variantId, item, quantity: 1,
+    manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
+  };
+  const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef, holding }, baseState({ holdings: [holding] }));
+  assert.match(html, /Local scenario outlook/);
+  assert.match(html, /Your estimate/);
+  assert.match(html, /local-scenario-chart/);
+  assert.match(html, /No forecast published/);
+  assert.doesNotMatch(html, /Approved forecast projection/);
+});
+
 test('tier-4 publication renders observed, trend, fair value, forecast, and drivers separately', () => {
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const state = baseState({

@@ -385,6 +385,9 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .forecast-band-80 { fill: color-mix(in srgb, var(--blue) 11%, transparent); }
 .forecast-band-50 { fill: color-mix(in srgb, var(--blue) 22%, transparent); }
 .forecast-history { stroke: var(--accent); }
+.local-scenario-chart .forecast-band-80 { fill: color-mix(in srgb, var(--accent) 10%, transparent); }
+.local-scenario-chart .forecast-band-50 { fill: color-mix(in srgb, var(--accent) 20%, transparent); }
+.local-scenario-chart .forecast-median { stroke: var(--accent); }
 .forecast-present { stroke: var(--warning); stroke-width: 2; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
 .forecast-median { stroke: var(--blue); stroke-dasharray: 10 7; }
 .forecast-point { fill: var(--blue); }
@@ -599,6 +602,8 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .forecast-summary-meta dd, .forecast-explanation dd, .scorecard-metrics dd, .prediction-history-card dd, .forecast-advanced dd { margin: 0; overflow-wrap: anywhere; font-size: .78rem; font-weight: 800; }
 .forecast-summary-meta small, .forecast-explanation small { display: block; margin-top: .12rem; color: var(--muted); font-size: .64rem; font-weight: 400; }
 .forecast-warning { margin: var(--space-4) 0 0; padding: var(--space-3); color: var(--warning); font-size: .7rem; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border)); border-radius: var(--radius-control); }
+.local-scenario-summary, .local-scenario-card { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }
+.publication-gate { border-style: dashed; }
 .insights-forecast-list, .alert-history-list, .scorecard-list, .prediction-history-list { display: grid; gap: var(--space-3); }
 .forecast-availability-card { min-width: 0; padding: var(--space-4); }
 .forecast-availability-card.available { border-color: color-mix(in srgb, var(--blue) 34%, var(--border)); }

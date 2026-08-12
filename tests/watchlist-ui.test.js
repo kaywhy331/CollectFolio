@@ -86,7 +86,8 @@ test('search shows watching state and forecast center publishes no invented numb
 
   const forecasts = renderInsights(baseState());
   assert.match(forecasts, /Research gate active/);
-  assert.doesNotMatch(forecasts, /Probability of gain|1-year outlook|\$845/);
+  assert.match(forecasts, /Published market forecasts remain gated/);
+  assert.doesNotMatch(forecasts, /Probability of gain|\$845/);
 });
 
 test('multi-finish search results require an explicit finish choice before watching', () => {

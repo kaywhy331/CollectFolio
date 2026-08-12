@@ -2,7 +2,7 @@
 
 Date: August 10, 2026
 
-Status: Implemented locally; repository qualification is recorded below
+Status: Extended for the 0.8.0 local-scenario release
 Governing requirements: `PRD/redesign.md` Phase 4 and sections 10.8, 10.18, and 11.3
 
 ## Review boundary
@@ -12,6 +12,12 @@ URL-restorable workspace with Performance, Forecasts, Alerts, and Track Record. 
 uses only local portfolio records and rights-cleared public intelligence publications.
 It does not expose private research tables or enable the public-intelligence feature
 flag.
+
+The 0.8.0 extension separates two products. **Local Scenario Outlooks** are always
+available from the collector's own saved catalog values or explicitly labeled
+estimates. **Published Market Forecasts** retain the existing Tier 4/publication
+gates. Track Record remains publication-only because a local scenario cannot claim
+measured accuracy.
 
 The supported paths are:
 
@@ -47,11 +53,41 @@ URL. Browser Back still closes Quick Inspector before leaving Insights.
   exact-item links, rule editing, mark-all-read, and per-notification mute controls.
 - Added append-only local public-forecast receipts and a Track Record that displays
   percentages only from complete Tier 5 scorecards.
+- Added append-only daily local unit-value observations and an immediate broad
+  scenario from the first saved value, without reconstructing historical prices.
+- Added source-separated per-holding and portfolio scenario ranges, qualitative
+  confidence labels, staleness refusal, and concentration/cost-basis insights.
+- Added a local-scenario Forecast Ribbon mode while preserving the approved-publication
+  default and its existing fail-closed validation.
+
+## Local scenario contract
+
+Local scenarios use only values stored for an owned holding. The latest usable value
+anchors each range and is labeled **Your estimate** or with its saved catalog source
+and date. `observedAt` records when this device captured the saved value;
+`sourceUpdatedAt` separately retains a catalog's declared price date when available,
+and that earlier date governs freshness. Manual and catalog observations remain
+separate series and never create a cross-source return. A changed same-day value
+appends a unique correction that references the active predecessor with `supersedes`;
+an unchanged repeat adds no row. Future records are excluded, superseded records are
+ignored, and extreme changes are quarantined.
+
+Irregularly spaced log returns feed calendar-time EWMA drift and volatility. Drift
+uses a 180-day half-life and is shrunk toward zero by `spanDays / (spanDays + 730)`;
+volatility uses a 60-day half-life, blends toward a 2.5% daily prior by `n/(n+10)`,
+and is bounded to 1.5–6%. Student-t (df=4) scenario quantiles use fixed q10/q25/q50/
+q75/q90 scores. Horizon drift and volatility caps keep early ranges finite and broad.
+A saved value older than 180 days produces no projection.
+
+Early, Low, Developing, and Moderate are disclosure labels, not accuracy percentages.
+One observation intentionally produces a prior-driven range. Local scenario values
+never enter current portfolio totals, actual history, alerts based on approved market
+movement, immutable public forecast receipts, or Track Record accuracy.
 
 ## Performance contract
 
-Performance is local recorded history, not forecast performance. It uses the existing
-version-4 portfolio snapshots and current holding calculations. The screen labels:
+Performance is local recorded history, not forecast performance. It uses existing
+portfolio snapshots and current holding calculations. The screen labels:
 
 - total recorded portfolio value;
 - market/catalog-valued holdings;
@@ -60,7 +96,7 @@ version-4 portfolio snapshots and current holding calculations. The screen label
 - unrealized gain or loss;
 - movement across the selected local snapshot range.
 
-Manual and market values remain visibly separated in the source breakdown. Modeled
+Manual and catalog values remain visibly separated in the source breakdown. Modeled
 fair value and future forecasts are never inserted into current value, gain/loss, or
 historical snapshots. A first-day portfolio states that no earlier snapshot exists
 instead of inventing a return.
@@ -148,7 +184,7 @@ display still requires the public feature flag and normalization gates.
 
 ## Alerts contract
 
-Alert history uses the existing version-4 `alerts` store. It exposes events created by
+Alert history uses the existing `alerts` store. It exposes events created by
 approved Watchlist-intelligence evaluation and preserves exact `watchKey` and canonical
 variant identity. The screen supports All, Unread, and Muted filters, plus:
 
@@ -169,9 +205,13 @@ current client does not record.
 
 ## Compatibility and safety
 
-- IndexedDB remains `collectfolio` version 4.
+- IndexedDB is additively upgraded to `collectfolio` version 5 with a
+  `localValueObservations` store and `subjectId`/`observedAt` indexes.
 - Existing holdings, snapshots, Watchlist rows, alerts, cache rows, and backups remain
   readable without conversion.
+- A v4 upgrade records one current observation for each already-valued holding; it
+  never backfills history. Version-1 and version-2 backups remain importable, and
+  current exports include the new store.
 - Existing exact-key Watchlist migration and tombstone behavior is unchanged.
 - Public-intelligence data remains empty in application state when the feature flag is
   disabled.
@@ -208,13 +248,15 @@ limited and missing-horizon states, confidence disclosure, immutable history lin
 maturity handling, Tier 5 scorecard gating, alert filters, fail-closed rendering, and
 content-addressed receipt deduplication.
 
-Browser acceptance protects the dormant fail-closed state and a fully approved
-synthetic Phase 4 path: actual/forecast separation, portfolio range math, historical
-Ribbon and present marker, horizon unavailability, alert read/mute persistence,
-Track Record gating, route restoration, and serious/critical accessibility checks.
+Browser acceptance protects the always-available local scenario path, append-only
+same-day corrections, v4-to-v5 migration, the dormant fail-closed publication state,
+and a fully approved synthetic Phase 4 path: actual/forecast separation, portfolio
+range math, historical Ribbon and present marker, horizon unavailability, alert
+read/mute persistence, Track Record gating, route restoration, and serious/critical
+accessibility checks.
 
-The service-worker shell is `collectfolio-shell-v0.6.0`. Final repository and browser
-qualification is recorded in `docs/IMPLEMENTATION_PLAN.md`.
+The service-worker shell is `collectfolio-shell-v0.8.0`. The 0.8.0 release receipt is
+recorded below after immutable hosted-candidate and production-alias qualification.
 
 ## Deferred capabilities
 

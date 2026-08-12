@@ -59,10 +59,23 @@ async function expectNoBlockingAccessibilityViolations(page) {
 }
 
 async function seedLegacyIndexedDB(page) {
-  await openApp(page);
+  // Use a same-origin inert document so the v4 fixture exists before any v5
+  // application module can open and upgrade it.
+  await page.goto('/manifest.webmanifest');
   await page.evaluate(async ({ databaseName, databaseVersion, stores }) => {
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(databaseName);
+      request.addEventListener('success', resolve, { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+      request.addEventListener('blocked', () => reject(new Error('Existing CollectFolio database remained open.')), { once: true });
+    });
     const database = await new Promise((resolve, reject) => {
       const request = indexedDB.open(databaseName, databaseVersion);
+      request.addEventListener('upgradeneeded', () => {
+        const keyPaths = { settings: 'key', catalogCache: 'key', intelligenceCache: 'key' };
+        for (const name of Object.keys(stores)) request.result.createObjectStore(name, { keyPath: keyPaths[name] || 'id' });
+        request.result.createObjectStore('demandEventsQueue', { keyPath: 'id' });
+      }, { once: true });
       request.addEventListener('success', () => resolve(request.result), { once: true });
       request.addEventListener('error', () => reject(request.error), { once: true });
     });
@@ -80,7 +93,7 @@ async function seedLegacyIndexedDB(page) {
     });
     database.close();
   }, legacyBackup);
-  await page.reload();
+  await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 }
 
@@ -90,7 +103,7 @@ async function configureApprovedPhase4Publication(page) {
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
       SUPABASE_URL: window.location.origin + '/__phase4-cloud',
       SUPABASE_ANON_KEY: 'synthetic-browser-key',
-      APP_VERSION: '0.7.0-test',
+      APP_VERSION: '0.8.0-test',
       ENABLE_TESSERACT: false,
       ENABLE_PRICE_INTELLIGENCE: true
     });`
@@ -147,7 +160,7 @@ async function configureApprovedPhase4Publication(page) {
 async function seedPhase4Alert(page) {
   await page.evaluate(async () => {
     const database = await new Promise((resolve, reject) => {
-      const request = indexedDB.open('collectfolio', 4);
+      const request = indexedDB.open('collectfolio');
       request.addEventListener('success', () => resolve(request.result), { once: true });
       request.addEventListener('error', () => reject(request.error), { once: true });
     });
@@ -285,11 +298,39 @@ test('routes restore filters and Quick Inspector preserves context, focus, and f
   await expect(page.getByRole('heading', { name: 'Portfolio' })).toBeVisible();
 
   await page.goto('/holdings/10000000-0000-4000-8000-000000000001');
-  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
 });
 
 test('version-4 local data hydrates calculations, holdings, and scan recovery', async ({ page }) => {
   await seedLegacyIndexedDB(page);
+  const migration = await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('collectfolio');
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const transaction = database.transaction('localValueObservations');
+    const store = transaction.objectStore('localValueObservations');
+    const rows = await new Promise((resolve, reject) => {
+      const request = store.getAll();
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const result = {
+      version: database.version,
+      indexes: [...store.indexNames],
+      rows: rows.map(({ subjectId, source, unitPrice }) => ({ subjectId, source, unitPrice }))
+    };
+    database.close();
+    return result;
+  });
+  expect(migration.version).toBe(5);
+  expect(migration.indexes).toEqual(expect.arrayContaining(['subjectId', 'observedAt']));
+  expect(migration.rows).toHaveLength(2);
+  expect(migration.rows).toEqual(expect.arrayContaining([
+    expect.objectContaining({ subjectId: '10000000-0000-4000-8000-000000000001', source: 'catalog', unitPrice: 12 }),
+    expect.objectContaining({ subjectId: '10000000-0000-4000-8000-000000000002', source: 'manual' })
+  ]));
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
   const summary = page.getByRole('region', { name: 'Portfolio performance' });
   await expect(summary).toContainText('$79.00');
@@ -299,7 +340,7 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Portfolio' }).click();
   await expect(page.getByText('3 holdings')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Rights Gate ex' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Unpriced Comic' })).toBeVisible();
 
@@ -317,6 +358,37 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   await page.getByRole('button', { name: 'View portfolio' }).click();
   await expect(page.getByText('4 holdings')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Scan Draft' })).toBeVisible();
+});
+
+test('same-day local value corrections stay append-only in IndexedDB', async ({ page }) => {
+  await seedLegacyIndexedDB(page);
+  const ledger = await page.evaluate(async () => {
+    const [{ getAll, getRecord, saveHolding }, { normalizeLocalObservations }] = await Promise.all([
+      import('/assets/js/core/db.js'),
+      import('/assets/js/core/local-scenarios.js')
+    ]);
+    const original = await getRecord('holdings', '10000000-0000-4000-8000-000000000001');
+    const first = await saveHolding({ ...original, item: { ...original.item, price: 13 } });
+    const second = await saveHolding({ ...first, item: { ...first.item, price: 14 } });
+    await saveHolding(second);
+    const rows = (await getAll('localValueObservations'))
+      .filter((row) => row.subjectId === original.id && row.source === 'catalog');
+    const active = normalizeLocalObservations(rows).at(-1);
+    return {
+      rowCount: rows.length,
+      uniqueIds: new Set(rows.map((row) => row.id)).size,
+      supersedingRows: rows.filter((row) => row.supersedes).length,
+      activePrice: active?.unitPrice,
+      sourceUpdatedAt: active?.sourceUpdatedAt
+    };
+  });
+  expect(ledger).toEqual({
+    rowCount: 3,
+    uniqueIds: 3,
+    supersedingRows: 2,
+    activePrice: 14,
+    sourceUpdatedAt: '2026-08-08T10:00:00.000Z'
+  });
 });
 
 test('Phase 3 collection tools stay selection-scoped and Watchlist removal is confirmed', async ({ page }) => {
@@ -354,11 +426,13 @@ test('Phase 3 collection tools stay selection-scoped and Watchlist removal is co
   await expect(page.getByRole('heading', { name: 'Track cards before you buy' })).toBeVisible();
 });
 
-test('public forecast presentation remains fail closed', async ({ page }) => {
+test('local scenarios work while published forecast presentation remains fail closed', async ({ page }) => {
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Insights' }).click();
-  await expect(page.getByRole('heading', { name: 'Forecasts are not publicly available' })).toBeVisible();
-  await expect(page.locator('.projection-chart')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '90-day portfolio range' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Published market forecasts remain gated' })).toBeVisible();
+  await expect(page.getByRole('img', { name: /Local scenario projection/ }).first()).toBeVisible();
+  await expect(page.getByRole('img', { name: /Approved forecast projection/ })).toHaveCount(0);
 });
 
 test('Phase 4 Insights separates actuals and forecasts, persists alert state, and gates track-record metrics', async ({ page }) => {
@@ -368,14 +442,14 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Insights' }).click();
   await expect(page).toHaveURL(/\/insights\?view=forecasts$/);
-  const summary = page.locator('.portfolio-forecast-summary');
+  const summary = page.locator('.portfolio-forecast-summary').filter({ hasText: 'Portfolio forecast summary' });
   await expect(summary).toContainText('Current recorded portfolio value');
   await expect(summary).toContainText('$79.00');
   await expect(summary).toContainText('$26.00–$38.00');
   await expect(summary).toContainText('1 of 3 holdings');
-  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
   await expect(page.getByRole('img', { name: /Approved forecast projection/ })).toBeVisible();
-  await expect(page.getByText('Present boundary')).toBeVisible();
+  await expect(page.getByText('Present boundary').first()).toBeVisible();
   await expect(page.getByText(/reviewed exact-variant history supports/i)).toBeVisible();
   await expectNoBlockingAccessibilityViolations(page);
 

@@ -17,7 +17,7 @@ const required = [
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
   'app/assets/js/services/justtcg-refresh.js',
   'app/assets/js/core/catalog-identity.js', 'app/assets/js/core/intelligence-contract.js',
-  'app/assets/js/core/intelligence-alerts.js', 'app/assets/js/core/insights.js',
+  'app/assets/js/core/intelligence-alerts.js', 'app/assets/js/core/insights.js', 'app/assets/js/core/local-scenarios.js',
   'app/assets/js/views/insights.js', 'app/assets/js/views/onboarding.js', 'app/assets/js/views/profile.js',
   'analytics/pyproject.toml', 'analytics/README.md',
   'analytics/src/collectfolio_analytics/observations.py', 'analytics/src/collectfolio_analytics/trends.py',
@@ -82,6 +82,7 @@ const required = [
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
   'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md',
   'tests/redesign-protection.test.js',
+  'tests/local-scenarios.test.js',
   'tests/router.test.js', 'tests/view-models.test.js', 'tests/overview.test.js',
   'tests/discover.test.js', 'tests/portfolio-redesign.test.js',
   'tests/intake-management.test.js', 'tests/watchlist-management.test.js', 'tests/insights.test.js',
@@ -111,8 +112,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.7.0' || packageLock.version !== '0.7.0' || packageLock.packages?.['']?.version !== '0.7.0') {
-  errors.push('Application and lockfile versions must agree on 0.7.0.');
+if (packageJSON.version !== '0.8.0' || packageLock.version !== '0.8.0' || packageLock.packages?.['']?.version !== '0.8.0') {
+  errors.push('Application and lockfile versions must agree on 0.8.0.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -261,8 +262,8 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.7.0-dev'")) errors.push('Local runtime config must identify the 0.7.0 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.7.0'")) errors.push('Production builds must default APP_VERSION to 0.7.0.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.0-dev'")) errors.push('Local runtime config must identify the 0.8.0 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.0'")) errors.push('Production builds must default APP_VERSION to 0.8.0.');
 
 const ordinaryUiFiles = [
   resolve(app, 'index.html'), resolve(app, 'assets/js/app.js'),
@@ -368,7 +369,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.7.0'")) errors.push('Service worker cache name must be collectfolio-shell-v0.7.0.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.0'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.0.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;

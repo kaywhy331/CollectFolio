@@ -23,8 +23,9 @@ test('version-4 IndexedDB fixture remains a version-2 portable backup shape', as
   assert.equal(baseline.databaseVersion, 4);
   assert.deepEqual(
     Object.keys(baseline.stores).sort(),
-    STORES.filter((name) => !BACKUP_EXCLUDED_STORES.includes(name)).sort()
+    STORES.filter((name) => !BACKUP_EXCLUDED_STORES.includes(name) && name !== 'localValueObservations').sort()
   );
+  assert.ok(STORES.includes('localValueObservations'));
   assert.deepEqual(BACKUP_EXCLUDED_STORES, ['demandEventsQueue']);
   assert.doesNotThrow(() => validateBackup(baseline));
 });
