@@ -258,6 +258,27 @@ accessibility checks.
 The service-worker shell is `collectfolio-shell-v0.8.0`. The 0.8.0 release receipt is
 recorded below after immutable hosted-candidate and production-alias qualification.
 
+### 0.8.0 release receipt — August 12, 2026
+
+- Application commit `dfeafbf` contains the shipped local-scenario implementation;
+  test-harness follow-up `ca31443` makes the v4 migration fixture portable across
+  hosts without changing the deployed application artifact.
+- `npm run check` passed the 130-file/43-browser-module validator, 248 Node tests,
+  194 Python analytics tests, and the production 0.8.0 build.
+- `npm audit --omit=dev` reported zero vulnerabilities; `git diff --check` passed.
+- All 16 Chromium scenarios passed locally, on immutable Netlify candidate
+  `6a7c96d51e890b9fd17baef7`, and again after that exact deploy was promoted to
+  `https://collectfolio-staging.netlify.app`.
+- The deployed static artifact digest was
+  `2674ca413631884746848be69a87d8be17593b457c895296be259d973d30d3a2`.
+- Netlify site `05b0e479-ad35-4466-a5c0-fa40d93d1a77` reports that candidate as its
+  published deploy. Runtime version 0.8.0, deep-link fallback, production CSP,
+  `collectfolio-shell-v0.8.0`, v4-to-v5 migration, append-only correction ledger,
+  local scenario UI, and offline reload all passed hosted verification.
+- `ENABLE_PRICE_INTELLIGENCE=false` and `ENABLE_CLOUD_DATA_REMOVAL=false` remained
+  fail closed. No Supabase migration, hosted data mutation, source approval, public
+  forecast publication, or operator-review state was created or changed.
+
 ## Deferred capabilities
 
 Public feature enablement, production Tier 4/5 publications, notification delivery
