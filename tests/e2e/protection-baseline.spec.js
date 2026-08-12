@@ -59,9 +59,16 @@ async function expectNoBlockingAccessibilityViolations(page) {
 }
 
 async function seedLegacyIndexedDB(page) {
-  // Use a same-origin inert document so the v4 fixture exists before any v5
-  // application module can open and upgrade it.
-  await page.goto('/manifest.webmanifest');
+  // Fulfill a same-origin inert HTML document so the v4 fixture exists before
+  // any v5 application module can open and upgrade it. A real manifest is not
+  // suitable here because production hosts may serve it as a download.
+  const fixturePath = '/__collectfolio-indexeddb-fixture__.html';
+  await page.route(`**${fixturePath}`, (route) => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><title>CollectFolio IndexedDB fixture</title>'
+  }));
+  await page.goto(fixturePath);
+  await page.unroute(`**${fixturePath}`);
   await page.evaluate(async ({ databaseName, databaseVersion, stores }) => {
     await new Promise((resolve, reject) => {
       const request = indexedDB.deleteDatabase(databaseName);
