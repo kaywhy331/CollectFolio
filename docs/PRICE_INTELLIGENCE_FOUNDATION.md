@@ -97,7 +97,7 @@ If migration 0002 is absent, local Watchlist remains fully usable. Existing hold
 
 ## Rollback
 
-- Build with `ENABLE_PRICE_INTELLIGENCE=false` to hide the Watchlist/Forecasts surface without deleting IndexedDB records.
+- Build with `ENABLE_PRICE_INTELLIGENCE=false` to keep public intelligence and forecasts fail-closed without deleting IndexedDB records. Local Watchlist availability is controlled independently by `ENABLE_WATCHLISTS`.
 - Set the server `watchlists` product flag to false after migration to disable the surface for configured clients.
 - Set `public_price_intelligence=false` to prevent the client from presenting publication availability.
 - After migration 0006, the same database flag also blocks the RLS read predicate; use `disable_public_intelligence(...)` for a per-card disable so an immutable control event is recorded.

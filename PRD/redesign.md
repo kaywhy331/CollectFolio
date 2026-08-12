@@ -1955,6 +1955,13 @@ Recommended normalized values:
 
 # 12. Analytics and Product Measurement
 
+**Release 0.7.0 disposition:** ship only the documented, optional, privacy-scoped
+private demand-event contract. The broader taxonomy below remains a future measurement
+plan and is not a release gate for 0.7.0. No uploaded image, private note, seller,
+storage location, or general navigation funnel is transmitted by this release.
+This scope reduction preserves useful product behavior without inventing general
+telemetry before a separately reviewed privacy and environment-separation plan exists.
+
 ## 12.1 Required events
 
 Recommended event taxonomy:

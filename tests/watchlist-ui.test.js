@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { catalogReferenceForItem } from '../app/assets/js/core/catalog-identity.js';
 import { renderPortfolio } from '../app/assets/js/views/portfolio.js';
+import { renderInsights } from '../app/assets/js/views/insights.js';
 import { renderSearch } from '../app/assets/js/views/search.js';
 
 const item = {
@@ -15,21 +16,27 @@ function baseState(overrides = {}) {
     holdings: [],
     watchlistItems: [],
     settings: { currency: 'USD' },
+    snapshots: [],
+    overview: { range: '3M' },
+    insights: { view: 'forecasts', horizon: 90, alertFilter: 'all' },
     portfolio: { section: 'holdings', query: '', category: 'all', sort: 'recent-desc' },
     featureFlags: { watchlists: true, publicPriceIntelligence: false },
-    intelligence: { byVariant: {}, loading: false, error: '' },
+    intelligence: { byVariant: {}, history: [], loading: false, error: '' },
     alerts: [],
     search: { query: '', category: 'all', provider: 'all', loading: false, results: [], warnings: [] },
     ...overrides
   };
 }
 
-test('portfolio exposes the three sections without adding primary navigation', () => {
+test('portfolio exposes supported collection sections while forecasts remain under Insights', () => {
   const html = renderPortfolio(baseState());
   assert.match(html, /role="tablist"/);
   assert.match(html, />Holdings</);
   assert.match(html, />Watchlist</);
-  assert.match(html, />Forecasts</);
+  assert.doesNotMatch(html, />Forecasts</);
+  const insights = renderInsights(baseState());
+  assert.match(insights, /<h1>Insights<\/h1>/);
+  assert.match(insights, /Insights sections/);
 });
 
 test('watchlist renders exact identity safely and explains unsupported intelligence', () => {
@@ -39,8 +46,8 @@ test('watchlist renders exact identity safely and explains unsupported intellige
     watchlistItems: [{ id: catalogRef.watchKey, watchKey: catalogRef.watchKey, catalogRef, canonicalVariantId: '', targetPrice: '', updatedAt: '2026-08-05T00:00:00.000Z' }]
   }));
   assert.doesNotMatch(html, /<script>bad<\/script>/);
-  assert.match(html, /Tier 0/);
-  assert.match(html, /awaiting canonical mapping/);
+  assert.match(html, /Card identified; pricing pending/);
+  assert.match(html, /awaiting card verification/);
   assert.match(html, /data-action="edit-watch"/);
 });
 
@@ -71,15 +78,13 @@ test('search shows watching state and forecast center publishes no invented numb
     watchlistItems: [{ id: catalogRef.watchKey, watchKey: catalogRef.watchKey, catalogRef }],
     search: { query: 'Charizard', category: 'pokemon', provider: 'pokemon', loading: false, results: [legacyPricedItem], warnings: [] }
   }));
-  assert.match(search, /★ Watching/);
-  assert.match(search, /Add to portfolio/);
+  assert.match(search, />Watching</);
+  assert.match(search, /data-action="add-catalog"/);
   assert.doesNotMatch(search, /Review and add/);
-  assert.match(search, /Price unavailable/);
+  assert.match(search, /Pricing not supported/);
   assert.doesNotMatch(search, /Choose finish|\$90\.00|\$70\.00/);
 
-  const forecasts = renderPortfolio(baseState({
-    portfolio: { section: 'forecasts', query: '', category: 'all', sort: 'recent-desc' }
-  }));
+  const forecasts = renderInsights(baseState());
   assert.match(forecasts, /Research gate active/);
   assert.doesNotMatch(forecasts, /Probability of gain|1-year outlook|\$845/);
 });
@@ -97,9 +102,9 @@ test('multi-finish search results require an explicit finish choice before watch
 
 test('forecast center renders only a validated approved publication contract', () => {
   const variantId = '123e4567-e89b-42d3-a456-426614174000';
-  const html = renderPortfolio(baseState({
-    holdings: [{ id: 'holding', canonicalVariantId: variantId, item }],
-    portfolio: { section: 'forecasts', query: '', category: 'all', sort: 'recent-desc' },
+  const html = renderInsights(baseState({
+    holdings: [{ id: 'holding', canonicalVariantId: variantId, item, quantity: 1, manualMarketPrice: '' }],
+    insights: { view: 'forecasts', horizon: 30, alertFilter: 'all' },
     featureFlags: { watchlists: true, publicPriceIntelligence: true },
     intelligence: { byVariant: { [variantId]: {
       variantId, supportTier: 4, reasonCodes: [], sourceAttributions: [{ name: 'Approved source' }],
@@ -107,12 +112,12 @@ test('forecast center renders only a validated approved publication contract', (
         observed: { price: 100, currency: 'USD', source: 'Approved source' },
         forecasts: { 30: { q10: 80, q25: 90, q50: 105, q75: 120, q90: 140, probabilityUp: 0.6, confidence: 58, modelVersion: 'baseline-v1' } }
       }
-    } }, loading: false, error: '' }
+    } }, history: [], loading: false, error: '' }
   }));
   assert.match(html, /30-day outlook/);
   assert.match(html, /Approved forecast projection/);
   assert.match(html, /Observed now/);
-  assert.match(html, /1 product · 1 approved horizon/);
+  assert.match(html, /1 of 1 holdings/);
   assert.match(html, /\$105\.00/);
   assert.match(html, /60%/);
   assert.match(html, /baseline-v1/);

@@ -22,8 +22,8 @@ export function emptyState(title, detail, action = '') {
 export function priceDisclosure(item, currency = 'USD') {
   const restricted = catalogPriceDisclosure(item);
   if (restricted) return `<span class="price-source">${escapeHTML(restricted)}</span>`;
-  if (!item?.priceSource) return '<span class="muted">No provider price</span>';
+  if (!item?.priceSource) return '<span class="muted">Market pricing unavailable</span>';
   const price = catalogPriceForValuation(item);
-  if (price === null) return '<span class="muted">No provider price</span>';
+  if (price === null) return '<span class="muted">Market pricing unavailable</span>';
   return `<span class="price-source">${escapeHTML(formatCurrency(price, currency))} · ${escapeHTML(item.priceSource)} · ${escapeHTML(item.priceUpdatedAt ? new Date(item.priceUpdatedAt).toLocaleDateString() : 'date unavailable')}</span>`;
 }

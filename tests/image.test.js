@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { connectedComponents, detectBoundaries, differenceHash, gridBoxes, hashSimilarity, mergeBoxes } from '../app/assets/js/services/image-algorithms.js';
-import { extractOCRQuery, withTimeout } from '../app/assets/js/services/image.js';
+import { extractOCRQuery, fileToImageDataURL, MAX_IMAGE_FILE_BYTES, validateImageFile, withTimeout } from '../app/assets/js/services/image.js';
 
 test('four-neighbor components keep diagonally separated shapes distinct', () => {
   const mask = new Uint8Array([
@@ -67,4 +67,13 @@ test('OCR deadlines resolve completed work and reject stalled work', async () =>
     withTimeout(new Promise(() => {}), 5, 'OCR deadline reached.'),
     (error) => error.name === 'TimeoutError' && error.message === 'OCR deadline reached.'
   );
+});
+
+test('image files are bounded before FileReader allocates their payload', () => {
+  const valid = { size: MAX_IMAGE_FILE_BYTES };
+  assert.equal(validateImageFile(valid), valid);
+  assert.throws(() => validateImageFile({ size: 0 }), /empty/i);
+  assert.throws(() => validateImageFile({ size: MAX_IMAGE_FILE_BYTES + 1 }), /25 MB or smaller/i);
+  assert.throws(() => validateImageFile({}), /valid image file/i);
+  assert.throws(() => fileToImageDataURL({ size: MAX_IMAGE_FILE_BYTES + 1 }), /25 MB or smaller/i);
 });

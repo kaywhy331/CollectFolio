@@ -2,22 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   authRedirectPath,
+  chunkRecords,
+  forEachInBatches,
   mergeHoldings,
   mergePortfolioSnapshots,
   mergeTombstones,
   normalizeIntelligencePublication,
   normalizePortfolioSnapshot,
   portfolioSnapshotRow,
+  request,
+  requestAllPages,
   remotePortfolioSnapshot,
   remoteWatchlistItem,
+  upsertInBatches,
   watchlistRow
 } from '../app/assets/js/services/supabase.js';
 import { PRICING_POLICY_VERSION } from '../app/assets/js/core/pricing-policy.js';
 
 const snapshot = (overrides = {}) => ({
-  id: 'portfolio:2026-07-31',
+  id: 'portfolio:USD:2026-07-31',
   date: '2026-07-31',
   pricingPolicyVersion: PRICING_POLICY_VERSION,
+  currency: 'USD',
   marketValue: 24,
   costBasis: 17,
   uniqueItems: 1,
@@ -63,11 +69,11 @@ test('remote LWW updates retain images that intentionally stay on this device', 
 test('portfolio snapshot LWW accepts the newest valid side for each day', () => {
   const local = [
     snapshot({ marketValue: 30, updatedAt: '2026-07-31T13:00:00.000Z' }),
-    snapshot({ id: 'portfolio:2026-08-01', date: '2026-08-01', marketValue: 31, updatedAt: '2026-08-01T12:00:00.000Z' })
+    snapshot({ id: 'portfolio:USD:2026-08-01', date: '2026-08-01', marketValue: 31, updatedAt: '2026-08-01T12:00:00.000Z' })
   ];
   const remote = [
     snapshot({ marketValue: 29, updatedAt: '2026-07-31T12:30:00.000Z' }),
-    snapshot({ id: 'portfolio:2026-08-01', date: '2026-08-01', marketValue: 32, updatedAt: '2026-08-01T13:00:00.000Z' })
+    snapshot({ id: 'portfolio:USD:2026-08-01', date: '2026-08-01', marketValue: 32, updatedAt: '2026-08-01T13:00:00.000Z' })
   ];
   const merged = mergePortfolioSnapshots(local, remote);
   assert.deepEqual(merged.map(({ date, marketValue }) => ({ date, marketValue })), [
@@ -78,7 +84,7 @@ test('portfolio snapshot LWW accepts the newest valid side for each day', () => 
 
 test('portfolio snapshot remote conversion and row serialization preserve hosted identity', () => {
   const remote = remotePortfolioSnapshot({
-    id: 'portfolio:2026-07-31',
+    id: 'portfolio:USD:2026-07-31',
     data: snapshot({ updatedAt: '2026-07-31T11:00:00.000Z' }),
     snapshot_date: '2026-07-31',
     updated_at: '2026-07-31T12:00:00Z'
@@ -96,14 +102,33 @@ test('portfolio snapshot remote conversion and row serialization preserve hosted
 test('portfolio snapshot sync excludes legacy policy and mismatched date identities', () => {
   assert.equal(normalizePortfolioSnapshot(snapshot({ pricingPolicyVersion: 'legacy-v0' })), null);
   assert.equal(normalizePortfolioSnapshot(snapshot({ date: '2026-08-01' })), null);
-  assert.equal(normalizePortfolioSnapshot(snapshot({ id: 'portfolio:2026-02-30', date: '2026-02-30' })), null);
+  assert.equal(normalizePortfolioSnapshot(snapshot({ id: 'portfolio:USD:2026-02-30', date: '2026-02-30' })), null);
+  assert.equal(normalizePortfolioSnapshot(snapshot({ id: 'portfolio:CAD:2026-07-31' })), null);
   assert.equal(remotePortfolioSnapshot({
-    id: 'portfolio:2026-07-31',
+    id: 'portfolio:USD:2026-07-31',
     data: snapshot(),
     snapshot_date: '2026-08-01',
     updated_at: '2026-07-31T12:00:00.000Z'
   }), null);
   assert.deepEqual(mergePortfolioSnapshots([snapshot(), snapshot({ pricingPolicyVersion: 'legacy-v0' })]), [snapshot()]);
+});
+
+test('legacy daily snapshot IDs canonicalize without losing parallel currencies', () => {
+  const legacyUsd = normalizePortfolioSnapshot(snapshot({ id: 'portfolio:2026-07-31' }));
+  const cad = normalizePortfolioSnapshot(snapshot({
+    id: 'portfolio:CAD:2026-07-31', currency: 'CAD', marketValue: 31
+  }));
+  assert.equal(legacyUsd.id, 'portfolio:USD:2026-07-31');
+  assert.deepEqual(mergePortfolioSnapshots([legacyUsd], [cad]).map((entry) => entry.id), [
+    'portfolio:CAD:2026-07-31',
+    'portfolio:USD:2026-07-31'
+  ]);
+  assert.equal(remotePortfolioSnapshot({
+    id: 'portfolio:2026-07-31',
+    data: snapshot({ id: 'portfolio:2026-07-31' }),
+    snapshot_date: '2026-07-31',
+    updated_at: '2026-07-31T12:00:00.000Z'
+  }).id, 'portfolio:USD:2026-07-31');
 });
 
 test('portfolio snapshot sync rejects negative, non-finite, and fractional values', () => {
@@ -118,7 +143,7 @@ test('portfolio snapshot sync rejects negative, non-finite, and fractional value
   ]) assert.equal(normalizePortfolioSnapshot(snapshot(invalid)), null);
 });
 
-test('portfolio snapshot merge is deterministic with one row per day', () => {
+test('portfolio snapshot merge is deterministic with one row per currency and day', () => {
   const lowTie = snapshot({ marketValue: 20 });
   const highTie = snapshot({ marketValue: 30 });
   const forward = mergePortfolioSnapshots([lowTie], [highTie]);
@@ -148,12 +173,114 @@ test('watchlist cloud rows preserve exact catalog identity and blank optional al
     updated_at: '2026-08-02T00:00:00.000Z'
   });
   assert.equal(local.targetPrice, '');
+  assert.equal(local.targetCurrency, 'USD');
   assert.equal(local.catalogRef.finish, 'holofoil');
 
   const row = watchlistRow(local, 'user-id', '123e4567-e89b-42d3-a456-426614174000');
   assert.equal(row.target_price, null);
   assert.equal(row.catalog_variant_id, null);
   assert.equal(row.watch_key, local.watchKey);
+  assert.equal(row.catalog_snapshot.targetCurrency, 'USD');
+});
+
+test('cloud requests abort at their bounded deadline', async () => {
+  const previousWindow = globalThis.window;
+  const previousFetch = globalThis.fetch;
+  globalThis.window = { COLLECTFOLIO_CONFIG: { SUPABASE_URL: 'https://cloud.example.test', SUPABASE_ANON_KEY: 'public-key' } };
+  globalThis.fetch = async (_url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+  });
+  try {
+    await assert.rejects(request('/rest/v1/slow', { timeout: 5 }), (error) => error.name === 'TimeoutError' && /timed out/i.test(error.message));
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('cloud collection reads continue across deterministic range pages', async () => {
+  const source = Array.from({ length: 1_205 }, (_, id) => ({ id }));
+  const ranges = [];
+  const rows = await requestAllPages('/rest/v1/holdings?select=id&order=id.asc', {
+    pageSize: 500,
+    requester: async (_path, options) => {
+      ranges.push(options.headers.Range);
+      const [start, end] = options.headers.Range.split('-').map(Number);
+      return {
+        value: source.slice(start, end + 1),
+        contentRange: `${start}-${Math.min(end, source.length - 1)}/${source.length}`
+      };
+    }
+  });
+  assert.deepEqual(ranges, ['0-499', '500-999', '1000-1499']);
+  assert.equal(rows.length, source.length);
+  assert.equal(rows.at(-1).id, 1_204);
+});
+
+test('cloud collection pagination fails closed at its record safety limit', async () => {
+  await assert.rejects(requestAllPages('/rest/v1/holdings?select=id', {
+    pageSize: 2,
+    maximumRecords: 3,
+    requester: async (_path, options) => {
+      const start = Number(options.headers.Range.split('-')[0]);
+      return { value: [{ id: start }, { id: start + 1 }], contentRange: `${start}-${start + 1}/*` };
+    }
+  }), /3-record safety limit/i);
+});
+
+test('cloud collection pagination rejects an oversized exact count after one page', async () => {
+  let requests = 0;
+  await assert.rejects(requestAllPages('/rest/v1/holdings?select=id', {
+    pageSize: 2,
+    maximumRecords: 3,
+    requester: async () => {
+      requests += 1;
+      return { value: [{ id: 0 }, { id: 1 }], contentRange: '0-1/4' };
+    }
+  }), /3-record safety limit/i);
+  assert.equal(requests, 1);
+});
+
+test('cloud collection pagination detects a smaller undeclared server row cap', async () => {
+  const source = Array.from({ length: 1_205 }, (_, id) => ({ id }));
+  const ranges = [];
+  const rows = await requestAllPages('/rest/v1/holdings?select=id&order=id.asc', {
+    pageSize: 500,
+    requester: async (_path, options) => {
+      ranges.push(options.headers.Range);
+      assert.equal(options.headers.Prefer, 'count=exact');
+      const start = Number(options.headers.Range.split('-')[0]);
+      return {
+        value: source.slice(start, start + 200),
+        contentRange: `${start}-${Math.min(start + 199, source.length - 1)}/${source.length}`
+      };
+    }
+  });
+  assert.equal(rows.length, source.length);
+  assert.deepEqual(ranges.slice(0, 3), ['0-499', '200-699', '400-899']);
+});
+
+test('cloud upserts and delete work are split into bounded batches', async () => {
+  assert.deepEqual(chunkRecords([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+  const bodies = [];
+  await upsertInBatches('/rest/v1/holdings', [1, 2, 3, 4, 5], {
+    batchSize: 2,
+    requester: async (_path, options) => { bodies.push(options.body); }
+  });
+  assert.deepEqual(bodies, [[1, 2], [3, 4], [5]]);
+
+  let active = 0;
+  let maximumActive = 0;
+  const visited = [];
+  await forEachInBatches([1, 2, 3, 4, 5], async (value) => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    visited.push(value);
+    active -= 1;
+  }, 2);
+  assert.equal(maximumActive, 2);
+  assert.deepEqual(visited.sort((left, right) => left - right), [1, 2, 3, 4, 5]);
 });
 
 test('public intelligence normalization clamps support tier and rejects malformed payload shapes', () => {

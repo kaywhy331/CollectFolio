@@ -1,5 +1,8 @@
-const HORIZONS = new Set([7, 30, 90, 180, 365]);
+export const FORECAST_HORIZONS = Object.freeze([7, 30, 90, 180, 365]);
+const HORIZONS = new Set(FORECAST_HORIZONS);
 const TREND_STATUSES = new Set(['strong_rise', 'rise', 'stable', 'fall', 'strong_fall', 'insufficient']);
+const FORECAST_STATUSES = new Set(['available', 'limited']);
+const DIRECTION_RESULTS = new Set(['correct', 'incorrect', 'flat', 'unscorable']);
 
 const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
 const nonNegative = (value) => {
@@ -32,6 +35,23 @@ export function normalizeIntelligencePayload(publication = {}) {
     observedAt: text(observedInput.observedAt, 40),
     quality: bounded(observedInput.quality, 0, 1)
   };
+
+  const historyInput = Array.isArray(input.history)
+    ? input.history
+    : Array.isArray(input.observations) ? input.observations : [];
+  const history = historyInput.map((entry) => {
+    const price = nonNegative(entry?.price);
+    const observedAt = text(entry?.observedAt || entry?.date, 40);
+    if (price === null || !observedAt || !Number.isFinite(Date.parse(observedAt))) return null;
+    const historyCurrency = text(entry?.currency || observed?.currency || 'USD', 3).toUpperCase();
+    return {
+      price,
+      currency: /^[A-Z]{3}$/.test(historyCurrency) ? historyCurrency : 'USD',
+      source: text(entry?.source, 120),
+      observedAt,
+      quality: bounded(entry?.quality, 0, 1)
+    };
+  }).filter(Boolean).sort((left, right) => left.observedAt.localeCompare(right.observedAt)).slice(-180);
 
   const trendInput = input.trend || {};
   const trendStatus = TREND_STATUSES.has(trendInput.status) ? trendInput.status : 'insufficient';
@@ -66,9 +86,21 @@ export function normalizeIntelligencePayload(publication = {}) {
       ...prices,
       probabilityUp: bounded(value.probabilityUp, 0, 1),
       confidence: bounded(value.confidence, 0, 100),
+      forecastStatus: FORECAST_STATUSES.has(value.forecastStatus || value.status)
+        ? (value.forecastStatus || value.status)
+        : 'available',
+      confidenceReason: text(value.confidenceReason, 360),
+      coverageStatus: text(value.coverageStatus, 160),
+      dataFreshness: text(value.dataFreshness, 160),
+      whatChanged: text(value.whatChanged, 360),
       origin: text(value.origin, 40),
       maturesAt: text(value.maturesAt, 40),
-      modelVersion: text(value.modelVersion, 120)
+      modelVersion: text(value.modelVersion, 120),
+      modelUpdatedAt: text(value.modelUpdatedAt, 40),
+      maturedAt: text(value.maturedAt, 40),
+      actualValueAtMaturity: nonNegative(value.actualValueAtMaturity),
+      absoluteError: nonNegative(value.absoluteError),
+      directionResult: DIRECTION_RESULTS.has(value.directionResult) ? value.directionResult : ''
     };
   }
 
@@ -85,6 +117,7 @@ export function normalizeIntelligencePayload(publication = {}) {
     variantId: publication.variantId || '',
     supportTier,
     observed: supportTier >= 1 ? observed : null,
+    history: supportTier >= 2 ? history : [],
     trend: supportTier >= 2 ? trend : { return7d: null, return30d: null, return90d: null, return180d: null, return365d: null, status: 'insufficient', volatility: null, confidence: null, historyDensity: null },
     fairValue: supportTier >= 3 ? fairValue : null,
     forecasts: supportTier >= 4 ? forecasts : {},

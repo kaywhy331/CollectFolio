@@ -27,7 +27,7 @@ test('forecast chart relates an approved observation to ordered horizon bands', 
   assert.match(html, /30D/);
   assert.match(html, /90D/);
   assert.match(html, /forecast-band-80/);
-  assert.match(html, /90D median/);
+  assert.match(html, /90D modeled median/);
   assert.match(html, /\+15\.0%/);
 });
 

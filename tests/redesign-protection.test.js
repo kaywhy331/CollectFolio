@@ -6,7 +6,7 @@ import {
 } from '../app/assets/js/core/calculations.js';
 import { normalizeIntelligencePayload } from '../app/assets/js/core/intelligence-contract.js';
 import { currentPricingSnapshots } from '../app/assets/js/core/pricing-policy.js';
-import { BACKUP_EXCLUDED_STORES, STORES } from '../app/assets/js/core/db.js';
+import { BACKUP_EXCLUDED_STORES, STORES, validateBackup } from '../app/assets/js/core/db.js';
 import {
   mergeHoldings, mergePortfolioSnapshots, mergeTombstones, remotePortfolioSnapshot
 } from '../app/assets/js/services/supabase.js';
@@ -26,6 +26,7 @@ test('version-4 IndexedDB fixture remains a version-2 portable backup shape', as
     STORES.filter((name) => !BACKUP_EXCLUDED_STORES.includes(name)).sort()
   );
   assert.deepEqual(BACKUP_EXCLUDED_STORES, ['demandEventsQueue']);
+  assert.doesNotThrow(() => validateBackup(baseline));
 });
 
 test('representative legacy holdings preserve valuation, cost, and snapshot expectations', async () => {
@@ -38,8 +39,8 @@ test('representative legacy holdings preserve valuation, cost, and snapshot expe
   assert.equal(unitMarketValue(unpriced), 0);
   const summary = portfolioSummary(baseline.stores.holdings);
   assert.deepEqual(
-    { ...summary, returnPercent: undefined },
-    { ...baseline.expected.summary, returnPercent: undefined }
+    Object.fromEntries(Object.keys(baseline.expected.summary).filter((key) => key !== 'returnPercent').map((key) => [key, summary[key]])),
+    Object.fromEntries(Object.entries(baseline.expected.summary).filter(([key]) => key !== 'returnPercent'))
   );
   assert.ok(Math.abs(summary.returnPercent - baseline.expected.summary.returnPercent) < 1e-12);
   assert.deepEqual(
@@ -98,12 +99,12 @@ test('legacy route fixture maps every current view without exposing deferred cap
   const keys = routes.mappings.map((entry) => [entry.legacyView, entry.legacySection, entry.origin].join(':'));
   assert.equal(new Set(keys).size, routes.mappings.length);
   assert.deepEqual(new Set(routes.mappings.map((entry) => entry.legacyView)), new Set([
-    'home', 'search', 'add', 'scan', 'portfolio', 'profile', 'detail'
+    'home', 'search', 'add', 'scan', 'portfolio', 'insights', 'profile', 'detail'
   ]));
   assert.ok(routes.mappings.every((entry) => entry.path.startsWith('/')));
   assert.ok(routes.hiddenUntilSupported.includes('portfolio-sets'));
   assert.ok(routes.hiddenUntilSupported.includes('portfolio-sold'));
-  assert.ok(routes.hiddenUntilSupported.includes('insights-alerts'));
-  assert.ok(routes.hiddenUntilSupported.includes('insights-track-record'));
+  assert.ok(!routes.hiddenUntilSupported.includes('insights-alerts'));
+  assert.ok(!routes.hiddenUntilSupported.includes('insights-track-record'));
   assert.ok(routes.hiddenUntilSupported.includes('portfolio-selector'));
 });

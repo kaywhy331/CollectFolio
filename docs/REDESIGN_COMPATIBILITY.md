@@ -20,9 +20,9 @@ real account identifiers, private notes, or provider payloads.
 | IndexedDB | Database `collectfolio`, version 4 | Open and read existing stores without destructive conversion |
 | Portable backup | `collectfolio-backup`, version 2; version 1 still imports | Existing exports remain importable and excluded telemetry remains excluded |
 | Holdings | Existing embedded `item` snapshot plus acquisition fields | Adapt to view models; do not rewrite records merely to render new pages |
-| Snapshots | Stable `portfolio:YYYY-MM-DD` identity with `rights-aware-v1` | Preserve valid current-policy points; do not manufacture missing history |
+| Snapshots | Legacy `portfolio:YYYY-MM-DD` plus currency-qualified `portfolio:CCC:YYYY-MM-DD`, both with `rights-aware-v1` | Preserve and deduplicate valid current-policy points; do not manufacture missing history |
 | Watchlist | Exact canonical or source-level `watchKey` with tombstones | Preserve identity and deletion behavior |
-| Scan drafts | IndexedDB `scans` records with editable crops and explicit approval | Preserve drafts, crop images, match decisions, and recovery semantics |
+| Scan drafts | Active IndexedDB `scans` records retain editable crops and explicit approval; completed drafts may be compacted into bounded, image-free receipts | Preserve active-draft crops, match decisions, and recovery semantics; never treat completed-receipt retention as permission to prune active work |
 | Cloud holdings | Last-write-wins by `updatedAt`, deletion tombstones first | Preserve local images and avoid resurrection or duplication |
 | Cloud snapshots | Validated daily identity and deterministic tie-break | Preserve fail-closed validation and merge behavior |
 | Intelligence cache | Approved publication payloads keyed by exact variant | Clear or adapt safely; never elevate unsupported data |
@@ -102,7 +102,7 @@ The browser suite protects the current shell before route conversion:
 - hydration of a representative version-4 IndexedDB dataset;
 - current Overview calculations and first snapshot rendering;
 - current primary navigation and Add entry points;
-- preservation of scan draft visibility;
+- preservation of active scan-draft visibility and recovery semantics;
 - forecast fail-closed presentation when publication is disabled;
 - a critical accessibility scan;
 - a stable first-use visual snapshot.

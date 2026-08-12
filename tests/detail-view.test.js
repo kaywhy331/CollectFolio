@@ -41,8 +41,8 @@ test('unmapped card detail explains the mapping gap and invents no numbers', () 
   const catalogRef = catalogReferenceForItem({ ...item, name: '<script>bad</script>' });
   const html = renderPriceIntelligenceDetail({ origin: 'search', item, catalogRef }, baseState());
   assert.doesNotMatch(html, /<script>bad<\/script>/);
-  assert.match(html, /Tier 0/);
-  assert.match(html, /awaiting|canonical catalog mapping/i);
+  assert.match(html, /Card identified; pricing pending/);
+  assert.match(html, /exact card verification/i);
   assert.match(html, /Nothing here is a fabricated estimate/);
   assert.doesNotMatch(html, /Modeled range \(10–90%\)/);
 });
@@ -67,7 +67,7 @@ test('tier-4 publication renders observed, trend, fair value, forecast, and driv
     }, 4) }, loading: false, error: '' }
   });
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef }, state);
-  assert.match(html, /Tier 4/);
+  assert.match(html, /Forecast available/);
   assert.match(html, /Strong rise/);
   assert.match(html, /Above modeled range/);
   assert.match(html, /365-day outlook/);

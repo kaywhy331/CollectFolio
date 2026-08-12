@@ -1,5 +1,6 @@
-const CACHE = 'collectfolio-shell-v0.3.0';
+const CACHE = 'collectfolio-shell-v0.7.0';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
+const MAX_PROVIDER_IMAGE_ENTRIES = 160;
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
   './assets/css/app.css', './assets/icons/icon.svg', './assets/icons/icon-192.png',
@@ -7,10 +8,11 @@ const SHELL = [
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
   './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js',
   './assets/js/core/pricing-policy.js', './assets/js/core/compare.js', './assets/js/core/router.js',
-  './assets/js/core/view-models.js',
-  './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/db.js',
+  './assets/js/core/view-models.js', './assets/js/core/settings.js',
+  './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
-  './assets/js/views/price-intelligence-detail.js', './assets/js/views/holding-form.js',
+  './assets/js/views/insights.js', './assets/js/views/onboarding.js',
+  './assets/js/views/price-intelligence-detail.js', './assets/js/views/quick-inspector.js', './assets/js/views/holding-form.js',
   './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js',
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/image-algorithms.js',
@@ -33,20 +35,48 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(
-    keys.filter((key) => ![CACHE, IMAGE_CACHE].includes(key)).map((key) => caches.delete(key))
-  )).then(() => self.clients.claim()));
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => ![CACHE, IMAGE_CACHE].includes(key)).map((key) => caches.delete(key)));
+    await trimCache(IMAGE_CACHE, MAX_PROVIDER_IMAGE_ENTRIES);
+    await self.clients.claim();
+  })());
 });
 
-async function cacheFirst(request, cacheName) {
+async function trimCache(cacheName, maximumEntries) {
+  const cache = await caches.open(cacheName);
+  const keys = await cache.keys();
+  const excess = Math.max(0, keys.length - maximumEntries);
+  if (excess) await Promise.all(keys.slice(0, excess).map((key) => cache.delete(key)));
+}
+
+async function cacheFirst(request, cacheName, maximumEntries = 0) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok || response.type === 'opaque') {
-    try { await cache.put(request, response.clone()); } catch { /* Never hide a usable image when browser storage is unavailable. */ }
+    try {
+      await cache.put(request, response.clone());
+      if (maximumEntries) await trimCache(cacheName, maximumEntries);
+    } catch { /* Never hide a usable response when browser storage is unavailable. */ }
   }
   return response;
+}
+
+async function networkFirst(request, cacheName) {
+  const cache = await caches.open(cacheName);
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      try { await cache.put(request, response.clone()); } catch { /* The live configuration remains usable without CacheStorage. */ }
+    }
+    return response;
+  } catch (error) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    throw error;
+  }
 }
 
 self.addEventListener('fetch', (event) => {
@@ -54,10 +84,14 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (CATALOG_HOSTS.has(url.hostname)) return;
   if (PROVIDER_IMAGE_HOSTS.has(url.hostname)) {
-    event.respondWith(cacheFirst(event.request, IMAGE_CACHE));
+    event.respondWith(cacheFirst(event.request, IMAGE_CACHE, MAX_PROVIDER_IMAGE_ENTRIES));
     return;
   }
   if (url.origin !== location.origin) return;
+  if (url.pathname === '/runtime-config.js') {
+    event.respondWith(networkFirst(event.request, CACHE));
+    return;
+  }
   if (event.request.mode === 'navigate') {
     event.respondWith(fetch(event.request).then(async (response) => {
       if (response.ok) await caches.open(CACHE).then((cache) => cache.put('./index.html', response.clone()));

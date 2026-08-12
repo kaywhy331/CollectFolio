@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "sourceNavigation": "in-memory views; only the document URL is currently durable",
+  "version": 2,
+  "sourceNavigation": "real routes with restorable view state and legacy renderer compatibility",
   "mappings": [
     { "legacyView": "home", "legacySection": null, "origin": null, "target": "overview", "path": "/" },
     { "legacyView": "search", "legacySection": null, "origin": null, "target": "discover", "path": "/discover?mode=search" },
@@ -8,10 +8,10 @@
     { "legacyView": "scan", "legacySection": null, "origin": null, "target": "add-review", "path": "/add?step=review" },
     { "legacyView": "portfolio", "legacySection": "holdings", "origin": null, "target": "portfolio-holdings", "path": "/portfolio?view=holdings" },
     { "legacyView": "portfolio", "legacySection": "watchlist", "origin": null, "target": "portfolio-watchlist", "path": "/portfolio?view=watchlist" },
-    { "legacyView": "portfolio", "legacySection": "forecasts", "origin": null, "target": "insights-forecasts", "path": "/insights?view=forecasts" },
+    { "legacyView": "insights", "legacySection": "forecasts", "origin": null, "target": "insights-forecasts", "path": "/insights?view=forecasts" },
     { "legacyView": "profile", "legacySection": null, "origin": null, "target": "settings", "path": "/settings" },
     { "legacyView": "detail", "legacySection": null, "origin": "search", "target": "card-detail", "path": "/cards/:cardId" },
     { "legacyView": "detail", "legacySection": null, "origin": "portfolio", "target": "holding-detail", "path": "/holdings/:holdingId" }
   ],
-  "hiddenUntilSupported": ["portfolio-sets", "portfolio-sold", "insights-alerts", "insights-track-record", "portfolio-selector"]
+  "hiddenUntilSupported": ["portfolio-sets", "portfolio-sold", "portfolio-selector"]
 }

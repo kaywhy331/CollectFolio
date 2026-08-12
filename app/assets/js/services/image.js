@@ -4,6 +4,7 @@ import { differenceHash, hashSimilarity } from './image-algorithms.js';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const IMAGE_LOAD_TIMEOUT_MS = 10_000;
 const OCR_TIMEOUT_MS = 45_000;
+export const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
 let tesseractPromise;
 
 export function withTimeout(promise, timeout, message = 'Operation timed out.') {
@@ -50,7 +51,17 @@ export function loadImage(source, timeout = IMAGE_LOAD_TIMEOUT_MS) {
   });
 }
 
+export function validateImageFile(file, maximumBytes = MAX_IMAGE_FILE_BYTES) {
+  if (!file || !Number.isFinite(Number(file.size)) || Number(file.size) < 0) {
+    throw new Error('Choose a valid image file.');
+  }
+  if (Number(file.size) === 0) throw new Error('The selected image is empty.');
+  if (Number(file.size) > maximumBytes) throw new Error('Images must be 25 MB or smaller.');
+  return file;
+}
+
 export function fileToImageDataURL(file) {
+  validateImageFile(file);
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.addEventListener('load', () => resolve(reader.result), { once: true });

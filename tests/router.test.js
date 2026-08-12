@@ -8,16 +8,18 @@ import {
   routeStatePatch
 } from '../app/assets/js/core/router.js';
 
-test('recommended routes resolve to existing legacy renderers without exposing deferred sections', () => {
+test('recommended routes resolve to dedicated renderers and expose only supported sections', () => {
   assert.deepEqual(
     ['/', '/portfolio?view=holdings', '/portfolio?view=watchlist', '/discover?mode=search', '/insights?view=forecasts', '/add', '/add?step=review', '/settings']
       .map((path) => parseAppRoute(path).legacyView),
-    ['home', 'portfolio', 'portfolio', 'search', 'portfolio', 'add', 'scan', 'profile']
+    ['home', 'portfolio', 'portfolio', 'search', 'insights', 'add', 'scan', 'profile']
   );
   assert.equal(parseAppRoute('/portfolio?view=sets').canonicalPath, '/portfolio?view=holdings');
   assert.equal(parseAppRoute('/portfolio?view=sold').unsupported, 'portfolio-sold');
-  assert.equal(parseAppRoute('/insights?view=alerts').canonicalPath, '/insights?view=forecasts');
-  assert.equal(parseAppRoute('/insights?view=track-record').unsupported, 'insights-track-record');
+  assert.equal(parseAppRoute('/insights?view=alerts').canonicalPath, '/insights?view=alerts');
+  assert.equal(parseAppRoute('/insights?view=track-record').unsupported, '');
+  assert.equal(parseAppRoute('/insights?view=forecasts&horizon=365').canonicalPath, '/insights?view=forecasts&horizon=365');
+  assert.equal(parseAppRoute('/insights?view=unknown').unsupported, 'insights-unknown');
 });
 
 test('discover route restores bounded supported search state in canonical order', () => {
@@ -45,7 +47,12 @@ test('legacy view mappings create restorable route state', () => {
   assert.equal(appRouteForLegacyView('search', state).canonicalPath, '/discover?mode=search&q=Mew&category=pokemon&provider=pokemon');
   assert.equal(appRouteForLegacyView('search', state, { detail: null }).canonicalPath, '/discover?mode=search&q=Mew&category=pokemon&provider=pokemon');
   assert.equal(appRouteForLegacyView('portfolio', state).canonicalPath, '/portfolio?view=watchlist');
+  assert.equal(appRouteForLegacyView('insights', { ...state, insights: { view: 'alerts', horizon: 90 } }).canonicalPath, '/insights?view=alerts');
   assert.equal(appRouteForLegacyView('detail', state, { detail: { holding: { id: 'h 1' } } }).canonicalPath, '/holdings/h%201');
+  assert.equal(appRouteForLegacyView('detail', state, { detail: {
+    item: { provider: 'scryfall', externalId: 'card/id' },
+    catalogRef: { provider: 'scryfall', externalId: 'card/id', canonicalVariantId: '123e4567-e89b-42d3-a456-426614174000' }
+  } }).canonicalPath, '/cards/scryfall%3Acard%2Fid');
   const route = parseAppRoute('/portfolio?view=watchlist');
   assert.equal(routeStatePatch(route, state).portfolio.section, 'watchlist');
   const restored = routeStatePatch(parseAppRoute('/discover?mode=search&q=Different'), {
@@ -54,6 +61,10 @@ test('legacy view mappings create restorable route state', () => {
   });
   assert.deepEqual(restored.search.results, []);
   assert.deepEqual(restored.search.warnings, []);
+  const insights = routeStatePatch(parseAppRoute('/insights?view=forecasts&horizon=180'), {
+    ...state, insights: { view: 'alerts', horizon: 90, alertFilter: 'unread' }
+  });
+  assert.deepEqual(insights.insights, { view: 'forecasts', horizon: 180, alertFilter: 'unread' });
 });
 
 test('unknown locations fail closed to Overview', () => {

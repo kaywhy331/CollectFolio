@@ -30,7 +30,14 @@ test('watchlist item snapshots identity and preserves created time on edits', ()
   assert.equal(edited.createdAt, first.createdAt);
   assert.equal(edited.updatedAt, '2026-08-02T00:00:00.000Z');
   assert.equal(edited.targetPrice, 80);
+  assert.equal(edited.targetCurrency, 'USD');
   assert.equal(edited.catalogRef.name, card.name);
+});
+
+test('watchlist targets retain an explicit currency across edits', () => {
+  const first = createWatchlistItem(card, { targetPrice: 75, targetCurrency: 'EUR' }, null, '2026-08-01T00:00:00.000Z');
+  const edited = createWatchlistItem(card, { targetPrice: 70 }, first, '2026-08-02T00:00:00.000Z');
+  assert.equal(edited.targetCurrency, 'EUR');
 });
 
 test('watchlist merge uses last write and tombstones always win', () => {

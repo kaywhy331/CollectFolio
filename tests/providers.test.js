@@ -1,9 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectSettledProviders, prepareCatalogQuery, rankCatalogItems, refreshCatalogItem } from '../app/assets/js/services/catalog.js';
+import { catalogCacheKeysToPrune, catalogRouteId, collectSettledProviders, prepareCatalogQuery, rankCatalogItems, refreshCatalogItem } from '../app/assets/js/services/catalog.js';
 import { buildPokemonQuery, clearPokemonSetCache, getPokemonCard, normalizePokemonCard, normalizeTCGDexCard, parsePokemonQuery, searchPokemon } from '../app/assets/js/services/providers/pokemon.js';
 import { getScryfallCard, normalizeScryfallCard, searchScryfall } from '../app/assets/js/services/providers/scryfall.js';
 import { getYGOCard, normalizeYGOCard, searchYGOPRODeck } from '../app/assets/js/services/providers/ygoprodeck.js';
+
+test('catalog cache pruning removes expired records and bounds active entries', () => {
+  const now = 1_000;
+  const records = [
+    { key: 'expired', expiresAt: 999 },
+    { key: 'missing-expiry' },
+    { key: 'newest', expiresAt: 4_000 },
+    { key: 'middle', expiresAt: 3_000 },
+    { key: 'oldest-active', expiresAt: 2_000 }
+  ];
+  assert.deepEqual(catalogCacheKeysToPrune(records, now, 2).sort(), ['expired', 'missing-expiry', 'oldest-active']);
+});
 
 test('Pokémon catalog normalization excludes unapproved downstream prices', () => {
   const item = normalizePokemonCard({ id: 'base1-4', name: 'Charizard', number: '4', rarity: 'Rare Holo', set: { name: 'Base', releaseDate: '1999-01-09' }, images: { small: 'https://images.pokemontcg.io/base1/4.png', large: 'https://images.pokemontcg.io/base1/4_hires.png' }, tcgplayer: { url: 'https://example.test/card', updatedAt: '2026/07/31', prices: { holofoil: { market: 350.25 }, reverseHolofoil: { market: 60 } } } });
@@ -50,6 +62,8 @@ test('Scryfall fixture keeps a printing distinct and exposes three finish prices
   const unpriced = normalizeScryfallCard({ id: 'unpriced', name: 'Unpriced', prices: { usd: null, usd_foil: null, usd_etched: null } });
   assert.equal(unpriced.price, null);
   assert.deepEqual(unpriced.priceOptions, []);
+  assert.equal(catalogRouteId(item), 'scryfall:abc');
+  assert.equal(catalogRouteId({ provider: 'custom', externalId: 'local' }), '');
 });
 
 test('YGOPRODeck fixture expands every set-code printing', () => {

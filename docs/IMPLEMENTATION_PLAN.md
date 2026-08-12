@@ -253,3 +253,182 @@ Recognition benchmarking remains valuable in parallel. Its controlled dataset sh
 - graded slabs.
 
 Measure boundary recall, false boxes, OCR query usefulness, top-1/top-3 candidate accuracy, manual corrections, and completion time. Use those results to determine whether the heuristic detector should be extended with perspective correction or replaced by a small browser-run object model.
+
+## Redesign core vertical-slice qualification — August 10, 2026
+
+- Completed the approved Overview → Discover → Quick Inspector → Add →
+  Portfolio → Card/Holding Detail slice while preserving version-4 local data,
+  explicit add approval, source-rights policy, and forecast publication gates.
+- Added persistent gallery/list preferences, responsive search and portfolio
+  workspaces, filter restoration, bounded holding rendering, selection-scoped
+  export/delete, and focus-managed inspector navigation.
+- Retained the legacy visual receipt and added the core-slice first-use Overview
+  baseline. The core slice shipped under service-worker shell v0.4.0 and is
+  documented in `docs/REDESIGN_CORE_VERTICAL_SLICE.md`.
+- Its outstanding combined browser gate passed before Phase 3 began; the final
+  eight-test browser gate below supersedes that seven-test receipt and retains the
+  same core visual baseline.
+
+## Redesign intake and collection-management qualification — August 10, 2026
+
+- Completed the approved Phase 3 local-first boundary: unified camera/upload,
+  automatic single/multi detection, editable match queue, shared and per-item
+  acquisition data, approved-only idempotent submission, result receipt, focused
+  Watchlist, selection-only collection tools, and import/export.
+- Added seller/source and tags as backward-compatible holding fields. Move changes
+  storage organization, Duplicate creates a separate acquisition lot, and Mark Sold
+  remains absent until a real sales ledger exists.
+- Best Opportunity now requires a complete approved observed-price and forecast
+  evidence tuple. Missing or rights-gated inputs produce an explicit unranked state,
+  never a reconstructed score.
+- Fixed legacy version-4 Watchlist edit/removal when the IndexedDB row key differs
+  from its exact watch key. Migration and tombstone writes remain atomic and keep the
+  exact sync identity.
+- `npm run check` passes locally: validation covers 112 required files and 38 browser
+  modules, all 183 Node tests pass, all 194 Python analytics tests pass, and the
+  production build completes.
+- `npm run test:browser` passes all 8 Chromium tests, including camera-denial upload
+  fallback, approved-only scan completion, bulk tag/duplicate behavior, Watchlist
+  preference migration and confirmed removal, Phase 3 serious/critical accessibility
+  checks, forecast fail-closed behavior, and the unchanged core visual baseline.
+- The implementation remains local qualification only: no deploy, hosted mutation,
+  public-price enablement, commit, or push was performed. Service-worker shell
+  v0.5.0 invalidates the prior cached UI safely. See
+  `docs/REDESIGN_INTAKE_COLLECTION_MANAGEMENT.md` for the acceptance boundary.
+
+## Redesign forecasting and Insights qualification — August 10, 2026
+
+- Completed the approved Phase 4 boundary with dedicated, URL-restorable
+  Performance, Forecasts, Alerts, and Track Record sections.
+- Portfolio ranges include only approved exact-item forecasts in the portfolio
+  currency. Manual values, missing mappings, unavailable horizons, mixed currencies,
+  and unapproved publications remain explicitly outside modeled totals.
+- Forecast Ribbon history is limited to approved observations and separates the
+  Today boundary, modeled median, and 50%/80% ranges in both visual and nonvisual
+  output. Missing history is disclosed instead of reconstructed.
+- Public forecast refreshes now create deduplicated, append-only, content-addressed
+  receipts in the existing version-4 `intelligenceCache` store. Open or incomplete
+  forecasts remain outside metrics, and percentages require complete Tier 5
+  scorecards.
+- Alert history persists read and mute state, retains exact-card and rule-editor
+  links, and labels forecast changes as model output rather than observed movement.
+- `npm run check` passes locally: validation covers 116 required files and 40
+  browser modules, all 191 Node tests pass, all 194 Python analytics tests pass, and
+  the production build completes.
+- `npm run test:browser` passes all 9 Chromium tests, including the dormant
+  fail-closed forecast state, approved Phase 4 range math and receipt history, alert
+  persistence, Tier 5 metric gating, serious/critical accessibility checks, and the
+  unchanged core visual baseline.
+- The implementation remains local qualification only: no deploy, hosted mutation,
+  public-price enablement, commit, or push was performed. Service-worker shell
+  v0.6.0 invalidates the prior cached UI safely. See
+  `docs/REDESIGN_FORECASTING_INSIGHTS.md` for the acceptance boundary.
+
+## Redesign account, sync, polish, and release qualification — August 10, 2026
+
+- Completed the approved Phase 5 local-first boundary with persistent three-step
+  onboarding, the full Settings workspace, textual synchronization states and
+  history, privacy/preferences, storage estimates, diagnostic recovery references,
+  and distinct typed local/cloud data controls.
+- Existing collectors migrate idempotently inside the version-4 `settings` store and
+  bypass first-run guidance. New collectors persist every onboarding transition and
+  complete setup after the first manual or scan-based holding.
+- Backup import now validates every store and record before one atomic multi-store
+  IndexedDB transaction. Migration `0015_remove_my_cloud_data.sql` installs a
+  strictly `auth.uid()`-scoped deletion RPC while retaining the account/profile; it
+  is checked in but intentionally not applied.
+- Added stale-search protection, automatic online recovery, modal focus trapping and
+  application inert state, reduced-motion-safe transitions, collector-facing
+  terminology validation, and a bounded first render proven with 1,000 holdings.
+- `npm run check` passes locally: validation covers 126 required files and 42 browser
+  modules, all 206 Node tests pass, all 194 Python analytics tests pass, and the
+  production build completes as version 0.7.0.
+- `npm run test:browser` passes all 13 Chromium tests. The gate covers persistent
+  onboarding and first Add, local/signed-in/offline/error Settings, responsive
+  layouts, serious/critical accessibility scans, modal focus containment, the full
+  Phase 2–4 compatibility suite, and the unchanged core visual baseline.
+- `git diff --check` passes. Service-worker shell v0.7.0 invalidates the prior UI and
+  precaches both `core/settings.js` and `views/onboarding.js`.
+- This is repository qualification only: no deploy, migration application, hosted
+  mutation, public-price enablement, commit, or push was performed. Release and
+  rollback procedures are recorded in `docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md`.
+
+## Redesign final acceptance disposition — August 10, 2026
+
+- Closed the repository implementation boundary for PRD sections 18–20 with a
+  Global Definition of Done evidence matrix, explicit dispositions for all nine open
+  product decisions, and a requirement-by-requirement final acceptance matrix.
+- Replaced the last literal account-status foreground with a theme-aware
+  `warning-ink` semantic token. Static validation now requires dark, light, and
+  system-light definitions, the shared alias, token consumption, and zero literal
+  colors in account-status state rules.
+- `npm run check` passes locally: validation covers 127 required files and 42 browser
+  modules, all 206 Node tests pass, all 194 Python analytics tests pass, and the
+  production build completes as version 0.7.0.
+- `npm run test:browser` passes all 13 Chromium tests, and `git diff --check` passes.
+  This remains a Repository-qualified candidate, not a production promotion.
+- Manual product/design acceptance, immutable candidate/device QA, independently
+  restorable hosted backup proof, and separately authorized migration `0015`
+  rollout/qualification remain explicit promotion blockers. Public intelligence
+  remains disabled behind its independent governance gates.
+- The complete evidence, decisions, blockers, and non-deployment boundary are
+  recorded in `docs/REDESIGN_FINAL_ACCEPTANCE.md`.
+
+## Post-acceptance application audit — August 11, 2026
+
+- Closed the audit's data-integrity and privacy defects: independent Watchlist and
+  public-intelligence flags, source-currency preservation and exclusion, clean-device
+  shared-card hydration, complete device-cache clearing, bounded cloud requests, CSV
+  formula neutralization, and complete owner-scoped cloud erasure in migration 0015.
+- Extended scan intake so per-item and bulk acquisition currencies survive review and
+  batch add; confirmation totals now keep unlike-currency costs separate.
+- Made runtime configuration network-first with its installed copy used only offline,
+  bounded provider-image CacheStorage to 160 entries, and blocked percentage alerts
+  across publication currency changes.
+- Replaced the single daily valuation identity with currency-qualified snapshot IDs;
+  legacy daily IDs remain readable and deduplicate without destructive migration.
+  Image and JSON-backup files are rejected above 25 MiB and 128 MiB before their
+  payload is read into browser memory.
+- Pinned `@netlify/blobs` to audit-clean version `9.1.5`; `npm audit --omit=dev`
+  reports zero vulnerabilities.
+- `npm run check` passes with 128 required files, 42 browser modules, 34 Node suites,
+  194 Python analytics tests, and the production `0.7.0` build. All 15 Chromium
+  scenarios and `git diff --check` pass.
+- No deploy, Netlify relink, hosted mutation, migration application, commit, or push
+  was performed. The local Netlify link still targets `starguidance`, not the intended
+  `collectfolio-staging`, and migration 0015 plus hosted recovery proof remain release
+  blockers.
+
+## Post-audit engineering hardening — August 11, 2026
+
+- Added store-specific portable-backup validation so malformed holdings, scans,
+  Watchlist references, and cache records fail before the atomic import transaction.
+- Added deterministic 500-row cloud pagination with exact counts, a 100,000-record
+  ceiling, 20-row write batches, and concurrency-10 remote deletion.
+- Bounded the IndexedDB catalog cache to 250 live entries, compacted completed scans
+  to image-free receipts, and retained at most 20 receipts for 30 days.
+- Added a 20-second browser deadline for private price-prioritization requests,
+  including response-body parsing.
+- General product analytics in PRD section 12 remains a product-scope decision. This
+  hardening did not broaden the privacy-scoped demand-event contract.
+
+## Redesign 0.7.0 hosted release qualification — August 11, 2026
+
+- Recorded the release-owner PRD section 12 disposition: 0.7.0 ships only the
+  optional privacy-scoped demand-event contract; broad product telemetry remains a
+  future separately reviewed measurement plan.
+- Added the fail-closed `ENABLE_CLOUD_DATA_REMOVAL` runtime/build gate. Migration 0015
+  remains unapplied, and Settings explains that cloud erasure is unavailable until
+  recovery, rollback, and two-user isolation qualification pass.
+- `npm run check` passes with 128 required files, 42 browser modules, 34 Node suites,
+  194 Python analytics tests, and the production 0.7.0 build. `npm audit --omit=dev`
+  reports zero vulnerabilities, `git diff --check` passes, and the local Chromium
+  suite passes 15 of 15.
+- Immutable Netlify candidate `6a7bf73c1c0748c0e87115bf` on explicit site
+  `05b0e479-ad35-4466-a5c0-fa40d93d1a77` passes all 15 hosted Chromium scenarios
+  under its production CSP. Runtime configuration reports version 0.7.0, Watchlist
+  on, and public intelligence/cloud removal off; deep links, security headers, the
+  service worker, both Functions, and the scheduled collector are present.
+- The checkout was not relinked from unrelated `starguidance`. All deployment work
+  targets `collectfolio-staging` by explicit site ID. No database migration, hosted
+  data mutation, disabled-capability enablement, or Git push is included.

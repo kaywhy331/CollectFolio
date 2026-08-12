@@ -21,6 +21,8 @@ test('catalog add form carries exact printing metadata and asks only for ownersh
   assert.match(html, /name="quantity"[^>]*value="1"/);
   assert.match(html, /Near Mint/);
   assert.match(html, /Purchase price per item/);
+  assert.match(html, /Purchase currency/);
+  assert.match(html, /Manual-value currency/);
   assert.match(html, /Printing \/ finish/);
   assert.match(html, /foil · \$8\.00/);
   assert.doesNotMatch(html, /<label class="span-all">Name<input/);
@@ -30,13 +32,17 @@ test('advanced holding fields use progressive disclosure and preserve saved valu
   const html = renderHoldingForm({
     item: catalogItem, quantity: 2, condition: 'Graded', purchasePrice: 6,
     purchaseDate: '2026-08-01', fees: 1.5, folder: 'Vault', gradeCompany: 'PSA',
-    grade: '10', manualMarketPrice: 12, notes: 'Centered copy', userImage: ''
-  });
+    grade: '10', manualMarketPrice: 12, purchaseCurrency: 'EUR', manualMarketCurrency: 'GBP', notes: 'Centered copy', userImage: ''
+  }, { currency: 'CAD' });
   assert.match(html, /Purchase &amp; organization/);
   assert.match(html, /Grading, value &amp; notes/);
   assert.match(html, /value="Vault"/);
+  assert.match(html, /name="seller"/);
+  assert.match(html, /name="tags"/);
   assert.match(html, /value="PSA"/);
   assert.match(html, /value="12"/);
+  assert.match(html, /<option value="EUR" selected>EUR<\/option>/);
+  assert.match(html, /<option value="GBP" selected>GBP<\/option>/);
   assert.match(html, /Centered copy/);
   assert.equal((html.match(/<details class="form-disclosure" open>/g) || []).length, 2);
 });

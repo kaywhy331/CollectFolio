@@ -1,18 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  filterAndSortHoldings, holdingCostBasis, holdingMarketValue,
-  portfolioSummary, snapshotFor, unitMarketValue
+  filterAndSortHoldings, holdingCostBasis, holdingGain, holdingMarketValue,
+  portfolioSnapshotId, portfolioSummary, snapshotFor, unitMarketValue
 } from '../app/assets/js/core/calculations.js';
 import { PRICING_POLICY_VERSION } from '../app/assets/js/core/pricing-policy.js';
 
 const holding = (overrides = {}) => ({
   id: overrides.id || 'one',
-  item: { name: overrides.name || 'Card', category: overrides.category || 'pokemon', price: overrides.price ?? 12 },
+  item: { name: overrides.name || 'Card', category: overrides.category || 'pokemon', price: overrides.price ?? 12, currency: overrides.currency || 'USD' },
   quantity: overrides.quantity ?? 2,
   purchasePrice: overrides.purchasePrice ?? 7,
+  purchaseCurrency: overrides.purchaseCurrency || overrides.currency || 'USD',
   fees: overrides.fees ?? 3,
   manualMarketPrice: overrides.manualMarketPrice ?? '',
+  manualMarketCurrency: overrides.manualMarketCurrency || overrides.currency || 'USD',
   updatedAt: overrides.updatedAt || '2026-01-01T00:00:00.000Z'
 });
 
@@ -52,10 +54,48 @@ test('holdings filter and sort by value, gain, name, and recency', () => {
   assert.deepEqual(filterAndSortHoldings(rows, { query: 'bet' }).map((row) => row.id), ['b']);
 });
 
-test('daily snapshot uses a stable replaceable portfolio ID', () => {
+test('holdings combine collection filters and expanded sorting without hiding unpriced records', () => {
+  const rows = [
+    holding({ id: 'graded', name: 'Alpha', category: 'magic', price: 20, purchasePrice: 10 }),
+    holding({ id: 'manual', name: 'Beta', category: 'magic', manualMarketPrice: 5, purchasePrice: 10 }),
+    holding({ id: 'unpriced', name: 'Gamma', category: 'pokemon', purchasePrice: 2 })
+  ];
+  rows[1].item.price = null;
+  rows[2].item.price = null;
+  rows[0].gradeCompany = 'PSA';
+  rows[0].grade = '10';
+  rows[0].item.setName = 'Alpha Set';
+  rows[1].item.setName = 'Beta Set';
+  assert.deepEqual(filterAndSortHoldings(rows, { filters: { ownership: 'graded' } }).map((row) => row.id), ['graded']);
+  assert.deepEqual(filterAndSortHoldings(rows, { filters: { pricing: 'manual' } }).map((row) => row.id), ['manual']);
+  assert.deepEqual(filterAndSortHoldings(rows, { filters: { pricing: 'unpriced' } }).map((row) => row.id), ['unpriced']);
+  assert.deepEqual(filterAndSortHoldings(rows, { filters: { setName: 'beta' } }).map((row) => row.id), ['manual']);
+  assert.deepEqual(filterAndSortHoldings(rows, { sort: 'gain-asc' }).map((row) => row.id), ['manual', 'unpriced', 'graded']);
+});
+
+test('daily snapshots use stable currency-qualified portfolio IDs', () => {
   const snapshot = snapshotFor([holding()], new Date('2026-07-31T12:00:00.000Z'));
-  assert.equal(snapshot.id, 'portfolio:2026-07-31');
+  assert.equal(snapshot.id, 'portfolio:USD:2026-07-31');
+  assert.equal(portfolioSnapshotId('2026-07-31', 'cad'), 'portfolio:CAD:2026-07-31');
+  assert.equal(snapshotFor([holding()], new Date('2026-07-31T12:00:00.000Z'), { currency: 'CAD' }).id, 'portfolio:CAD:2026-07-31');
   assert.equal(snapshot.pricingPolicyVersion, PRICING_POLICY_VERSION);
+  assert.equal(snapshot.currency, 'USD');
   assert.equal(snapshot.marketValue, 24);
   assert.equal(snapshot.costBasis, 17);
+});
+
+test('portfolio totals exclude other currencies instead of relabeling or guessing FX', () => {
+  const usd = holding({ id: 'usd', price: 12, quantity: 1, purchasePrice: 7, fees: 0 });
+  const eur = holding({ id: 'eur', currency: 'EUR', price: 20, quantity: 1, purchasePrice: 10, fees: 0 });
+  const mixed = holding({ id: 'mixed', currency: 'EUR', purchaseCurrency: 'USD', price: 30, quantity: 1, purchasePrice: 5, fees: 0 });
+  const summary = portfolioSummary([usd, eur, mixed], { currency: 'USD' });
+  assert.equal(summary.marketValue, 12);
+  assert.equal(summary.costBasis, 12);
+  assert.equal(summary.gain, 5);
+  assert.equal(summary.excludedMarketItems, 2);
+  assert.equal(summary.excludedCostItems, 1);
+  assert.equal(summary.excludedGainItems, 2);
+  assert.deepEqual(summary.excludedCurrencies, ['EUR']);
+  assert.equal(holdingGain(mixed), null);
+  assert.deepEqual(filterAndSortHoldings([eur, usd], { currency: 'USD', sort: 'value-desc' }).map((entry) => entry.id), ['usd', 'eur']);
 });

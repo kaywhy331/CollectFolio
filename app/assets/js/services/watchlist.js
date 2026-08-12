@@ -4,6 +4,10 @@ import { deleteRecordWithTombstone, getAll, putRecordClearingTombstone } from '.
 const nonNegativeOrBlank = (value) => value === '' || value === null || value === undefined
   ? ''
   : Math.max(0, Number(value) || 0);
+const currency = (value, fallback = 'USD') => {
+  const normalized = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(normalized) ? normalized : fallback;
+};
 
 export function createWatchlistItem(item, options = {}, existing = null, now = new Date().toISOString()) {
   const catalogRef = catalogReferenceForItem(item, options);
@@ -13,6 +17,7 @@ export function createWatchlistItem(item, options = {}, existing = null, now = n
     canonicalVariantId: catalogRef.canonicalVariantId,
     catalogRef,
     targetPrice: nonNegativeOrBlank(options.targetPrice ?? existing?.targetPrice),
+    targetCurrency: currency(options.targetCurrency || existing?.targetCurrency || catalogRef.currency),
     alertPercentChange: nonNegativeOrBlank(options.alertPercentChange ?? existing?.alertPercentChange),
     alertTrendChange: Boolean(options.alertTrendChange ?? existing?.alertTrendChange),
     alertRangeChange: Boolean(options.alertRangeChange ?? existing?.alertRangeChange),
@@ -29,12 +34,13 @@ export async function watchItem(item, options = {}) {
   const watchKey = watchKeyForItem(item, options);
   const existing = (await getAll('watchlistItems')).find((entry) => entry.watchKey === watchKey);
   const value = createWatchlistItem(item, options, existing);
-  await putRecordClearingTombstone('watchlistItems', 'watchlistDeletions', value);
+  await putRecordClearingTombstone('watchlistItems', 'watchlistDeletions', value, existing?.id);
   return value;
 }
 
 export async function unwatchItem(watchKey) {
-  await deleteRecordWithTombstone('watchlistItems', 'watchlistDeletions', watchKey);
+  const existing = (await getAll('watchlistItems')).find((entry) => entry.watchKey === watchKey || entry.id === watchKey);
+  await deleteRecordWithTombstone('watchlistItems', 'watchlistDeletions', existing?.id || watchKey, new Date().toISOString(), watchKey);
 }
 
 export function findWatchedItem(items = [], item, options) {

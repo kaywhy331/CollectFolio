@@ -1,6 +1,6 @@
 {
   "name": "collectfolio",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,7 +19,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@netlify/blobs": "10.7.12"
+    "@netlify/blobs": "9.1.5"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",

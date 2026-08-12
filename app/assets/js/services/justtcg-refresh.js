@@ -1,30 +1,47 @@
 import { validSession } from './supabase.js';
 
 const ENDPOINT = '/.netlify/functions/justtcg-refresh';
+export const PRICE_REFRESH_TIMEOUT_MS = 20_000;
 
 // Deliberately no client-side price display and no polling loop: the server
 // response is an operational status/progress summary only — this service
 // lets a signed-in collector ask that their own held/watched cards be
 // prioritized in the next private research pass, not fetch a price. See
 // docs/JUSTTCG_ONDEMAND_REFRESH.md for the boundary this depends on.
-export async function requestPriceRefresh() {
+export async function requestPriceRefresh({ timeout = PRICE_REFRESH_TIMEOUT_MS, fetcher = globalThis.fetch } = {}) {
   let session;
   try {
     session = await validSession();
   } catch {
     throw new Error('Sign in to request a price refresh.');
   }
-  const response = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  let body = {};
-  try { body = await response.json(); } catch { /* fall through to the generic message below */ }
-  if (!response.ok && response.status !== 401) {
-    throw new Error(refreshOutcomeMessage(body.outcome, body) || `Price refresh request failed (${response.status}).`);
+  const controller = new AbortController();
+  const deadline = Math.max(1, Number(timeout) || PRICE_REFRESH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), deadline);
+  try {
+    const response = await fetcher(ENDPOINT, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    let body = {};
+    try { body = await response.json(); } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      // Fall through to the generic status message for malformed bodies.
+    }
+    if (!response.ok && response.status !== 401) {
+      throw new Error(refreshOutcomeMessage(body.outcome, body) || `Price refresh request failed (${response.status}).`);
+    }
+    return { ...body, message: refreshOutcomeMessage(body.outcome, body) };
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw Object.assign(new Error('Price refresh request timed out. Try again.'), { name: 'TimeoutError' });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return { ...body, message: refreshOutcomeMessage(body.outcome, body) };
 }
 
 export function refreshOutcomeMessage(outcome, counts = {}) {

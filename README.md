@@ -5,17 +5,21 @@ CollectFolio is a dependency-free, local-first progressive web app for collectib
 ## MVP features
 
 - Five-view mobile-first shell with dark, light, and system themes
+- Persistent three-step local-first onboarding with saved currency and first-Add progress
 - IndexedDB portfolio with editable ownership metadata, tombstoned deletion, and daily snapshots
-- Offline exact-variant watchlist with Holdings/Watchlist/Forecasts portfolio segmentation and transparent intelligence support states
+- Offline exact-variant Watchlist beside Holdings, with evidence-gated forecasts kept under the separate Insights destination
 - Cached, rights-filtered publication reader with a strict observed/trend/fair-value/forecast display contract
+- Dedicated Insights workspace for recorded performance, horizon-specific forecast ranges, local alert history, immutable public-forecast receipts, and Tier 5 scorecards
 - Separate market value and cost-basis trend lines, gain/loss, allocation, and top holdings
-- Concurrent failure-isolated Pokémon TCG API, Scryfall, and YGOPRODeck search with a 30-minute local cache and a free TCGdex Pokémon discovery fallback; Pokémon search is metadata-only until licensed prices are published
+- Concurrent failure-isolated Pokémon TCG API, Scryfall, and YGOPRODeck search with a 30-minute, 250-entry local cache and a free TCGdex Pokémon discovery fallback; Pokémon search is metadata-only until licensed prices are published
 - Manual entries for sports, comics, slabs, unsupported items, and variants
 - In-browser boundary detection with add, move, lower-right resize, delete, retry, and 1–12 row/column grid tools
 - Browser-native OCR first, with user-triggered Tesseract.js fallback when enabled
-- Per-crop selection and approval, approved-only batch add, and resumable local scan drafts
-- JSON interchange v2 backup/merge restore, backward-compatible v1 import, and CSV export
-- Optional Supabase password or magic-link authentication and tombstone-first last-write-wins holding/watchlist synchronization
+- Per-crop selection, shared/per-item acquisition details, approved-only idempotent batch add, resumable local scan drafts, and image-free completed receipts retained for 30 days (up to 20)
+- Selection-only holding move, tag, duplicate, export, and confirmed-delete tools
+- Settings for account/sync status, collection defaults, privacy, storage, synchronization history, and typed data removal
+- Atomically validated JSON interchange v2 backup/merge restore, backward-compatible v1 import, and CSV export
+- Optional Supabase password or magic-link authentication and paginated, batched, tombstone-first last-write-wins holding/watchlist synchronization
 - Installable offline shell with dedicated provider-image caching
 - Dependency-free Python research core for canonical mapping quarantine, rights-aware observations, point-in-time trends, honest retrospective evaluation/scorecards, reviewable descriptive packets, baselines, pull scarcity, quantiles, and the legacy-model audit
 
@@ -35,9 +39,9 @@ Open `http://localhost:4173`. To run the complete validation, unit-test, and pro
 npm run check
 ```
 
-Other scripts are `npm test` for browser and analytics unit tests, `npm run test:analytics` for the isolated Python suite, and `npm run build` for a static `dist/` build. The build writes `dist/runtime-config.js` from `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `APP_VERSION`, `ENABLE_TESSERACT`, and `ENABLE_PRICE_INTELLIGENCE`.
+Other scripts are `npm test` for browser and analytics unit tests, `npm run test:analytics` for the isolated Python suite, and `npm run build` for a static `dist/` build. The build writes `dist/runtime-config.js` from `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `APP_VERSION`, `ENABLE_TESSERACT`, `ENABLE_WATCHLISTS`, `ENABLE_PRICE_INTELLIGENCE`, and `ENABLE_CLOUD_DATA_REMOVAL`.
 
-With no Supabase public key, every local feature—including Watchlist—remains available. Cloud watchlist sync requires the reviewed `0002_price_intelligence_foundation.sql` migration. Tesseract.js is fetched from jsDelivr only after the user explicitly requests OCR and only when `ENABLE_TESSERACT` is enabled. Setting `ENABLE_PRICE_INTELLIGENCE=false` hides the new surface without deleting local holdings or watchlist records.
+With no Supabase public key, every local feature—including Watchlist—remains available. Cloud watchlist sync requires the reviewed `0002_price_intelligence_foundation.sql` migration. Tesseract.js is fetched from jsDelivr only after the user explicitly requests OCR and only when `ENABLE_TESSERACT` is enabled. `ENABLE_WATCHLISTS` controls the independent local Watchlist surface and defaults on. Public price intelligence is a separate fail-closed capability: `ENABLE_PRICE_INTELLIGENCE` defaults off and must also pass the hosted publication flag before approved intelligence can render. `ENABLE_CLOUD_DATA_REMOVAL` also defaults off and must remain off until migration 0015 has independent recovery, rollback, and two-user isolation proof.
 
 The analytics package includes a bounded research-only TCGCSV current/archive adapter, a separate fixed-origin JustTCG paid-source adapter, deterministic private-ledger packets, preregistered 30-day retrospective origins, explicit Scored/Unscorable outcomes, and a no-secret scheduled qualification workflow. A separate Netlify function can privately stage a Free-plan JustTCG catalog bootstrap in Netlify Blobs: one 20-card page every five minutes, at most 100 outbound attempts per UTC day and 1,000 per collection, with one-year history requested on every card. This staging collector has no browser/read endpoint and does not write Supabase, approve mappings, publish prices, or satisfy commercial rights. A second, user-triggered Netlify function (`justtcg-refresh`) lets a signed-in collector ask that their own held/watched cards be prioritized in that same private collection instead of only its blind price-rank crawl order — it stays inside the same private Blobs store and boundary, self-limits to a small independent daily/per-minute budget, and reads (never writes) the scheduled crawl's own quota state so it yields headroom rather than risk driving the crawl into its own permanently-terminal exhausted state. See [docs/JUSTTCG_ONDEMAND_REFRESH.md](docs/JUSTTCG_ONDEMAND_REFRESH.md). Production observations still require a paid-plan attestation plus a current approved catalog/raw/derived review and honest retrieval availability. Promotion policy requires all five PRD baselines and exact immutable scorecard membership; the currently available packet has only the no-change comparison and therefore remains insufficient. The first hosted 109-evaluation receipt is also a pre-hardening research artifact, not prospective or promotion-eligible evidence.
 
@@ -48,5 +52,11 @@ The current provider decision recommends a $19/month JustTCG Starter license, bu
 ## Deployment
 
 Netlify builds with `npm run build` and publishes `dist/`. The base PWA remains static; the optional JustTCG bootstrap uses one scheduled Function plus one user-triggered Function, both writing only to the same private Netlify Blobs storage. Supabase schema setup, environment variables, Auth redirect configuration, collector checks, and the two-browser deletion-sync qualification are documented in [docs/NETLIFY_DEPLOY.md](docs/NETLIFY_DEPLOY.md).
+
+The local Phase 5 release target is `0.7.0` with service-worker shell `collectfolio-shell-v0.7.0`. Migration `0015_remove_my_cloud_data.sql` is checked in but intentionally not applied; its separate rollout, qualification, and rollback boundary is documented in [docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md](docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md).
+
+The consolidated PRD sections 18–20 evidence matrix, final product-decision
+dispositions, and remaining production-promotion blockers are documented in
+[docs/REDESIGN_FINAL_ACCEPTANCE.md](docs/REDESIGN_FINAL_ACCEPTANCE.md).
 
 Product requirements, technical architecture, and final UI references live in [`docs/`](docs/).
