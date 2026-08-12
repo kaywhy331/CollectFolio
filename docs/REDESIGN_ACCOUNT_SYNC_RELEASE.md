@@ -1,8 +1,10 @@
 # Redesign Account, Sync, Polish, and Release
 
-Date: August 11, 2026
+Acceptance date: August 11, 2026
 
-Status: Repository and immutable hosted candidate qualified for the safe base release
+Promotion date: August 12, 2026
+
+Status: Safe base release deployed after repository, immutable-candidate, and live qualification
 Governing requirements: `PRD/redesign.md` Phase 5 and sections 10.11, 10.16,
 10.17, 18, and 20
 
@@ -17,8 +19,10 @@ offline, and a failed cloud operation never removes the local portfolio.
 The checked-in `0015_remove_my_cloud_data.sql` migration is a separately reviewed
 hosted operation. It was not applied, and the client keeps its control disabled with
 `ENABLE_CLOUD_DATA_REMOVAL=false`. Immutable candidate
-`6a7bf73c1c0748c0e87115bf` passed all 15 hosted Chromium scenarios. No database
-mutation or public-intelligence enablement is part of this base-release qualification.
+`6a7bf73c1c0748c0e87115bf` passed all 15 hosted Chromium scenarios, was published
+unchanged to `https://collectfolio-staging.netlify.app`, and passed the same 15
+scenarios again on the live alias. No database mutation or public-intelligence
+enablement is part of this base-release qualification.
 
 ## Completed tranche
 
@@ -192,21 +196,25 @@ remains independent through its existing runtime/database flags.
 
 ## Qualification receipt
 
-`npm run check` passes: the validator covers 126 required files and 42 browser
-modules, all 206 Node tests pass, all 194 Python analytics tests pass, and the
-production version-0.7.0 build completes. `npm run test:browser` passes all 13
-Chromium scenarios.
+`npm run check` passes: the validator covers 128 required files and 42 browser
+modules, all 34 Node suites pass, all 194 Python analytics tests pass, and the
+production version-0.7.0 build completes. `npm run test:browser` passes all 15
+Chromium scenarios locally.
 
 The four Phase 5 scenarios protect persistent onboarding and first Add,
 responsive/accessible guest Settings and modal focus, successful synchronization
 with offline recovery, and failed-sync recovery details. The consolidated suite also
 protects version-4 migration, Phase 2–4 routes and behavior, serious/critical
-accessibility checks, and the unchanged core visual baseline. `git diff --check`
-passes. The same receipt is summarized in `docs/IMPLEMENTATION_PLAN.md`.
+accessibility checks, and the unchanged core visual baseline. Both the immutable
+candidate and the promoted live alias pass the same 15-scenario Chromium suite under
+the production Content Security Policy. Runtime version, fail-closed capability flags,
+service-worker shell, deep-link fallback, and security headers were rechecked on the
+live alias. `git diff --check` passes. The consolidated receipt is recorded in
+`docs/REDESIGN_FINAL_ACCEPTANCE.md`.
 
 ## Deferred hosted work
 
-Applying migration `0015`, deploying version `0.7.0`, mutating hosted data, verifying
-a real backup restore, and production browser/device monitoring all require separate
-authorization. The repository includes the procedure and rollback boundary but does
-not claim those hosted actions occurred.
+Applying migration `0015`, mutating hosted data, verifying a real backup restore,
+enabling cloud removal or public intelligence, and real-device or ongoing production
+monitoring all require separate authorization. The safe base client is deployed; the
+repository does not claim that any independently gated hosted capability was enabled.

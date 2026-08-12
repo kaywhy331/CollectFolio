@@ -1,8 +1,10 @@
 # Redesign Final Acceptance
 
-Date: August 11, 2026
+Acceptance date: August 11, 2026
 
-Status: Repository-qualified candidate and immutable hosted candidate qualified; base promotion authorized
+Promotion date: August 12, 2026
+
+Status: Repository-qualified candidate, immutable hosted candidate, and safe base release deployed
 
 Governing requirements: `PRD/redesign.md` sections 18, 19, and 20
 Release target: application `0.7.0`, service-worker shell
@@ -10,12 +12,15 @@ Release target: application `0.7.0`, service-worker shell
 
 ## Acceptance boundary
 
-This receipt closes the repository and immutable-hosted-candidate boundaries for the
-redesign. It consolidates the Phase 2–5 evidence, resolves the open product decisions
-for this release, and records the release owner's authorization to promote the safe
-base client. Immutable Netlify candidate `6a7bf73c1c0748c0e87115bf` passed the same
-15-scenario Chromium suite used locally under the production Content Security Policy.
-No hosted database was changed and no disabled capability is represented as qualified.
+This receipt closes the repository, immutable-hosted-candidate, and safe-base-release
+boundaries for the redesign. It consolidates the Phase 2–5 evidence, resolves the open
+product decisions for this release, and records the release owner's authorization to promote the safe
+base client. Immutable Netlify candidate
+`6a7bf73c1c0748c0e87115bf` passed the same 15-scenario Chromium suite used locally
+under the production Content Security Policy, was published unchanged to
+`https://collectfolio-staging.netlify.app`, and passed that suite again on the live
+alias. No hosted database was changed and no disabled capability is represented as
+qualified.
 
 Public price intelligence remains fail closed unless its separate rights, Tier 4+
 publication, evidence, database, runtime, and human-review gates all pass. That
@@ -147,11 +152,17 @@ The local repository gate for this receipt is:
   visual baseline and serious/critical accessibility gates;
 - `PLAYWRIGHT_BASE_URL=https://6a7bf73c1c0748c0e87115bf--collectfolio-staging.netlify.app npm run test:browser`:
   15 of 15 Chromium scenarios under the candidate's production CSP;
+- `PLAYWRIGHT_BASE_URL=https://collectfolio-staging.netlify.app npm run test:browser`:
+  15 of 15 Chromium scenarios after production promotion;
 - immutable candidate runtime: application `0.7.0`, Watchlist enabled, public
   intelligence disabled, and cloud removal disabled; deep links and security headers
   return successfully, with both Netlify functions bundled;
+- production alias: immutable deploy `6a7bf73c1c0748c0e87115bf`, published August 12,
+  2026 at `12:41:04Z`; runtime config, service-worker shell, deep-link fallback, and
+  security headers were rechecked from the live URL;
 - `git diff --check`: no whitespace errors.
 
-The immutable draft deploy is part of this receipt. No migration application, hosted
-database mutation, public-intelligence enablement, cloud-removal enablement, or Git
-push occurred. Production promotion uses this qualified application artifact.
+The immutable draft and its unchanged production promotion are part of this receipt.
+No migration application, hosted database mutation, public-intelligence enablement,
+cloud-removal enablement, or Git push occurred. The qualified application artifact is
+now live on the intended `collectfolio-staging` alias.
