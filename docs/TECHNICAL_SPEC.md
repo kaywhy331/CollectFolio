@@ -291,11 +291,11 @@ This is a heuristic detector, not a trained object model. It is intentionally pa
 
 ### 7.2 Boundary editor
 
-Canvas stores boxes in original-image coordinates and scales them for display. Pointer interactions support:
+The client builds an adaptive Sobel edge map, proposes orientation-constrained Hough lines, scores card-shaped quadrilaterals, and returns typed outlines with a confidence and method. An unreliable detection is never reported as success: the editor shows an explicit inset `manual-fallback` outline instead. Canvas stores four corners in original-image coordinates and scales them for display. Pointer interactions support:
 
 - click/tap selection;
 - dragging inside a selected box to move;
-- dragging the lower-right handle to resize;
+- dragging any of four corner handles to correct perspective;
 - drawing a new box in Add mode;
 - deleting a selected box;
 - re-running detection;
@@ -303,33 +303,35 @@ Canvas stores boxes in original-image coordinates and scales them for display. P
 
 ### 7.3 Crop generation
 
-Crops are rendered to JPEG data URLs with a maximum width of 720 px and 0.84 quality. The crop becomes the user-owned portfolio image and remains in IndexedDB.
+Each four-corner outline is mapped through a projective homography and bilinearly resampled into an upright JPEG with a maximum width of 1,200 px and 0.90 quality. The straightened crop becomes the user-owned portfolio image and remains in IndexedDB; the full camera image is discarded after crop creation.
 
 ### 7.4 OCR
 
 The sequence is:
 
 1. attempt a browser-native `TextDetector` when available;
-2. otherwise lazy-load Tesseract.js from jsDelivr;
-3. recognize English text locally;
-4. normalize OCR lines;
-5. prioritize distinctive long words and number-containing tokens;
-6. present an editable query before or after catalog search.
+2. quality-gate native text and otherwise lazy-load one reusable Tesseract.js worker from jsDelivr;
+3. probe 0°, 90°, 180°, and 270°, then run grayscale/threshold title and footer passes at the best orientation;
+4. fuse only quality-gated pass evidence and reject symbol soup, boilerplate, and short single-token noise;
+5. generate ordered title + collector-number, collector-number-only, title, and cautious OCR-noise-relaxed queries;
+6. search variants automatically and preserve provider outages as retryable errors instead of false no-matches.
 
-OCR is advisory. Failure returns control to manual query entry.
+OCR begins when a straightened crop enters review. Failure returns control to manual query entry and can also invoke the independent visual candidate index; no approved price source is required for identification.
 
-### 7.5 Visual reranking
+### 7.5 Visual candidate recovery and reranking
 
-The app computes a 64-bit difference hash from a 9×8 grayscale rendering of the user crop. For candidate images that permit CORS access, it computes the same hash and combines:
+The app computes a 64-bit difference hash from a 9×8 grayscale rendering of the straightened crop. A versioned, sharded Pokémon index contains compact catalog metadata and the same fingerprint for 20,392 of 20,444 indexed cards, pinned to an immutable `PokemonTCG/pokemon-tcg-data` commit. When OCR produces no useful catalog result, the nearest index records become real catalog candidates without downloading every provider image.
 
-- 62% visual hash similarity;
-- 38% text/metadata match score.
+For OCR-generated candidates whose images permit CORS access, metadata remains primary and full-card dHash is only a tie-breaker:
+
+- 88% title / collector-number metadata match;
+- 12% visual hash similarity.
 
 When candidate images cannot be read through Canvas, ranking falls back to metadata similarity.
 
 ## 8. Review safety model
 
-A crop can be `unmatched`, `identifying`, `matched`, or `error`. It is only included in batch add when:
+A crop can be `queued`, `unmatched`, `identifying`, `matched`, or `error`. Persisted queued/interrupted crops restart automatically when their draft resumes. It is only included in batch add when:
 
 - a candidate or explicit custom fallback is selected; and
 - `approved === true`.
@@ -458,10 +460,12 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.0` includes the Settings, onboarding, and local-scenario modules. Navigation
+`collectfolio-shell-v0.8.2` includes the Settings, onboarding, local-scenario, and image-identification modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
-160-entry cache-first store to reduce repeat downloads without unbounded growth.
+160-entry cache-first store to reduce repeat downloads without unbounded growth. The
+visual index uses a separate 20-entry cache, enough for its manifest and 16 shards;
+the installed shell manifest remains the first-offline-use fallback.
 Runtime configuration uses network-first delivery with its installed copy as an
 offline-only fallback, so key rotation and feature rollback are not hidden by a stale
 shell cache. External catalog API calls are not intercepted, so stale provider data is

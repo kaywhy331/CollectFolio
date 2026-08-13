@@ -5,6 +5,7 @@ import {
   compactCompletedScanDraft,
   completedScanRetentionPlan,
   createScanDraft,
+  identifyDraftCrops,
   normalizeAcquisition,
   searchCatalogCandidates,
   scanReviewSummary,
@@ -98,7 +99,7 @@ test('review labels candidates as similarity evidence rather than calibrated con
 
 test('catalog candidate search relaxes in order, recovers, and deduplicates useful matches', async () => {
   const evidence = { title: 'Charizard ex', number: '223/197', query: 'Charizard ex 223/197' };
-  const queries = ['Charizard ex 223/197', 'Charizard ex', 'Charizard'];
+  const queries = ['Charizard ex 223/197', '223/197', 'Charizard ex', 'Charizard'];
   const calls = [];
   const recovered = await searchCatalogCandidates(queries, evidence, async ({ query }) => {
     calls.push(query);
@@ -111,10 +112,48 @@ test('catalog candidate search relaxes in order, recovers, and deduplicates usef
       warnings: ['One provider was unavailable.'], fulfilledProviders: 2
     };
   });
-  assert.deepEqual(calls, ['Charizard ex 223/197', 'Charizard ex']);
+  assert.deepEqual(calls, ['Charizard ex 223/197', '223/197', 'Charizard ex']);
   assert.equal(recovered.candidates.length, 1);
   assert.equal(recovered.allAttemptsFailed, false);
   assert.deepEqual(recovered.warnings, ['One provider was unavailable.']);
+});
+
+test('automatic identification processes every queued crop without user initiation', async () => {
+  const draft = createScanDraft([
+    { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' },
+    { box: { x: 10, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+  ]);
+  assert.deepEqual(draft.crops.map((crop) => crop.status), ['queued', 'queued']);
+  const calls = [];
+  await identifyDraftCrops(draft, {
+    concurrency: 2,
+    identify: async (_draft, cropId, query) => {
+      calls.push([cropId, query]);
+      const crop = draft.crops.find((entry) => entry.id === cropId);
+      crop.status = 'unmatched';
+    }
+  });
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(([, query]) => query === ''));
+});
+
+test('automatic identification isolates one crop failure and continues the queue', async () => {
+  const draft = createScanDraft([
+    { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' },
+    { box: { x: 10, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+  ]);
+  const calls = [];
+  await identifyDraftCrops(draft, {
+    identify: async (_draft, cropId) => {
+      calls.push(cropId);
+      if (calls.length === 1) throw new Error('synthetic OCR failure');
+      draft.crops.find((crop) => crop.id === cropId).status = 'unmatched';
+    }
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(draft.crops[0].status, 'error');
+  assert.match(draft.crops[0].error, /synthetic OCR failure/);
+  assert.equal(draft.crops[1].status, 'unmatched');
 });
 
 test('catalog candidate search distinguishes a full provider outage from a valid no-match', async () => {

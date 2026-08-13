@@ -13,8 +13,8 @@ CollectFolio is a dependency-free, local-first progressive web app for collectib
 - Separate market value and cost-basis trend lines, gain/loss, allocation, and top holdings
 - Concurrent failure-isolated Pokémon TCG API, Scryfall, and YGOPRODeck search with a 30-minute, 250-entry local cache and a free TCGdex Pokémon discovery fallback; Pokémon search is metadata-only until licensed prices are published
 - Manual entries for sports, comics, slabs, unsupported items, and variants
-- In-browser boundary detection with add, move, lower-right resize, delete, retry, and 1–12 row/column grid tools
-- Browser-native OCR first, with user-triggered Tesseract.js fallback when enabled
+- In-browser four-corner detection and perspective rectification with add, move, corner editing, delete, retry, and 1–12 row/column grid tools
+- Automatic browser-native OCR with quality-gated multi-pass Tesseract.js fallback when enabled
 - Per-crop selection, shared/per-item acquisition details, approved-only idempotent batch add, resumable local scan drafts, and image-free completed receipts retained for 30 days (up to 20)
 - Selection-only holding move, tag, duplicate, export, and confirmed-delete tools
 - Settings for account/sync status, collection defaults, privacy, storage, synchronization history, and typed data removal
@@ -53,7 +53,7 @@ The current provider decision recommends a $19/month JustTCG Starter license, bu
 
 Netlify builds with `npm run build` and publishes `dist/`. The base PWA remains static; the optional JustTCG bootstrap uses one scheduled Function plus one user-triggered Function, both writing only to the same private Netlify Blobs storage. Supabase schema setup, environment variables, Auth redirect configuration, collector checks, and the two-browser deletion-sync qualification are documented in [docs/NETLIFY_DEPLOY.md](docs/NETLIFY_DEPLOY.md).
 
-The current application patch is `0.8.1` with service-worker shell `collectfolio-shell-v0.8.1`; it retains the `0.8.0` local-scenario foundation. IndexedDB v5 is additive and preserves the version-4 migration fixture. Migration `0015_remove_my_cloud_data.sql` is checked in but intentionally not applied; its separate rollout, qualification, and rollback boundary is documented in [docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md](docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md).
+The current application patch is `0.8.2` with service-worker shell `collectfolio-shell-v0.8.2`; it adds automatic four-corner detection, perspective rectification, automatic quality-gated OCR/catalog recovery, and a pinned Pokémon visual-candidate index while retaining the `0.8.0` local-scenario foundation. IndexedDB v5 is additive and preserves the version-4 migration fixture. Migration `0015_remove_my_cloud_data.sql` is checked in but intentionally not applied; its separate rollout, qualification, and rollback boundary is documented in [docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md](docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md).
 
 The consolidated PRD sections 18–20 evidence matrix, final product-decision
 dispositions, and remaining production-promotion blockers are documented in

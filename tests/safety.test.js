@@ -68,13 +68,14 @@ test('external card images eagerly load visible candidates and retain a fallback
   }
 });
 
-test('interrupted persisted identification is recoverable after reload', () => {
+test('queued and interrupted persisted identification restart automatically after reload', () => {
   const draft = { crops: [
     { id: 'stuck', status: 'identifying', error: '' },
+    { id: 'queued', status: 'queued', error: '' },
     { id: 'ready', status: 'matched', error: '' }
   ] };
   assert.equal(recoverInterruptedIdentifications(draft), 1);
-  assert.equal(draft.crops[0].status, 'error');
-  assert.match(draft.crops[0].error, /interrupted/i);
-  assert.equal(draft.crops[1].status, 'matched');
+  assert.equal(draft.crops[0].status, 'queued');
+  assert.equal(draft.crops[1].status, 'queued');
+  assert.equal(draft.crops[2].status, 'matched');
 });

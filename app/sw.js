@@ -1,6 +1,8 @@
-const CACHE = 'collectfolio-shell-v0.8.1';
+const CACHE = 'collectfolio-shell-v0.8.2';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
+const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
+const MAX_VISUAL_INDEX_ENTRIES = 20;
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
   './assets/css/app.css', './assets/icons/icon.svg', './assets/icons/icon-192.png',
@@ -17,11 +19,12 @@ const SHELL = [
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/image-algorithms.js',
   './assets/js/services/image.js', './assets/js/services/scan-workbench.js',
-  './assets/js/services/scan-review.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
+  './assets/js/services/scan-review.js', './assets/js/services/visual-index.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
   './assets/js/services/price-intelligence.js',
   './assets/js/services/justtcg-refresh.js',
   './assets/js/services/demand-events.js',
-  './assets/js/views/scan.js'
+  './assets/js/views/scan.js',
+  './assets/data/visual-index/pokemon-v1/manifest.json'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
   'images.pokemontcg.io', 'images.scrydex.com', 'assets.tcgdex.net', 'cards.scryfall.io', 'images.ygoprodeck.com'
@@ -37,8 +40,9 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((key) => ![CACHE, IMAGE_CACHE].includes(key)).map((key) => caches.delete(key)));
+    await Promise.all(keys.filter((key) => ![CACHE, IMAGE_CACHE, VISUAL_INDEX_CACHE].includes(key)).map((key) => caches.delete(key)));
     await trimCache(IMAGE_CACHE, MAX_PROVIDER_IMAGE_ENTRIES);
+    await trimCache(VISUAL_INDEX_CACHE, MAX_VISUAL_INDEX_ENTRIES);
     await self.clients.claim();
   })());
 });
@@ -52,7 +56,8 @@ async function trimCache(cacheName, maximumEntries) {
 
 async function cacheFirst(request, cacheName, maximumEntries = 0) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
+  const cached = await cache.match(request)
+    || (cacheName === VISUAL_INDEX_CACHE ? await caches.open(CACHE).then((shell) => shell.match(request)) : null);
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok || response.type === 'opaque') {
@@ -88,6 +93,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/assets/data/visual-index/')) {
+    event.respondWith(cacheFirst(event.request, VISUAL_INDEX_CACHE, MAX_VISUAL_INDEX_ENTRIES));
+    return;
+  }
   if (url.pathname === '/runtime-config.js') {
     event.respondWith(networkFirst(event.request, CACHE));
     return;

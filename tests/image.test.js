@@ -1,8 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { connectedComponents, detectBoundaries, differenceHash, gridBoxes, hashSimilarity, mergeBoxes } from '../app/assets/js/services/image-algorithms.js';
+import {
+  connectedComponents,
+  detectBoundaries,
+  differenceHash,
+  gridBoxes,
+  hashSimilarity,
+  mergeBoxes,
+  perspectiveTransform,
+  projectPoint
+} from '../app/assets/js/services/image-algorithms.js';
 import {
   analyzeOCRText,
+  analyzeOCRPasses,
   buildOCRQueryVariants,
   candidateEvidenceScore,
   extractCollectorNumber,
@@ -10,9 +20,43 @@ import {
   fileToImageDataURL,
   MAX_IMAGE_FILE_BYTES,
   queryEvidenceFromText,
+  rectifyCardPixels,
   validateImageFile,
   withTimeout
 } from '../app/assets/js/services/image.js';
+import { visualCandidatesFromHash } from '../app/assets/js/services/visual-index.js';
+
+function syntheticImage(width, height, background = [230, 230, 230]) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let index = 0; index < width * height; index++) {
+    data[index * 4] = background[0];
+    data[index * 4 + 1] = background[1];
+    data[index * 4 + 2] = background[2];
+    data[index * 4 + 3] = 255;
+  }
+  return { width, height, data };
+}
+
+function setPixel(image, x, y, color) {
+  if (x < 0 || y < 0 || x >= image.width || y >= image.height) return;
+  const offset = (y * image.width + x) * 4;
+  image.data[offset] = color[0];
+  image.data[offset + 1] = color[1];
+  image.data[offset + 2] = color[2];
+  image.data[offset + 3] = 255;
+}
+
+function fillPolygon(image, points, color) {
+  for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+    let inside = false;
+    for (let index = 0, previous = points.length - 1; index < points.length; previous = index++) {
+      const current = points[index];
+      const prior = points[previous];
+      if ((current.y > y) !== (prior.y > y) && x < (prior.x - current.x) * (y - current.y) / (prior.y - current.y) + current.x) inside = !inside;
+    }
+    if (inside) setPixel(image, x, y, color);
+  }
+}
 
 test('four-neighbor components keep diagonally separated shapes distinct', () => {
   const mask = new Uint8Array([
@@ -52,7 +96,49 @@ test('synthetic pixels detect a foreground rectangle and always have a fallback'
   const boxes = detectBoundaries({ width, height, data }, { minArea: 25, dilateRadius: 1, erodeRadius: 1 });
   assert.ok(boxes.some((box) => box.x <= 9 && box.y <= 7 && box.width >= 20 && box.height >= 15));
   const blank = detectBoundaries({ width, height, data: new Uint8ClampedArray(width * height * 4).fill(255) });
-  assert.deepEqual(blank, [{ x: 0, y: 0, width, height }]);
+  assert.equal(blank.length, 1);
+  assert.equal(blank[0].fallback, true);
+  assert.equal(blank[0].method, 'manual-fallback');
+  assert.equal(blank[0].confidence, 0);
+  assert.equal(blank[0].corners.length, 4);
+});
+
+test('adaptive detection recovers rotated card corners on a textured surface', () => {
+  const image = syntheticImage(600, 600, [170, 130, 90]);
+  for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+    const noise = ((x * 17 + y * 31 + (x * y) % 23) % 41) - 20;
+    setPixel(image, x, y, [170 + noise, 130 + noise, 90 + noise]);
+  }
+  const expected = [
+    { x: 203, y: 95 }, { x: 448, y: 139 }, { x: 387, y: 487 }, { x: 142, y: 443 }
+  ];
+  fillPolygon(image, expected, [35, 85, 145]);
+  const [card] = detectBoundaries(image, { maximumCards: 1 });
+  assert.equal(card.fallback, false);
+  assert.equal(card.method, 'adaptive-quad');
+  assert.equal(card.corners.length, 4);
+  for (let index = 0; index < 4; index++) {
+    assert.ok(Math.hypot(card.corners[index].x - expected[index].x, card.corners[index].y - expected[index].y) < 18);
+  }
+});
+
+test('perspective transform and rectification map card corners into an upright image', () => {
+  const source = syntheticImage(80, 80, [10, 10, 10]);
+  const corners = [
+    { x: 22, y: 8 }, { x: 62, y: 18 }, { x: 54, y: 72 }, { x: 14, y: 62 }
+  ];
+  fillPolygon(source, corners, [230, 230, 230]);
+  const target = [{ x: 0, y: 0 }, { x: 39, y: 0 }, { x: 39, y: 55 }, { x: 0, y: 55 }];
+  const matrix = perspectiveTransform(corners, target);
+  corners.forEach((corner, index) => {
+    const mapped = projectPoint(matrix, corner);
+    assert.ok(Math.abs(mapped.x - target[index].x) < 0.001);
+    assert.ok(Math.abs(mapped.y - target[index].y) < 0.001);
+  });
+  const rectified = rectifyCardPixels(source.data, source.width, source.height, corners, 40);
+  assert.ok(rectified.height > rectified.width);
+  const center = ((Math.floor(rectified.height / 2) * rectified.width) + Math.floor(rectified.width / 2)) * 4;
+  assert.ok(rectified.data[center] > 200);
 });
 
 test('64-bit dHash and Hamming similarity are deterministic', () => {
@@ -62,6 +148,25 @@ test('64-bit dHash and Hamming similarity are deterministic', () => {
   assert.equal(same.length, 16);
   assert.equal(hashSimilarity(same, same), 1);
   assert.equal(hashSimilarity(same, inverse), 0);
+});
+
+test('versioned visual index hydrates nearest candidates without OCR evidence', async () => {
+  const manifest = {
+    format: 'collectfolio-visual-candidate-index', version: 1,
+    shards: [{ name: '0' }]
+  };
+  const results = await visualCandidatesFromHash('8c8e96868631b286', {
+    manifest,
+    loadShard: async () => [
+      ['base1-58', 'Pikachu', 'Base', '58', 'Common', 'https://images.pokemontcg.io/base1/58.png', '8c8e96868631b286'],
+      ['other-1', 'Other', 'Other Set', '1', 'Common', 'https://images.pokemontcg.io/other/1.png', '0000000000000000']
+    ],
+    minimumScore: 0.9
+  });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].id, 'pokemon:base1-58');
+  assert.equal(results[0].matchScore, 1);
+  assert.equal(results[0].price, null);
 });
 
 test('OCR query extraction favors distinctive words and number tokens', () => {
@@ -81,9 +186,9 @@ test('OCR analysis rejects symbol soup and boilerplate instead of surfacing rand
 
 test('OCR analysis preserves names, punctuation, and collector-number search order', () => {
   const fixtures = [
-    ['Charizard ex\n223/197', ['Charizard ex 223/197', 'Charizard ex', 'Charizard']],
-    ['Blue-Eyes White Dragon\nLOB-001', ['Blue-Eyes White Dragon LOB-001', 'Blue-Eyes White Dragon']],
-    ['Fable of the Mirror-Breaker\n141', ['Fable of the Mirror-Breaker 141', 'Fable of the Mirror-Breaker']]
+    ['Charizard ex\n223/197', ['Charizard ex 223/197', '223/197', 'Charizard ex', 'Charizard']],
+    ['Blue-Eyes White Dragon\nLOB-001', ['Blue-Eyes White Dragon LOB-001', 'LOB-001', 'Blue-Eyes White Dragon']],
+    ['Fable of the Mirror-Breaker\n141', ['Fable of the Mirror-Breaker 141', '141', 'Fable of the Mirror-Breaker']]
   ];
   for (const [text, queries] of fixtures) {
     const result = analyzeOCRText(text, { confidence: 82 });
@@ -93,7 +198,22 @@ test('OCR analysis preserves names, punctuation, and collector-number search ord
   assert.equal(extractCollectorNumber('Mewtwo GX 78/73'), '78/73');
   assert.equal(extractCollectorNumber("Fable of the Mirror-Breaker 141"), '141');
   assert.equal(extractCollectorNumber('Charizard ex\n330 HP\n223/197'), '223/197');
-  assert.deepEqual(buildOCRQueryVariants({ title: "Farmer's Charm", number: 'RA01-EN001' }), ["Farmer's Charm RA01-EN001", "Farmer's Charm"]);
+  assert.deepEqual(buildOCRQueryVariants({ title: "Farmer's Charm", number: 'RA01-EN001' }), ["Farmer's Charm RA01-EN001", 'RA01-EN001', "Farmer's Charm"]);
+  assert.deepEqual(buildOCRQueryVariants({ title: 'Pikach PN', number: '58/102' }), ['Pikach PN 58/102', '58/102', 'Pikach PN', 'Pikach']);
+  assert.deepEqual(buildOCRQueryVariants({ title: 'FABLE OF THE MIRROR-BREAKER', number: '141' }), ['FABLE OF THE MIRROR-BREAKER 141', '141', 'FABLE OF THE MIRROR-BREAKER']);
+});
+
+test('OCR pass fusion rejects short garbage titles and preserves repeated collector evidence', () => {
+  const result = analyzeOCRPasses([
+    { label: 'orientation', rotation: 0, text: 'ETH\n58/102', confidence: 78 },
+    { label: 'title', rotation: 0, text: 'Pikach PN', confidence: 62 },
+    { label: 'footer', rotation: 0, text: '58/102', confidence: 91 },
+    { label: 'orientation', rotation: 180, text: '||| 1lI ???', confidence: 15 }
+  ]);
+  assert.equal(result.accepted, true);
+  assert.equal(result.number, '58/102');
+  assert.ok(result.queries.includes('58/102'));
+  assert.notEqual(result.title, 'ETH');
 });
 
 test('typed-query evidence and candidate ranking reward an agreeing collector number', () => {
@@ -107,6 +227,13 @@ test('typed-query evidence and candidate ranking reward an agreeing collector nu
   assert.ok(exact > wrongPrinting);
   assert.ok(exact > wrongName);
   for (const score of [exact, wrongPrinting, wrongName]) assert.ok(Number.isFinite(score) && score >= 0 && score <= 1);
+});
+
+test('collector-number-only recovery survives missing or corrupted title OCR', () => {
+  const candidate = { name: 'Pikachu', setName: 'Base', number: '58' };
+  assert.ok(candidateEvidenceScore(candidate, { title: '', number: '58/102', query: '58/102' }) >= 0.8);
+  assert.ok(candidateEvidenceScore(candidate, { title: 'Pikach PN', number: '58/102', query: 'Pikach PN 58/102' }) >= 0.6);
+  assert.ok(candidateEvidenceScore({ ...candidate, number: '59' }, { title: '', number: '58/102', query: '58/102' }) < 0.28);
 });
 
 test('OCR deadlines resolve completed work and reject stalled work', async () => {

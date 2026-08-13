@@ -23,11 +23,11 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
-import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
+import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
 import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
-import { applyAcquisitionToAll, batchAddApproved, createScanDraft, deleteCrop, identifyCrop, maintainCompletedScans, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropAcquisition, setCropApproval, setCropCustomItem } from './services/scan-review.js';
+import { applyAcquisitionToAll, batchAddApproved, createScanDraft, deleteCrop, identifyCrop, identifyDraftCrops, maintainCompletedScans, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropAcquisition, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
 import { consumeAuthCallback, fetchDemandAnalyticsOptOut, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, pushDemandAnalyticsOptOut, removeCloudData, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
 import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js';
@@ -53,6 +53,19 @@ let inspectorReturnTarget = null;
 let inspectorWasOpen = false;
 let searchGeneration = 0;
 let routeHydrationId = 0;
+let identificationRun = 0;
+
+function startDraftIdentification(draft) {
+  if (!draft?.id || !(draft.crops || []).some((crop) => crop.status === 'queued')) return;
+  const run = ++identificationRun;
+  identifyDraftCrops(draft, { concurrency: 1 }).catch(async (error) => {
+    if (activeDraft?.id === draft.id) showToast(error?.message || 'Automatic identification stopped. Retry the unresolved card.', 'error');
+  }).finally(async () => {
+    if (run !== identificationRun || activeDraft?.id !== draft.id) return;
+    await loadLocal();
+    render();
+  });
+}
 
 setState(routeStatePatch(activeRoute, getState()));
 
@@ -994,7 +1007,7 @@ function openCompareModal() {
 
 function chooseScanImage({ single = false } = {}) {
   const description = single
-    ? 'Use the camera or choose one card image. The whole image starts as one editable card boundary.'
+    ? 'Use the camera or choose one card image. CollectFolio detects its four corners, straightens it, and starts identification automatically.'
     : 'Use the camera or choose an existing image. CollectFolio detects one or several card boundaries.';
   openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelectorAll('[data-scan-source]').forEach((input) => input.addEventListener('change', async (event) => {
@@ -1015,11 +1028,17 @@ function chooseScanImage({ single = false } = {}) {
 function openWorkbench(image, { single = false } = {}) {
   let editor;
   const tools = single
-    ? '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Reset full-card boundary</button></div>'
+    ? '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Retry corner detection</button></div>'
     : '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="add">Draw new</button><button class="button secondary small" type="button" data-workbench="delete">Delete selected</button><button class="button secondary small" type="button" data-workbench="retry">Retry detection</button></div><div class="grid-controls"><label>Rows<input id="grid-rows" type="number" min="1" max="12" value="3"></label><label>Columns<input id="grid-columns" type="number" min="1" max="12" value="3"></label><button class="button secondary" type="button" data-workbench="grid">Apply grid</button></div>';
-  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag inside the box to move it, or drag its lower-right handle to tighten the crop around the card.' : 'Tap a box to select it, drag inside to move, or drag its lower-right handle to resize.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Create review crops</button>', onOpen(layer) {
+  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag the four corner handles to the card edges, or drag inside to move the outline. The saved crop is straightened automatically.' : 'Tap a card to select it. Drag its four corner handles to align perspective, or drag inside to move it.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Straighten and identify</button>', onOpen(layer) {
     const count = layer.querySelector('#boundary-count');
-    const updateCount = (boxes) => { count.textContent = `${boxes.length} editable ${boxes.length === 1 ? 'boundary' : 'boundaries'}`; };
+    const updateCount = (boxes) => {
+      const fallback = boxes.some((box) => box.fallback);
+      count.textContent = fallback
+        ? 'Automatic corners were not reliable. Adjust the four handles before continuing.'
+        : `${boxes.length} detected ${boxes.length === 1 ? 'card outline' : 'card outlines'} · drag any corner to refine`;
+      count.classList.toggle('negative', fallback);
+    };
     editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, { single, onChange: updateCount });
     editor.detect();
     updateCount(editor.boxes);
@@ -1034,22 +1053,29 @@ function openWorkbench(image, { single = false } = {}) {
       if (action === 'continue') {
         if (!editor.boxes.length) { showToast('Add at least one crop boundary', 'warning'); return; }
         button.disabled = true;
-        const draft = createScanDraft(
-          cropsFromBoxes(image, editor.boxes),
-          single ? 'single' : 'multi',
-          {
-            condition: getState().settings.defaultCondition,
-            purchaseCurrency: getState().settings.currency,
-            manualMarketCurrency: getState().settings.currency
-          }
-        );
-        await saveScanDraft(draft);
-        activeDraft = draft;
-        editor.destroy();
-        closeModal();
-        await loadLocal();
-        navigate('scan');
-        showToast('Review crops created on this device');
+        try {
+          const draft = createScanDraft(
+            cropsFromBoxes(image, editor.boxes),
+            single ? 'single' : 'multi',
+            {
+              condition: getState().settings.defaultCondition,
+              purchaseCurrency: getState().settings.currency,
+              manualMarketCurrency: getState().settings.currency
+            }
+          );
+          await saveScanDraft(draft);
+          activeDraft = draft;
+          editor.destroy();
+          closeModal();
+          await loadLocal();
+          navigate('scan');
+          render();
+          showToast('Cards straightened; identification started locally');
+          startDraftIdentification(draft);
+        } catch (error) {
+          button.disabled = false;
+          showToast(error?.message || 'This outline could not be straightened. Adjust its four corners and retry.', 'error');
+        }
       }
     });
   }});
@@ -1062,6 +1088,7 @@ async function resumeScan() {
   const recovered = recoverInterruptedIdentifications(activeDraft);
   if (recovered) await saveScanDraft(activeDraft);
   navigate('scan');
+  startDraftIdentification(activeDraft);
   if (recovered) showToast('Interrupted identification was reset for retry', 'warning');
 }
 
@@ -1534,6 +1561,8 @@ addEventListener('online', () => {
   if (state.auth.session && (state.auth.pendingChanges || state.auth.error)) syncNow();
 });
 
+addEventListener('pagehide', () => { releaseOCRWorker().catch(() => {}); });
+
 initializeAuth();
 applyAppRoute(activeRoute, { historyMode: 'replace', focus: false, scroll: false });
 subscribe(render);
@@ -1541,7 +1570,10 @@ render();
 addEventListener('popstate', () => {
   applyAppRoute(parseAppRoute(location), { historyMode: 'none', focus: true, scroll: false });
 });
-loadLocal().then(() => hydrateCardRoute(activeRoute)).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
+loadLocal().then(() => {
+  if (activeRoute.key === 'add-review') startDraftIdentification(activeDraft);
+  return hydrateCardRoute(activeRoute);
+}).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
   setState({ ready: true });
   showToast(error.message || 'Could not open local portfolio', 'error', 8000);
 });

@@ -52,6 +52,7 @@ function bulkAcquisition(draft) {
 }
 
 function matchStatus(crop, selected) {
+  if (!selected && ['queued', 'identifying'].includes(crop.status)) return ['possible', crop.status === 'queued' ? 'Queued' : 'Identifying'];
   if (!selected) return ['unmatched', 'Unmatched'];
   if (crop.customItem) return ['possible', 'Custom identity'];
   const bucket = matchBucketFor(selected);
@@ -81,12 +82,12 @@ function cropCard(crop, index, state) {
   const selected = selectedCropItem(crop);
   const [bucket, label] = matchStatus(crop, selected);
   return `<article class="review-card ${crop.approved ? 'approved' : ''}" data-crop-id="${escapeAttribute(crop.id)}">
-    <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Crop ${index + 1}" referrerpolicy="no-referrer"><div><div class="review-item-kicker"><span>Item ${index + 1}</span><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span>${crop.approved ? '<span class="approval-state">Approved</span>' : ''}</div><h2>${escapeHTML(selected?.name || 'Identify this crop')}</h2><p class="muted">${crop.approved ? 'This item will be included with the acquisition details below.' : selected ? 'Confirm the identity, fill acquisition details, then approve it.' : 'Search with OCR or a typed query, or create a custom identity.'}</p></div></div>
+    <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Straightened card ${index + 1}" referrerpolicy="no-referrer"><div><div class="review-item-kicker"><span>Item ${index + 1}</span><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span>${crop.approved ? '<span class="approval-state">Approved</span>' : ''}</div><h2>${escapeHTML(selected?.name || (['queued', 'identifying'].includes(crop.status) ? 'Identifying this card' : 'Identify this card'))}</h2><p class="muted">${crop.approved ? 'This item will be included with the acquisition details below.' : selected ? 'Confirm the identity, fill acquisition details, then approve it.' : ['queued', 'identifying'].includes(crop.status) ? 'Reading the straightened card and searching catalog printings automatically.' : 'Retry automatic OCR, enter a query, or create a custom identity.'}</p></div></div>
     <div class="match-workspace"><label>OCR or catalog query<input data-crop-query value="${escapeAttribute(crop.query)}" placeholder="Type a name, set, or number"></label>
       ${crop.ocrEngine ? `<p class="fine-print">OCR: ${escapeHTML(crop.ocrEngine)}${crop.query ? ' · reliable card text selected locally' : ''}</p>` : ''}
-      ${crop.status === 'identifying' ? '<p class="fine-print" role="status">Identifying locally. First-use OCR may take a few seconds.</p>' : ''}
+      ${['queued', 'identifying'].includes(crop.status) ? '<p class="fine-print" role="status">Identifying automatically on this device. First-use OCR may take a few seconds.</p>' : ''}
       ${crop.error ? `<p class="fine-print negative" role="status">${escapeHTML(crop.error)}</p>` : ''}
-      <div class="button-row"><button class="button secondary small" type="button" data-action="identify-crop" data-id="${escapeAttribute(crop.id)}" ${crop.status === 'identifying' ? 'disabled' : ''}>${crop.status === 'identifying' ? 'Identifying…' : crop.query ? 'Search / retry' : 'Run OCR'}</button><button class="button ghost small" type="button" data-action="custom-crop" data-id="${escapeAttribute(crop.id)}">Create custom</button><button class="button ghost small" type="button" data-action="delete-crop" data-id="${escapeAttribute(crop.id)}">Exclude item</button></div>
+      <div class="button-row"><button class="button secondary small" type="button" data-action="identify-crop" data-id="${escapeAttribute(crop.id)}" ${['queued', 'identifying'].includes(crop.status) ? 'disabled' : ''}>${['queued', 'identifying'].includes(crop.status) ? 'Identifying…' : crop.query ? 'Search / retry' : 'Retry automatic OCR'}</button><button class="button ghost small" type="button" data-action="custom-crop" data-id="${escapeAttribute(crop.id)}">Create custom</button><button class="button ghost small" type="button" data-action="delete-crop" data-id="${escapeAttribute(crop.id)}">Exclude item</button></div>
     </div>
     ${candidateList(crop)}
     ${selectedMatch(crop, selected, state)}
