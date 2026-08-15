@@ -143,6 +143,24 @@ class TCGCSVUniverseTests(unittest.TestCase):
                 )
             self.assertFalse(output.exists())
 
+    def test_archive_normalization_retains_reviewed_empty_categories_in_scope(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            member = root / "2026-08-14" / "3" / "23651" / "prices"
+            member.parent.mkdir(parents=True)
+            member.write_text(
+                json.dumps({"success": True, "results": [PRICE]}),
+                encoding="utf-8",
+            )
+            result = normalize_extracted_archive(
+                root, date(2026, 8, 14), [3, 21, 84], root / "prices.csv",
+                source_available_at=SOURCE_AVAILABLE,
+                allowed_missing_category_ids=[21, 84],
+            )
+            self.assertEqual(result.category_ids, (3, 21, 84))
+            self.assertEqual(result.empty_category_ids, (21, 84))
+            self.assertEqual(result.price_count, 1)
+
     def test_archive_date_is_bound_to_exact_source_timestamp(self):
         source_updated = _timestamp("2026-08-14T20:05:48+0000")
         self.assertEqual(

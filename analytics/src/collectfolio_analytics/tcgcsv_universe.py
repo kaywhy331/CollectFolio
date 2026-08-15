@@ -27,6 +27,11 @@ MAX_ARCHIVE_MEMBER_BYTES = 32 * 1024 * 1024
 PRICE_QUANTUM = Decimal("0.0001")
 AUDIT_CYCLE_DAYS = 7
 CARD_CATEGORY_EXCEPTIONS = frozenset({59, 60, 72, 73})
+# TCGplayer still labels these as card categories, but TCGCSV exposes no price
+# members for either one. Category 21 is retired and its groups endpoint returns
+# 404; category 84 has a successful, empty groups response. Keep the identities
+# in the sealed scope while allowing them to contribute zero group receipts.
+PRICE_ARCHIVE_EMPTY_CARD_CATEGORIES = frozenset({21, 84})
 
 PRICE_COLUMNS = (
     "archive_date", "source_available_at", "category_id", "group_id",
@@ -404,6 +409,7 @@ class ArchiveNormalization:
     archive_date: date
     source_available_at: datetime
     category_ids: tuple[int, ...]
+    empty_category_ids: tuple[int, ...]
     group_receipts: tuple[GroupReceipt, ...]
     price_count: int
     expanded_bytes: int
@@ -414,6 +420,7 @@ class ArchiveNormalization:
         return content_hash({
             "contractVersion": UNIVERSE_CONTRACT_VERSION,
             "categoryIds": list(self.category_ids),
+            "emptyCategoryIds": list(self.empty_category_ids),
         })
 
     def as_dict(self) -> dict[str, object]:
@@ -421,6 +428,7 @@ class ArchiveNormalization:
             "archiveDate": self.archive_date.isoformat(),
             "sourceAvailableAt": self.source_available_at.isoformat(),
             "categoryIds": list(self.category_ids),
+            "emptyCategoryIds": list(self.empty_category_ids),
             "groupReceipts": [item.as_dict() for item in self.group_receipts],
             "priceCount": self.price_count,
             "expandedBytes": self.expanded_bytes,
@@ -436,6 +444,7 @@ def normalize_extracted_archive(
     csv_path: Path,
     *,
     source_available_at: datetime,
+    allowed_missing_category_ids: Iterable[int] = (),
 ) -> ArchiveNormalization:
     """Stream every scoped provider price row to one deterministic CSV."""
 
@@ -445,6 +454,12 @@ def normalize_extracted_archive(
     requested = {_positive_int(value, "category_id") for value in category_ids}
     if not requested:
         raise ValueError("at least one card category is required")
+    allowed_missing = {
+        _positive_int(value, "allowed_missing_category_id")
+        for value in allowed_missing_category_ids
+    }
+    if allowed_missing - requested:
+        raise ValueError("allowed missing categories must be part of the requested scope")
     root = Path(extracted_root).resolve()
     base = root / archive_date.isoformat()
     if not base.is_dir():
@@ -505,18 +520,20 @@ def normalize_extracted_archive(
             discovered_categories.add(category_id)
             expanded_bytes += len(payload)
     missing_categories = sorted(requested - discovered_categories)
-    if missing_categories:
+    unexpected_missing = sorted(set(missing_categories) - allowed_missing)
+    if unexpected_missing:
         csv_path.unlink(missing_ok=True)
         raise TCGCSVUniverseError(
             "archive is missing requested card categories: "
-            f"{missing_categories}"
+            f"{unexpected_missing}"
         )
     if not receipts or not price_count:
         raise TCGCSVUniverseError("archive contains no scoped price rows")
     return ArchiveNormalization(
         archive_date=archive_date,
         source_available_at=available,
-        category_ids=tuple(sorted(discovered_categories)),
+        category_ids=tuple(sorted(requested)),
+        empty_category_ids=tuple(missing_categories),
         group_receipts=tuple(receipts),
         price_count=price_count,
         expanded_bytes=expanded_bytes,

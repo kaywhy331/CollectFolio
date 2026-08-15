@@ -4,6 +4,15 @@
 
 The engineering path is implemented but activation is intentionally gated.
 
+One one-time full current snapshot was retained on August 15, 2026 in the
+private, indefinitely locked Cloudflare R2 bucket
+`collectfolio-tcgcsv-private`. It contains the complete current card-category
+price archive, normalized Parquet/features, and complete catalog packet. This
+is an object-storage research receipt only: migration `0020` remains unapplied
+to production, the PostgreSQL current-state tables are not populated, the
+daily lane remains disabled, and no browser or publication endpoint exists.
+See [the R2 import receipt](receipts/TCGCSV_FULL_COHORT_R2_2026_08_15.md).
+
 - The daily job runs only when the repository variable
   `TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED` equals `true`.
 - The weekly Structural Gap Lab is independently disabled unless
@@ -126,8 +135,11 @@ The private workflow runs at `06:41 UTC` and uses one concurrency lane.
 4. Extract into an isolated temporary directory with file-count, path, expanded
    size, response-size, and timeout limits.
 5. Classify the reviewed card-category scope from provider labels plus four
-   reviewed label-less card-game exceptions. Fail closed if any requested card
-   category is absent from the archive instead of silently shrinking coverage.
+   reviewed label-less card-game exceptions. Categories 21 (retired My Little
+   Pony) and 84 (empty Neopets Battledome) remain explicitly bound into scope
+   with zero group receipts because their live group endpoints confirm that
+   they contain no groups. Fail closed if any other requested card category is
+   absent from the archive instead of silently shrinking coverage.
 6. Stream all scoped price rows into deterministic CSV.
 7. Write one sorted Zstandard Parquet file for the date.
 8. Query the trailing 368 days with DuckDB and produce one current feature row

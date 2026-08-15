@@ -14,11 +14,13 @@ import tempfile
 import time
 from typing import Mapping, Sequence
 from urllib.parse import urljoin
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .tcgcsv_universe import (
     UNIVERSE_CONTRACT_VERSION,
     UNIVERSE_PARSER_VERSION,
+    PRICE_ARCHIVE_EMPTY_CARD_CATEGORIES,
     TCGCSVUniverseError,
     canonical_json,
     content_hash,
@@ -293,6 +295,7 @@ def _prepare_archive(args: argparse.Namespace) -> dict[str, object]:
         normalization = normalize_extracted_archive(
             extracted, archive_date, card_category_ids, normalized_csv,
             source_available_at=source_available,
+            allowed_missing_category_ids=PRICE_ARCHIVE_EMPTY_CARD_CATEGORIES,
         )
     parquet = write_price_parquet(normalized_csv, parquet_path)
     history = [Path(value) for value in (args.history_parquet or [])]
@@ -352,7 +355,7 @@ def _prepare_archive(args: argparse.Namespace) -> dict[str, object]:
         },
         "metadata": {
             "requestCount": budget.count,
-            "cardCategoryPolicy": "provider-label-plus-reviewed-exceptions-v1",
+            "cardCategoryPolicy": "provider-label-plus-reviewed-empty-categories-v2",
             "forecastMode": "private_research_only",
         },
     }
@@ -401,6 +404,7 @@ def _catalog_packet(args: argparse.Namespace) -> dict[str, object]:
     card_categories = [row for row in categories if row["is_card_category"]]
     groups: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
+    reviewed_empty_categories: list[int] = []
     for category in card_categories:
         category_id = int(category["category_id"])
         try:
@@ -409,8 +413,17 @@ def _catalog_packet(args: argparse.Namespace) -> dict[str, object]:
                 user_agent=args.user_agent, budget=budget,
             ), f"groups {category_id}")
         except Exception as exc:  # preserve other categories and seal partial
+            if (
+                category_id in PRICE_ARCHIVE_EMPTY_CARD_CATEGORIES
+                and isinstance(exc, HTTPError)
+                and exc.code == 404
+            ):
+                reviewed_empty_categories.append(category_id)
+                continue
             errors.append({"categoryId": category_id, "stage": "groups", "error": str(exc)[:500]})
             continue
+        if not rows and category_id in PRICE_ARCHIVE_EMPTY_CARD_CATEGORIES:
+            reviewed_empty_categories.append(category_id)
         groups.extend(normalize_group(category_id, row) for row in rows)
 
     database_url = _database_url(args.database_url) if args.use_database_state or args.ingest else ""
@@ -479,6 +492,7 @@ def _catalog_packet(args: argparse.Namespace) -> dict[str, object]:
                 1 for error in errors if error["stage"] == "products"
             ),
             "auditCycleDays": 7,
+            "reviewedEmptyCategoryIds": sorted(reviewed_empty_categories),
         },
     }
 
