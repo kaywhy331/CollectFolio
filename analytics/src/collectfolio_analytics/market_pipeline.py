@@ -9,11 +9,14 @@ import json
 from math import isfinite, log
 from statistics import median
 from typing import Iterable, Mapping
-from uuid import UUID
+from uuid import UUID, uuid5
 
-from .observations import PriceObservation, PriceSeriesKey, point_in_time_series
-
-
+from .observations import (
+    PriceObservation,
+    PriceSeriesKey,
+    normalize_market_identity,
+    point_in_time_series,
+)
 def _uuid(value: str, name: str) -> str:
     try:
         return str(UUID(str(value)))
@@ -39,6 +42,10 @@ def _canonical_json(value: object) -> str:
 
 def _hash(value: object) -> str:
     return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _deterministic_uuid(namespace: str, label: str) -> str:
+    return str(uuid5(UUID(namespace), f"collectfolio:{label}"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +156,8 @@ class ObservationMapping:
     mapping_version: str
     finish: str
     condition_class: str
+    language: str = "en"
+    market_condition: str = "unspecified"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mapping_id", _uuid(self.mapping_id, "mapping_id"))
@@ -161,8 +170,14 @@ class ObservationMapping:
         if self.review_status not in {"pending", "approved", "rejected", "quarantined"}:
             raise ValueError("invalid mapping review_status")
         object.__setattr__(self, "mapping_version", _required(self.mapping_version, "mapping_version"))
-        object.__setattr__(self, "finish", _required(self.finish, "finish").lower())
-        object.__setattr__(self, "condition_class", _required(self.condition_class, "condition_class").lower())
+        object.__setattr__(self, "finish", normalize_market_identity(_required(self.finish, "finish")))
+        object.__setattr__(self, "condition_class", normalize_market_identity(_required(self.condition_class, "condition_class")))
+        object.__setattr__(self, "language", normalize_market_identity(_required(self.language, "language")))
+        object.__setattr__(
+            self, "market_condition", normalize_market_identity(_required(self.market_condition, "market_condition"))
+        )
+        if self.market_condition == "unspecified":
+            raise ValueError("market_condition must explicitly describe the provider condition scope")
 
     @property
     def external_key(self) -> tuple[str, str]:
@@ -171,6 +186,56 @@ class ObservationMapping:
     @property
     def approved(self) -> bool:
         return self.review_status == "approved" and self.mapping_confidence >= 0.98
+
+
+def build_market_series_row(
+    mapping: ObservationMapping,
+    terms: SourceTerms,
+    *,
+    currency: str,
+    price_semantics: str,
+) -> Mapping[str, object]:
+    """Build one deterministic immutable market-series row."""
+
+    if not isinstance(mapping, ObservationMapping) or not isinstance(terms, SourceTerms):
+        raise ValueError("market series requires ObservationMapping and SourceTerms")
+    if mapping.source_id != terms.source_id or not mapping.approved:
+        raise ValueError("market series requires an approved mapping for the source")
+    currency_code = _required(currency, "currency").upper()
+    if len(currency_code) != 3 or not currency_code.isalpha():
+        raise ValueError("currency must be a three-letter code")
+    semantics = normalize_market_identity(_required(price_semantics, "price_semantics"))
+    identity_fields = (
+        mapping.variant_id,
+        terms.source_id,
+        mapping.mapping_id,
+        mapping.external_product_id,
+        mapping.external_variant_key,
+        mapping.mapping_version,
+        currency_code,
+        mapping.language,
+        mapping.finish,
+        mapping.condition_class,
+        mapping.market_condition,
+        semantics,
+    )
+    identity_hash = sha256("|".join(identity_fields).encode("utf-8")).hexdigest()
+    return {
+        "id": _deterministic_uuid(mapping.variant_id, f"market-series:{identity_hash}"),
+        "catalog_variant_id": mapping.variant_id,
+        "source_id": terms.source_id,
+        "mapping_id": mapping.mapping_id,
+        "provider_product_id": mapping.external_product_id,
+        "provider_variant_key": mapping.external_variant_key,
+        "mapping_version": mapping.mapping_version,
+        "currency": currency_code,
+        "language": mapping.language,
+        "finish": mapping.finish,
+        "condition_class": mapping.condition_class,
+        "market_condition": mapping.market_condition,
+        "price_semantics": semantics,
+        "identity_hash": identity_hash,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +254,11 @@ class RawPriceRecord:
         object.__setattr__(self, "external_record_id", _required(self.external_record_id, "external_record_id"))
         object.__setattr__(self, "external_product_id", _required(self.external_product_id, "external_product_id"))
         object.__setattr__(self, "external_variant_key", str(self.external_variant_key or "").strip())
-        object.__setattr__(self, "price_semantics", _required(self.price_semantics, "price_semantics").lower())
+        object.__setattr__(
+            self,
+            "price_semantics",
+            normalize_market_identity(_required(self.price_semantics, "price_semantics")),
+        )
         currency = _required(self.currency, "currency").upper()
         if len(currency) != 3 or not currency.isalpha():
             raise ValueError("currency must be a three-letter code")
@@ -257,6 +326,7 @@ class PreparedObservation:
     database_row: Mapping[str, object] | None
     trend_observation: PriceObservation | None
     quality_event: Mapping[str, object] | None
+    market_series_row: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,6 +344,18 @@ class ObservationBatch:
     @property
     def database_rows(self) -> tuple[Mapping[str, object], ...]:
         return tuple(item.database_row for item in self.prepared if item.database_row is not None)
+
+    @property
+    def market_series_rows(self) -> tuple[Mapping[str, object], ...]:
+        rows: dict[str, Mapping[str, object]] = {}
+        for item in self.prepared:
+            if item.market_series_row is None:
+                continue
+            identity_hash = str(item.market_series_row["identity_hash"])
+            current = rows.setdefault(identity_hash, item.market_series_row)
+            if current != item.market_series_row:
+                raise ValueError("market-series identity hash collision")
+        return tuple(rows[key] for key in sorted(rows))
 
     @property
     def trend_observations(self) -> tuple[PriceObservation, ...]:
@@ -375,6 +457,8 @@ def prepare_price_record(
         mapping.finish,
         mapping.condition_class,
         record.price_semantics,
+        mapping.language,
+        mapping.market_condition,
     )
     history_values = tuple(history)
     if any(item.key != series_key for item in history_values):
@@ -393,15 +477,28 @@ def prepare_price_record(
             status = "outlier"
             reasons = (outlier,)
 
+    market_series_row = build_market_series_row(
+        mapping,
+        terms,
+        currency=record.currency,
+        price_semantics=record.price_semantics,
+    )
+    market_series_id = str(market_series_row["id"])
+    observation_id = _deterministic_uuid(
+        mapping.variant_id,
+        f"price-observation:{terms.source_id}:{record.source_record_hash}",
+    )
     database_row = {
+        "id": observation_id,
         "ingestion_run_id": run_id,
         "source_id": terms.source_id,
         "terms_review_id": terms.terms_review_id,
         "mapping_id": mapping.mapping_id,
         "variant_id": mapping.variant_id,
+        "market_series_id": market_series_id,
         "external_record_id": record.external_record_id,
-        "price_semantics": record.price_semantics,
-        "currency": record.currency,
+        "price_semantics": series_key.price_semantics,
+        "currency": series_key.currency,
         "market_price": record.market_price,
         "observed_at": record.observed_at.isoformat(),
         "available_at": record.available_at.isoformat(),
@@ -410,7 +507,18 @@ def prepare_price_record(
         "observation_status": status,
         "reason_codes": list(reasons),
         "source_record_hash": record.source_record_hash,
-        "metadata": {"mappingVersion": mapping.mapping_version},
+        "metadata": {
+            "mappingVersion": mapping.mapping_version,
+            "seriesIdentity": {
+                "sourceId": terms.source_id,
+                "currency": series_key.currency,
+                "language": mapping.language,
+                "finish": mapping.finish,
+                "conditionClass": mapping.condition_class,
+                "marketCondition": mapping.market_condition,
+                "priceSemantics": series_key.price_semantics,
+            },
+        },
     }
     trend_observation = None
     if status == "accepted":
@@ -420,11 +528,12 @@ def prepare_price_record(
             available_at=record.available_at,
             price=record.market_price,
             quality=record.quality_score,
-            source_observation_id=record.source_record_hash,
+            source_observation_id=observation_id,
         )
     return PreparedObservation(
         record, mapping, status, reasons, database_row, trend_observation,
         _quality_event(record, status, reasons, actor_label=actor),
+        market_series_row,
     )
 
 
@@ -451,7 +560,22 @@ def prepare_observation_batch(
             record,
             mapping,
             terms,
-            rolling_history.get(mapping.variant_id, ()) if mapping else (),
+            (
+                tuple(
+                    item for item in rolling_history.get(mapping.variant_id, ())
+                    if item.key == PriceSeriesKey(
+                        mapping.variant_id,
+                        terms.source_id,
+                        record.currency,
+                        mapping.finish,
+                        mapping.condition_class,
+                        record.price_semantics,
+                        mapping.language,
+                        mapping.market_condition,
+                    )
+                )
+                if mapping else ()
+            ),
             ingestion_run_id=ingestion_run_id,
             ingested_at=ingested_at,
             actor_label=actor_label,

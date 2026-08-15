@@ -464,6 +464,13 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .result-pricing small { color: var(--muted); font-size: .66rem; }
 .result-pricing.unsupported strong, .result-pricing.error strong { color: var(--warning); font-size: .78rem; }
 .result-pricing.unavailable strong, .result-pricing.pending strong { color: var(--muted); font-size: .78rem; }
+.result-market-outlook { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); margin: var(--space-2) 0 0; }
+.result-market-outlook > div { display: grid; min-width: 0; padding: .38rem; background: var(--surface-2); border-radius: 8px; }
+.result-market-outlook dt { color: var(--muted); font-size: .56rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.result-market-outlook dd { margin: .08rem 0 0; overflow: hidden; font-size: .72rem; font-weight: 850; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.result-market-outlook small { overflow: hidden; color: var(--muted); font-size: .54rem; text-overflow: ellipsis; white-space: nowrap; }
+.result-market-outlook .positive { color: var(--positive); }
+.result-market-outlook .negative { color: var(--danger); }
 .result-facts { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
 .result-facts span { padding: .15rem .38rem; color: var(--muted); font-size: .6rem; background: var(--surface-2); border-radius: 999px; }
 .result-actions { display: grid; grid-template-columns: 1fr; gap: var(--space-2); margin-top: auto; }
@@ -952,6 +959,7 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
   .result-list.gallery, .result-loading { grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); }
   .result-list.list .result-card { grid-template-columns: 82px minmax(0, 1fr) auto; padding: var(--space-2) var(--space-3); }
   .result-list.list .result-art > img, .result-list.list .result-art > .image-placeholder { width: 82px; height: 114px; }
+  .result-list.list .result-market-outlook { grid-template-columns: repeat(5, minmax(76px, 1fr)); }
   .result-list.list .result-actions { grid-column: auto; grid-template-columns: 1fr; align-self: center; }
   .capture-hero { grid-template-columns: minmax(0, 1.35fr) minmax(220px, .65fr); align-items: center; }
   .scan-source-options { grid-template-columns: 1fr 1fr; }

@@ -27,7 +27,12 @@ from .forecasting import (
     assess_research_scorecard,
 )
 from .market_pipeline import SourceTerms
-from .observations import PriceObservation, PriceSeriesKey, point_in_time_series
+from .observations import (
+    PriceObservation,
+    PriceSeriesKey,
+    normalize_market_identity,
+    point_in_time_series,
+)
 from .trends import TrendSnapshot, build_trend_snapshot
 
 
@@ -117,6 +122,12 @@ class HostedObservation:
     quality_score: float
     external_record_id: str
     reason_codes: tuple[str, ...] = ()
+    market_series_id: str | None = None
+    source_available_at: datetime | None = None
+    collectfolio_first_seen_at: datetime | None = None
+    centralized_import_id: str | None = None
+    centralized_import_point_in_time_eligible: bool | None = None
+    centralized_import_created_at: datetime | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _uuid(self.id, "observation id"))
@@ -140,6 +151,46 @@ class HostedObservation:
         ))
         reasons = tuple(_required_text(value, "reason_code") for value in self.reason_codes)
         object.__setattr__(self, "reason_codes", reasons)
+        if self.market_series_id is None:
+            raise ValueError("hosted observations require a market_series_id")
+        object.__setattr__(
+            self, "market_series_id", _uuid(self.market_series_id, "market_series_id")
+        )
+        provenance = (
+            self.source_available_at,
+            self.collectfolio_first_seen_at,
+            self.centralized_import_id,
+            self.centralized_import_point_in_time_eligible,
+            self.centralized_import_created_at,
+        )
+        if any(value is not None for value in provenance):
+            if any(value is None for value in provenance):
+                raise ValueError("centralized availability provenance must be complete")
+            source_available = _utc(self.source_available_at, "source_available_at")
+            first_seen = _utc(
+                self.collectfolio_first_seen_at, "collectfolio_first_seen_at"
+            )
+            import_created = _utc(
+                self.centralized_import_created_at, "centralized_import_created_at"
+            )
+            if not isinstance(self.centralized_import_point_in_time_eligible, bool):
+                raise ValueError("centralized point-in-time eligibility must be boolean")
+            if self.available_at != max(source_available, first_seen):
+                raise ValueError(
+                    "effective available_at must equal source availability or database first sight"
+                )
+            if import_created < first_seen:
+                raise ValueError("centralized import seal cannot precede database first sight")
+            object.__setattr__(self, "source_available_at", source_available)
+            object.__setattr__(self, "collectfolio_first_seen_at", first_seen)
+            object.__setattr__(
+                self,
+                "centralized_import_id",
+                _uuid(self.centralized_import_id, "centralized_import_id"),
+            )
+            object.__setattr__(
+                self, "centralized_import_created_at", import_created
+            )
 
     def accepted_price_observation(self) -> PriceObservation | None:
         if self.observation_status != "accepted":
@@ -163,25 +214,55 @@ class HostedObservation:
             "qualityScore": self.quality_score,
             "externalRecordId": self.external_record_id,
             "reasonCodes": list(self.reason_codes),
+            "marketSeriesId": self.market_series_id,
+            "sourceAvailableAt": (
+                self.source_available_at.isoformat()
+                if self.source_available_at is not None else None
+            ),
+            "collectfolioFirstSeenAt": (
+                self.collectfolio_first_seen_at.isoformat()
+                if self.collectfolio_first_seen_at is not None else None
+            ),
+            "centralizedImportId": self.centralized_import_id,
+            "centralizedImportPointInTimeEligible": (
+                self.centralized_import_point_in_time_eligible
+            ),
+            "centralizedImportCreatedAt": (
+                self.centralized_import_created_at.isoformat()
+                if self.centralized_import_created_at is not None else None
+            ),
         }
 
 
 def parse_hosted_observation_rows(
     rows: Iterable[Mapping[str, object]],
     key: PriceSeriesKey,
+    *,
+    market_series_id: str | None = None,
 ) -> tuple[HostedObservation, ...]:
     """Parse a bounded database export while enforcing one exact price series."""
 
     if not isinstance(key, PriceSeriesKey):
         raise ValueError("key must be a PriceSeriesKey")
+    expected_market_series_id = (
+        _uuid(market_series_id, "market_series_id")
+        if market_series_id is not None else None
+    )
     values: list[HostedObservation] = []
     for index, row in enumerate(rows):
         if not isinstance(row, Mapping):
             raise ValueError(f"observation row {index} must be an object")
         if str(row.get("currency", "")).upper() != key.currency:
             raise ValueError(f"observation row {index} currency does not match the series")
-        if str(row.get("price_semantics", "")).lower() != key.price_semantics:
+        if normalize_market_identity(row.get("price_semantics", "")) != key.price_semantics:
             raise ValueError(f"observation row {index} price semantics do not match the series")
+        row_market_series_id = _uuid(
+            row.get("market_series_id"), f"observation row {index} market_series_id"
+        )
+        if expected_market_series_id is None:
+            expected_market_series_id = row_market_series_id
+        elif row_market_series_id != expected_market_series_id:
+            raise ValueError("hosted observation rows cannot mix market-series IDs")
         reasons = row.get("reason_codes", ())
         if not isinstance(reasons, (list, tuple)):
             raise ValueError(f"observation row {index} reason_codes must be an array")
@@ -195,6 +276,32 @@ def parse_hosted_observation_rows(
             quality_score=row.get("quality_score"),
             external_record_id=str(row.get("external_record_id", "")),
             reason_codes=tuple(str(value) for value in reasons),
+            market_series_id=row_market_series_id,
+            source_available_at=(
+                _parse_datetime(
+                    row.get("source_available_at"),
+                    f"row {index} source_available_at",
+                )
+                if row.get("source_available_at") is not None else None
+            ),
+            collectfolio_first_seen_at=(
+                _parse_datetime(
+                    row.get("collectfolio_first_seen_at"),
+                    f"row {index} collectfolio_first_seen_at",
+                )
+                if row.get("collectfolio_first_seen_at") is not None else None
+            ),
+            centralized_import_id=row.get("centralized_import_id"),
+            centralized_import_point_in_time_eligible=row.get(
+                "centralized_import_point_in_time_eligible"
+            ),
+            centralized_import_created_at=(
+                _parse_datetime(
+                    row.get("centralized_import_created_at"),
+                    f"row {index} centralized_import_created_at",
+                )
+                if row.get("centralized_import_created_at") is not None else None
+            ),
         ))
     ordered = tuple(sorted(values, key=lambda item: (item.observed_at, item.available_at, item.id)))
     if not ordered:
@@ -275,6 +382,8 @@ class RetrospectiveWalkForwardEvidence:
     scorecard_evaluation_rows: tuple[Mapping[str, object], ...]
     unscorable_matured_targets: int
     packet_hash: str
+    market_series_id: str | None = None
+    evaluation_observation_rows: tuple[Mapping[str, object], ...] = ()
 
     @property
     def skipped_matured_targets(self) -> int:
@@ -306,12 +415,14 @@ class RetrospectiveWalkForwardEvidence:
                 "statusCounts": dict(self.ledger_status_counts),
                 "outliersPreservedAndExcludedFromFeatures": True,
             },
+            "marketSeriesId": self.market_series_id,
             "modelRow": dict(self.model_row),
             "analyticsRunRows": list(self.analytics_run_rows),
             "analyticsRunSourceRows": list(self.analytics_run_source_rows),
             "trendSnapshotRows": list(self.trend_snapshot_rows),
             "predictionRows": list(self.prediction_rows),
             "evaluationRows": list(self.evaluation_rows),
+            "evaluationObservationRows": list(self.evaluation_observation_rows),
             "scorecardRows": list(self.scorecard_rows),
             "scorecardEvaluationRows": list(self.scorecard_evaluation_rows),
             "promotionReviewRows": [],
@@ -348,6 +459,7 @@ def _trend_row(
     snapshot_id: str,
     analytics_run_id: str,
     terms: SourceTerms,
+    market_series_id: str | None,
 ) -> Mapping[str, object]:
     trend_state = "insufficient" if snapshot.trend_state == "insufficient_data" else snapshot.trend_state
     reasons = [
@@ -363,6 +475,7 @@ def _trend_row(
         "variant_id": snapshot.key.canonical_variant_id,
         "source_id": terms.source_id,
         "terms_review_id": terms.terms_review_id,
+        "market_series_id": market_series_id,
         "feature_cutoff": snapshot.feature_cutoff.isoformat(),
         "latest_observed_at": snapshot.latest_observed_at.isoformat(),
         "price_current": snapshot.current_price,
@@ -436,6 +549,7 @@ def _forecast_prediction(
     origin: datetime,
     horizon_days: int,
     feature_dataset_hash: str,
+    market_series_id: str | None,
 ) -> ResearchForecastPrediction:
     damping = float(model.config.get("damping", 0.25))
     max_return = float(model.config.get("maxAbsLogReturn", 0.70))
@@ -493,6 +607,8 @@ def _forecast_prediction(
         prediction_status=status,
         reason_codes=tuple(reasons),
         feature_dataset_hash=feature_dataset_hash,
+        market_series_id=market_series_id,
+        evidence_mode="retrospective",
     )
 
 
@@ -578,6 +694,10 @@ def build_retrospective_walk_forward(
     if len(keys) != 1:
         raise ValueError("walk-forward evidence cannot mix exact price-series identities")
     key = values[0].key
+    market_series_ids = {item.market_series_id for item in values}
+    if len(market_series_ids) != 1:
+        raise ValueError("walk-forward ledger cannot mix market-series IDs")
+    market_series_id = next(iter(market_series_ids))
     if key.source_id != terms.source_id:
         raise ValueError("observation source does not match source terms")
     if any(item.available_at > config.generated_at for item in values):
@@ -642,6 +762,7 @@ def build_retrospective_walk_forward(
     trend_rows: list[Mapping[str, object]] = []
     prediction_rows: list[Mapping[str, object]] = []
     evaluation_rows: list[Mapping[str, object]] = []
+    evaluation_observation_rows: list[Mapping[str, object]] = []
     cases_by_horizon: dict[int, list[ForecastCase]] = defaultdict(list)
     matured_by_horizon: dict[int, list[Mapping[str, object]]] = defaultdict(list)
     unscorable_targets = 0
@@ -680,6 +801,7 @@ def build_retrospective_walk_forward(
             snapshot_id=snapshot_id,
             analytics_run_id=run_id,
             terms=terms,
+            market_series_id=market_series_id,
         ))
         origin_predictions: list[ResearchForecastPrediction] = []
         for horizon in model.allowed_horizons:
@@ -692,6 +814,7 @@ def build_retrospective_walk_forward(
                 origin=origin,
                 horizon_days=horizon,
                 feature_dataset_hash=origin_hash,
+                market_series_id=market_series_id,
             )
             prediction_id = _deterministic_id(
                 key, f"walk-forward-prediction:{model.id}:{origin.isoformat()}:{horizon}"
@@ -723,7 +846,7 @@ def build_retrospective_walk_forward(
                     "maturity": prediction.matures_at.isoformat(),
                     "evaluated_at": config.generated_at.isoformat(),
                     "evaluation_status": "unscorable",
-                    "unscorable_reason": "no_observations_in_trailing_seven_day_window",
+                    "unscorable_reason": "no_accepted_same_series_maturity_observations",
                     "target_window_start": target_window_start.isoformat(),
                     "target_window_end": prediction.matures_at.isoformat(),
                     "realized_price": None,
@@ -735,6 +858,7 @@ def build_retrospective_walk_forward(
                     "brier_component": None,
                     "pinball_losses": {},
                     "evaluation_hash": "0" * 64,
+                    "evidence_mode": "retrospective",
                 })
                 matured_by_horizon[horizon].append({
                     "evaluation_id": evaluation_id,
@@ -790,12 +914,17 @@ def build_retrospective_walk_forward(
                     case.probability_up - float(case.realized_price > case.current_price)
                 ) ** 2,
                 "pinball_losses": pinball,
+                "evidence_mode": "retrospective",
             }
             evaluation_rows.append({
                 "id": evaluation_id,
                 **evaluation_values,
                 "evaluation_hash": "0" * 64,
             })
+            evaluation_observation_rows.extend({
+                "evaluation_id": evaluation_id,
+                "observation_id": observation_id,
+            } for observation_id in realized.observation_ids)
             matured_by_horizon[horizon].append({
                 "evaluation_id": evaluation_id,
                 "origin": origin,
@@ -968,6 +1097,7 @@ def build_retrospective_walk_forward(
             "evaluation_membership_hash": evaluation_membership_hash,
             "promotion_recommendation": recommendation,
             "reason_codes": list(reasons),
+            "evidence_mode": "retrospective",
         }
         scorecard_rows.append({
             "id": scorecard_id,
@@ -1032,6 +1162,8 @@ def build_retrospective_walk_forward(
         "trendSnapshotRows": trend_rows,
         "predictionRows": prediction_rows,
         "evaluationRows": evaluation_rows,
+        "evaluationObservationRows": evaluation_observation_rows,
+        "marketSeriesId": market_series_id,
         "scorecardRows": scorecard_rows,
         "scorecardEvaluationRows": scorecard_evaluation_rows,
         "unscorableMaturedTargets": unscorable_targets,
@@ -1052,4 +1184,6 @@ def build_retrospective_walk_forward(
         scorecard_evaluation_rows=tuple(scorecard_evaluation_rows),
         unscorable_matured_targets=unscorable_targets,
         packet_hash=_hash(packet_values),
+        market_series_id=market_series_id,
+        evaluation_observation_rows=tuple(evaluation_observation_rows),
     )

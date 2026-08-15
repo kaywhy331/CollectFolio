@@ -9,7 +9,7 @@ const SHELL = [
   './assets/icons/icon-512.png', './assets/js/app.js',
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
   './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js',
-  './assets/js/core/pricing-policy.js', './assets/js/core/compare.js', './assets/js/core/router.js',
+  './assets/js/core/pricing-policy.js', './assets/js/core/market-series.js', './assets/js/core/compare.js', './assets/js/core/router.js',
   './assets/js/core/view-models.js', './assets/js/core/settings.js',
   './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/local-scenarios.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',

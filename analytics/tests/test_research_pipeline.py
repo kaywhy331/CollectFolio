@@ -18,6 +18,7 @@ from collectfolio_analytics.market_pipeline import (
 )
 from collectfolio_analytics.publication import PublicationLineage, build_descriptive_candidate
 from collectfolio_analytics.trends import build_trend_snapshot
+from collectfolio_analytics.walk_forward import parse_hosted_observation_rows
 
 
 UTC = timezone.utc
@@ -90,6 +91,8 @@ class ResearchPipelineTests(unittest.TestCase):
             mapping_version="mapping-v1",
             finish="holofoil",
             condition_class="raw",
+            language="en",
+            market_condition="provider-aggregate",
         )
         start = NOW - timedelta(days=99)
         records = [
@@ -119,6 +122,19 @@ class ResearchPipelineTests(unittest.TestCase):
         self.assertEqual(len(observation_packet.trend_observations), 100)
 
         trend = build_trend_snapshot(observation_packet.trend_observations, NOW)
+        hosted_rows = [{
+            **row,
+            "source_available_at": row["available_at"],
+            "collectfolio_first_seen_at": row["available_at"],
+            "centralized_import_id": "abababab-abab-4bab-8bab-abababababab",
+            "centralized_import_point_in_time_eligible": True,
+            "centralized_import_created_at": NOW.isoformat(),
+        } for row in observation_packet.database_rows]
+        hosted_evidence = parse_hosted_observation_rows(
+            hosted_rows,
+            trend.key,
+            market_series_id=observation_packet.market_series_rows[0]["id"],
+        )
         research_lineage = ResearchLineage(
             dataset_sha256=observation_packet.dataset_hash,
             code_version="git:abc123",
@@ -137,6 +153,7 @@ class ResearchPipelineTests(unittest.TestCase):
             ],
             analytics_run_id=ANALYTICS_RUN_ID,
             built_at=NOW,
+            hosted_evidence=hosted_evidence,
             include_observed=True,
         )
         self.assertEqual(publication.candidate_row["support_tier"], 2)
@@ -149,4 +166,3 @@ class ResearchPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

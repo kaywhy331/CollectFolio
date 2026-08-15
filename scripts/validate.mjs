@@ -25,9 +25,15 @@ const required = [
   'analytics/src/collectfolio_analytics/catalog_mapping.py',
   'analytics/src/collectfolio_analytics/market_pipeline.py',
   'analytics/src/collectfolio_analytics/tcgcsv.py',
+  'analytics/src/collectfolio_analytics/tcgcsv_universe.py',
+  'analytics/src/collectfolio_analytics/tcgcsv_universe_io.py',
+  'analytics/src/collectfolio_analytics/tcgcsv_universe_cli.py',
+  'analytics/src/collectfolio_analytics/structural_gap.py',
+  'analytics/src/collectfolio_analytics/structural_gap_cli.py',
   'analytics/src/collectfolio_analytics/operator_cli.py',
   'analytics/src/collectfolio_analytics/monitoring.py',
   'analytics/src/collectfolio_analytics/publication.py',
+  'analytics/src/collectfolio_analytics/prospective.py',
   'analytics/src/collectfolio_analytics/forecasting.py',
   'analytics/src/collectfolio_analytics/qualification.py',
   'analytics/src/collectfolio_analytics/private_sql.py',
@@ -36,6 +42,9 @@ const required = [
   'analytics/src/collectfolio_analytics/walk_forward_cli.py',
   'analytics/src/collectfolio_analytics/walk_forward_sql.py',
   'analytics/src/collectfolio_analytics/walk_forward_sql_cli.py',
+  'analytics/src/collectfolio_analytics/historical_import.py',
+  'analytics/src/collectfolio_analytics/historical_import_cli.py',
+  'analytics/src/collectfolio_analytics/historical_import_sql.py',
   'analytics/src/collectfolio_analytics/baselines.py', 'analytics/src/collectfolio_analytics/quantiles.py',
   'analytics/src/collectfolio_analytics/scarcity.py', 'analytics/src/collectfolio_analytics/evaluation.py',
   'analytics/src/collectfolio_analytics/video_model_v0.py',
@@ -57,6 +66,7 @@ const required = [
   'netlify/functions/justtcg-refresh.mjs',
   '.github/workflows/analytics-check.yml',
   '.github/workflows/price-intelligence-research.yml',
+  '.github/workflows/tcgcsv-market-universe.yml',
   '.github/workflows/pull-rate-integrity.yml',
   'analytics/manifests/tcgcsv-surging-sparks-research.json',
   'analytics/manifests/tcgcsv-surging-sparks-current-v2.json',
@@ -70,11 +80,17 @@ const required = [
   'supabase/migrations/0009_pull_rate_registry.sql',
   'supabase/migrations/0014_pull_rate_unavailability_registry.sql',
   'supabase/migrations/0015_remove_my_cloud_data.sql',
+  'supabase/migrations/0016_forecast_engine_v1.sql',
+  'supabase/migrations/0017_private_prospective_forecast_ledger.sql',
+  'supabase/migrations/0018_forecast_execution_and_scorecards.sql',
+  'supabase/migrations/0019_centralized_historical_price_imports.sql',
+  'supabase/migrations/0020_tcgcsv_market_universe.sql',
   'PRD/redesign.md', 'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
   'docs/REDESIGN_COMPATIBILITY.md', 'docs/REDESIGN_FOUNDATION.md', 'docs/REDESIGN_CORE_VERTICAL_SLICE.md',
   'docs/REDESIGN_INTAKE_COLLECTION_MANAGEMENT.md', 'docs/REDESIGN_FORECASTING_INSIGHTS.md',
   'docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md', 'docs/REDESIGN_FINAL_ACCEPTANCE.md',
   'docs/PRICE_INTELLIGENCE_FOUNDATION.md', 'docs/PRICE_INTELLIGENCE_RUNBOOK.md',
+  'docs/TCGCSV_MARKET_UNIVERSE.md',
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
   'docs/PULL_RATE_REGISTRY.md',
   'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md',
@@ -88,6 +104,13 @@ const required = [
   'tests/discover.test.js', 'tests/portfolio-redesign.test.js',
   'tests/intake-management.test.js', 'tests/watchlist-management.test.js', 'tests/insights.test.js',
   'tests/settings.test.js', 'tests/phase5-migration.test.js', 'tests/phase5-ui.test.js',
+  'tests/forecast-engine-migration.test.js',
+  'tests/historical-price-import-migration.test.js',
+  'tests/tcgcsv-market-universe-migration.test.js',
+  'tests/postgres/run_forecast_runtime.py',
+  'tests/postgres/run_tcgcsv_universe_runtime.py',
+  'tests/postgres/forecast-runtime-fixture.sql',
+  'tests/postgres/forecast-scorecard-fixture.sql',
   'tests/fixtures/redesign/indexeddb-v4-backup-v2.json',
   'tests/fixtures/redesign/cloud-sync.json',
   'tests/fixtures/redesign/legacy-routes.json',
@@ -130,7 +153,7 @@ if (JSON.stringify(Object.keys(devDependencies).sort()) !== JSON.stringify(Objec
     || Object.entries(approvedDevDependencies).some(([name, version]) => devDependencies[name] !== version)) {
   errors.push('Dev dependencies must be exactly the pinned Playwright, axe, and snapshot-font packages.');
 }
-for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
+for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:forecast-db', 'test:tcgcsv-db', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'forecast:lab', 'history:import', 'tcgcsv:universe', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
 
 const researchManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-research.json'), 'utf8'));
 const researchReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md'));
@@ -191,6 +214,20 @@ if (supersessionValidation.status !== 0) errors.push(`Mapping supersession manif
 const researchWorkflow = await readFile(resolve(root, '.github/workflows/price-intelligence-research.yml'), 'utf8');
 if (!researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty') || !researchWorkflow.includes('--skip-history')) errors.push('Scheduled TCGCSV research must use the current-only v2 manifest with --skip-history.');
 if (researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-research.json --pretty')) errors.push('Scheduled TCGCSV research must not route through the historical v1 manifest.');
+if (!researchWorkflow.includes("TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED != 'true'")) errors.push('Bounded TCGCSV qualification must stop when the full-universe workflow is active.');
+
+const universeWorkflow = await readFile(resolve(root, '.github/workflows/tcgcsv-market-universe.yml'), 'utf8');
+for (const contract of [
+  'TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED', 'schedule:', 'concurrency:',
+  "analytics[market-universe]", 'last-updated.txt', 'prepare-archive',
+  'archive_date=', 'prices.parquet', 'ingest-archive', 'sync-catalog',
+  '--use-database-state --ingest', 'retention-days: 30'
+]) {
+  if (!universeWorkflow.includes(contract)) errors.push(`TCGCSV market-universe workflow lacks contract ${contract}.`);
+}
+if (!/permissions:\s*\n\s+contents: read/.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must keep GitHub permissions contents-read-only.');
+if (/service_role|SUPABASE_SERVICE_ROLE/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must use the dedicated ingest credential, not a broad service-role secret.');
+if (/update\s+public\.product_feature_flags/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must not enable public forecasting.');
 
 const pullRateIntegrityWorkflow = await readFile(resolve(root, '.github/workflows/pull-rate-integrity.yml'), 'utf8');
 for (const contract of [
@@ -241,6 +278,28 @@ for (const contract of [
 ]) {
   if (!walkForwardSQL.includes(contract)) errors.push(`Walk-forward SQL exporter missing safety contract ${contract}.`);
 }
+
+const forecastExecution = await readFile(resolve(
+  root, 'supabase/migrations/0018_forecast_execution_and_scorecards.sql'
+), 'utf8');
+for (const contract of [
+  'prospective_complete_cost_fields_present_check',
+  'create table public.forecast_executor_keys',
+  'create table public.prospective_scorecard_plans',
+  'create table public.forecast_execution_challenges',
+  'create table public.forecast_execution_receipts',
+  'canonical_prospective_candidate_output_hash',
+  'record_challenged_prospective_forecast_run',
+  'create_prospective_model_scorecard',
+  'originClusteredBaselineLiftLower95',
+  'hmac_executor_principal_v1',
+  'artifactExecutionVerified',
+  'Forecast Engine v1 unconditional public-promotion block must remain intact'
+]) {
+  if (!forecastExecution.includes(contract)) errors.push(`Forecast execution migration missing safety contract ${contract}.`);
+}
+if (/update\s+public\.product_feature_flags/i.test(forecastExecution)) errors.push('Forecast execution migration must not mutate public feature flags.');
+if (/create or replace function public\.publish_forecast_intelligence/i.test(forecastExecution)) errors.push('Forecast execution migration must not add a public publisher.');
 
 const appFiles = await filesUnder(app);
 const netlifyFiles = await filesUnder(resolve(root, 'netlify'));
@@ -525,6 +584,24 @@ for (const contract of [
 if (/update\s+public\.product_feature_flags[\s\S]*public_price_intelligence/i.test(forecastMigration)) {
   errors.push('Forecast-research migration must not enable or mutate the public price-intelligence flag.');
 }
+
+const forecastEngineMigration = await readFile(resolve(root, 'supabase/migrations/0016_forecast_engine_v1.sql'), 'utf8');
+for (const table of ['market_series', 'forecast_evaluation_observations']) {
+  if (!forecastEngineMigration.includes(`create table public.${table}`)) errors.push(`Forecast Engine v1 migration missing ${table}.`);
+  if (!forecastEngineMigration.includes(`alter table public.${table} enable row level security`)) errors.push(`Forecast Engine v1 migration missing RLS for ${table}.`);
+}
+for (const contract of [
+  'validate_market_series_lineage', 'validate_forecast_prediction_series',
+  'validate_forecast_evaluation_observation', 'record_scored_forecast_evaluation',
+  'Prediction and evaluation evidence modes differ',
+  'Retrospective evidence cannot authorize model promotion',
+  'Realized outcome fields are derived by the database, not supplied by callers',
+  "to_regprocedure('public.publish_forecast_intelligence(uuid)') is not null"
+]) {
+  if (!forecastEngineMigration.includes(contract)) errors.push(`Forecast Engine v1 migration missing security contract ${contract}.`);
+}
+if (/update\s+public\.product_feature_flags/i.test(forecastEngineMigration)) errors.push('Forecast Engine v1 migration must not mutate public feature flags.');
+if (/create or replace function public\.publish_forecast_intelligence/i.test(forecastEngineMigration)) errors.push('Forecast Engine v1 must not install a public forecast publisher.');
 
 const governanceMigration = await readFile(resolve(root, 'supabase/migrations/0006_price_intelligence_governance_hardening.sql'), 'utf8');
 for (const table of ['model_scorecard_evaluations', 'intelligence_publication_control_events']) {

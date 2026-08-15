@@ -5,6 +5,7 @@ import { localPortfolioInsights, localPortfolioScenario } from '../core/local-sc
 import { allocationChart, trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
+import { selectPublicationForHolding } from '../core/market-series.js';
 
 export const OVERVIEW_RANGES = Object.freeze(['1D', '7D', '1M', '3M', '1Y', 'All']);
 
@@ -56,7 +57,9 @@ export function overviewChange(points = []) {
 export function pricingCoverage(holdings = [], byVariant = {}) {
   const result = { market: 0, manual: 0, unpriced: 0, covered: 0, total: holdings.length, percent: 0 };
   holdings.forEach((holding) => {
-    const publication = holding.canonicalVariantId ? byVariant?.[holding.canonicalVariantId] : null;
+    const publication = holding.canonicalVariantId
+      ? selectPublicationForHolding(byVariant?.[holding.canonicalVariantId], holding, holdingMarketCurrency(holding))
+      : null;
     const model = holdingViewModel(holding, { publication });
     if (hasManualValue(holding)) result.manual += 1;
     else if (['verified', 'delayed'].includes(model.valueSource) || (model.valueSource === 'pending' && model.unitValue > 0)) result.market += 1;
@@ -72,8 +75,14 @@ export function pricingCoverage(holdings = [], byVariant = {}) {
 // create empty dashboard chrome.
 export function portfolioMovers(holdings = [], byVariant = {}) {
   return holdings
-    .filter((holding) => holding.canonicalVariantId && byVariant[holding.canonicalVariantId])
-    .map((holding) => ({ holding, intelligence: normalizeIntelligencePayload(byVariant[holding.canonicalVariantId]) }))
+    .map((holding) => ({
+      holding,
+      publication: holding.canonicalVariantId
+        ? selectPublicationForHolding(byVariant[holding.canonicalVariantId], holding, holdingMarketCurrency(holding))
+        : null
+    }))
+    .filter(({ publication }) => publication)
+    .map(({ holding, publication }) => ({ holding, intelligence: normalizeIntelligencePayload(publication) }))
     .filter(({ intelligence }) => intelligence.supportTier >= 2 && intelligence.trend.return30d !== null)
     .sort((left, right) => Math.abs(right.intelligence.trend.return30d) - Math.abs(left.intelligence.trend.return30d))
     .slice(0, 3);
@@ -102,7 +111,9 @@ function forecastCoverage(state) {
   const scenario = localPortfolioScenario(state.holdings, state.localValueObservations || [], 90, { currency });
   const published = state.featureFlags?.publicPriceIntelligence
     ? state.holdings.filter((holding) => {
-      const publication = holding.canonicalVariantId ? state.intelligence?.byVariant?.[holding.canonicalVariantId] : null;
+      const publication = holding.canonicalVariantId
+        ? selectPublicationForHolding(state.intelligence?.byVariant?.[holding.canonicalVariantId], holding, currency)
+        : null;
       return publication && holdingViewModel(holding, { publication }).forecasts.length > 0;
     }).length
     : 0;

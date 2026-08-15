@@ -1,11 +1,12 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
-import { watchKeyForItem } from '../core/catalog-identity.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { filterAndSortHoldings, holdingCostBasis, holdingCostCurrency, holdingGain, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioSummary, returnPercent } from '../core/calculations.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
+import { selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
+import { findWatchedItem } from '../services/watchlist.js';
 
 export const PORTFOLIO_VIEWS = Object.freeze(['gallery', 'list']);
 const SUPPORT_LABELS = Object.freeze([
@@ -98,7 +99,8 @@ const finiteOrNull = (value) => value !== '' && value !== null && value !== unde
 
 export function watchlistCardViewModel(entry = {}, publication = null) {
   const ref = entry.catalogRef || {};
-  const intelligence = publication ? normalizeIntelligencePayload(publication) : null;
+  const selected = selectPublicationForWatchlist(publication, entry, entry.targetCurrency || ref.currency || 'USD');
+  const intelligence = selected ? normalizeIntelligencePayload(selected) : null;
   const observed = intelligence?.observed || null;
   const catalogPrice = catalogPriceForValuation(ref);
   const currentPrice = observed?.price ?? catalogPrice;
@@ -108,12 +110,12 @@ export function watchlistCardViewModel(entry = {}, publication = null) {
   const targetComparable = targetPrice !== null && currentCurrency === targetCurrency;
   const forecasts = intelligence?.supportTier >= 4 ? Object.values(intelligence.forecasts) : [];
   const forecast = forecasts.find((candidate) => candidate.horizon === 30)
-    || forecasts.sort((left, right) => left.horizon - right.horizon)[0] || null;
+    || forecasts.find((candidate) => candidate.horizon === 90) || null;
   const forecastUpside = forecast && currentPrice > 0 ? (forecast.q50 / currentPrice) - 1 : null;
-  const hasOpportunityEvidence = Boolean(observed && forecast && forecast.probabilityUp !== null && forecast.confidence !== null && currentPrice > 0);
-  const opportunityScore = hasOpportunityEvidence
-    ? forecastUpside * forecast.probabilityUp * (forecast.confidence / 100)
-    : null;
+  // A gross forecast is not a buy opportunity. Ranking stays withheld until a
+  // point-in-time offer, taxes, both shipping legs, selling fees, and liquidity
+  // evidence are attached to this user's watch candidate.
+  const opportunityScore = null;
   const alertsEnabled = targetPrice !== null || (finiteOrNull(entry.alertPercentChange) ?? 0) > 0
     || Boolean(entry.alertTrendChange || entry.alertRangeChange || entry.alertForecastChange);
   return {
@@ -128,7 +130,7 @@ export function watchlistCardViewModel(entry = {}, publication = null) {
 export function filterAndSortWatchlist(entries = [], publications = {}, controls = {}) {
   const needle = String(controls.query || '').trim().toLowerCase();
   const category = controls.category || 'all';
-  const sort = controls.sort || 'opportunity-desc';
+  const sort = controls.sort === 'opportunity-desc' ? 'forecast-desc' : controls.sort || 'forecast-desc';
   const models = entries.map((entry) => watchlistCardViewModel(entry, publications[entry.canonicalVariantId] || publications[String(entry.canonicalVariantId || '').toLowerCase()] || null))
     .filter(({ entry, ref }) => (category === 'all' || ref.category === category)
       && (!needle || [ref.name, ref.setName, ref.number, ref.rarity, ref.finish, entry.notes].join(' ').toLowerCase().includes(needle)));
@@ -140,30 +142,30 @@ export function filterAndSortWatchlist(entries = [], publications = {}, controls
     return (a - b) * direction;
   };
   const compare = {
-    'opportunity-desc': (a, b) => missingLast(a, b, 'opportunityScore'),
     'target-asc': (a, b) => missingLast(a, b, 'targetDistance', 1),
     'forecast-desc': (a, b) => missingLast(a, b, 'forecastUpside'),
     'decline-asc': (a, b) => missingLast(a, b, 'change30d', 1),
     'changed-desc': (a, b) => String(b.entry.updatedAt || '').localeCompare(String(a.entry.updatedAt || '')),
     'value-desc': (a, b) => missingLast(a, b, 'currentPrice'),
     'added-desc': (a, b) => String(b.entry.createdAt || '').localeCompare(String(a.entry.createdAt || ''))
-  }[sort] || ((a, b) => missingLast(a, b, 'opportunityScore'));
+  }[sort] || ((a, b) => missingLast(a, b, 'forecastUpside'));
   return models.sort((left, right) => compare(left, right) || String(left.ref.name || '').localeCompare(String(right.ref.name || '')));
 }
 
 function watchlistControls(state) {
   const controls = state.watchlist || {};
+  const selectedSort = controls.sort === 'opportunity-desc' ? 'forecast-desc' : controls.sort || 'forecast-desc';
   const categories = [...new Set(state.watchlistItems.map((entry) => entry.catalogRef?.category).filter(Boolean))].sort();
   return `<section class="watchlist-controls" aria-label="Watchlist controls"><label class="sr-only" for="watchlist-query">Filter watchlist</label><input id="watchlist-query" type="search" value="${escapeAttribute(controls.query || '')}" placeholder="Filter watched cards" data-watchlist-query><label>Category<select data-watchlist-category><option value="all">All categories</option>${categories.map((category) => `<option value="${escapeAttribute(category)}" ${controls.category === category ? 'selected' : ''}>${escapeHTML(category[0].toUpperCase() + category.slice(1))}</option>`).join('')}</select></label><label>Sort<select data-watchlist-sort>${[
-    ['opportunity-desc', 'Best opportunity'], ['target-asc', 'Closest to target'], ['forecast-desc', 'Largest forecasted upside'],
+    ['forecast-desc', 'Largest forecasted upside'], ['target-asc', 'Closest to target'],
     ['decline-asc', 'Largest decline'], ['changed-desc', 'Recently changed'], ['value-desc', 'Highest value'], ['added-desc', 'Recently added']
-  ].map(([value, label]) => `<option value="${value}" ${(controls.sort || 'opportunity-desc') === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></section>`;
+  ].map(([value, label]) => `<option value="${value}" ${selectedSort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></section>`;
 }
 
 function watchlistSection(state) {
   const currency = state.settings.currency || 'USD';
   if (!state.watchlistItems.length) return `<section class="empty-state watchlist-empty"><span class="empty-symbol">☆</span><h2>Track cards before you buy</h2><p>Watch prices, set targets, and follow future outlooks.</p><button class="button" type="button" data-go="search">Find a card</button></section>`;
-  const controls = state.watchlist || { query: '', category: 'all', sort: 'opportunity-desc' };
+  const controls = state.watchlist || { query: '', category: 'all', sort: 'forecast-desc' };
   const shown = filterAndSortWatchlist(state.watchlistItems, state.intelligence?.byVariant || {}, controls);
   const activeAlerts = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt && state.watchlistItems.some((item) => item.watchKey === alert.watchKey));
   const configured = state.watchlistItems.filter((entry) => watchlistCardViewModel(entry).alertsEnabled).length;
@@ -184,7 +186,7 @@ function forecastSection(state) {
     <ul class="evidence-list"><li>No fabricated estimates for unsupported cards.</li><li>Past predictions will remain immutable once forecasting launches.</li><li>Observed price, trend, fair value, and forecast will remain separate outputs.</li></ul>
   </section>`;
 
-  const publications = Object.values(state.intelligence?.byVariant || {})
+  const publications = Object.values(state.intelligence?.byVariant || {}).flat()
     .map(normalizeIntelligencePayload)
     .filter((publication) => Object.keys(publication.forecasts).length);
   const outlookCount = publications.reduce((count, publication) => count + Object.keys(publication.forecasts).length, 0);
@@ -205,9 +207,14 @@ function holdingCard(holding, currency, state, view, selected) {
   const source = holding.manualMarketPrice !== '' && holding.manualMarketPrice != null
     ? providerPrice == null ? 'Manual value · market price unavailable' : restrictedDisclosure ? `Manual value · ${restrictedDisclosure}` : `Manual override · market reference retained at ${formatCurrency(providerPrice, holding.item?.currency || 'USD')}`
     : restrictedDisclosure || holding.item?.priceSource || 'Pricing unavailable';
-  const key = watchKeyForItem(holding.item, { canonicalVariantId: holding.canonicalVariantId, conditionClass: holding.grade ? 'graded' : 'raw' });
-  const watching = state.watchlistItems.some((entry) => entry.watchKey === key);
-  const publication = holding.canonicalVariantId ? state.intelligence?.byVariant?.[holding.canonicalVariantId] : null;
+  const watching = Boolean(findWatchedItem(state.watchlistItems, holding.item, {
+    canonicalVariantId: holding.canonicalVariantId,
+    conditionClass: holding.grade ? 'graded' : 'raw',
+    marketCondition: holding.grade ? `${holding.gradeCompany || 'unknown'}-${holding.grade || 'ungraded'}` : holding.marketCondition
+  }));
+  const publication = holding.canonicalVariantId
+    ? selectPublicationForHolding(state.intelligence?.byVariant?.[holding.canonicalVariantId], holding, valueCurrency)
+    : null;
   const intelligence = publication ? normalizeIntelligencePayload(publication) : null;
   const localScenario = buildHoldingLocalScenario(holding, state.localValueObservations || [], 90);
   const movement = intelligence?.supportTier >= 2 && intelligence.trend.return30d !== null
@@ -240,9 +247,7 @@ function watchlistCard(model, currency, alerts = [], compareSelection = []) {
   const update = observed?.observedAt || ref.priceUpdatedAt || entry.updatedAt;
   const updated = update && !Number.isNaN(new Date(update).valueOf()) ? new Date(update).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Not available';
   const signals = alerts.slice(0, 2).map((alert) => `<p class="watch-signal positive" role="status">● ${escapeHTML(alert.message)}</p>`).join('');
-  const rankReason = opportunityScore === null
-    ? 'Not ranked as an opportunity without an approved observed price, forecast, probability, and confidence.'
-    : `Opportunity evidence: ${forecastUpside >= 0 ? '+' : ''}${formatPercent(forecastUpside * 100)} approved median upside with ${Math.round(forecast.probabilityUp * 100)}% probability of gain.`;
+  const rankReason = 'Opportunity ranking withheld until offer price, taxes, shipping, selling fees, and liquidity evidence are recorded. Forecast upside alone is not profit.';
   return `<article class="watch-card"><div class="watch-card-art">${externalImage(ref, 'holding-image')}<span class="watch-alert-state ${alerts.length ? 'triggered' : alertsEnabled ? 'active' : ''}">${escapeHTML(alertText)}</span></div><div class="watch-card-main"><div class="watch-card-title"><div><h3>${escapeHTML(ref.name || 'Unnamed watched card')}</h3><p>${escapeHTML([ref.setName, ref.number, ref.rarity, ref.finish].filter(Boolean).join(' · '))}</p></div><button class="icon-button" type="button" data-action="remove-watch" data-watch-key="${escapeAttribute(entry.watchKey)}" aria-label="Remove ${escapeAttribute(ref.name || 'card')} from Watchlist">×</button></div><div class="watch-values"><div class="actual"><span>Current market</span><strong>${currentPrice === null ? 'Price unavailable' : escapeHTML(formatCurrency(currentPrice, displayCurrency))}</strong><small>${escapeHTML(observed?.source || catalogPriceDisclosure(ref) || ref.priceSource || 'No approved observed-price source')}</small></div><div class="forecast"><span>Future outlook</span><strong>${escapeHTML(forecastRange)}</strong><small>${escapeHTML(forecastMeta)}</small></div></div><dl class="watch-stats"><div><dt>7-day move</dt><dd class="${change7d === null ? '' : change7d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change7d))}</dd></div><div><dt>30-day move</dt><dd class="${change30d === null ? '' : change30d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change30d))}</dd></div><div><dt>Target</dt><dd>${targetPrice === null ? 'Not set' : escapeHTML(formatCurrency(targetPrice, targetCurrency))}<small>${escapeHTML(distance)}</small></dd></div><div><dt>Last price update</dt><dd>${escapeHTML(updated)}<small>${escapeHTML(ref.salesFrequency || 'Liquidity unavailable')}</small></dd></div></dl>${intelligence ? intelligenceSummary(intelligence, displayCurrency) : `<span class="support-badge unsupported">${escapeHTML(SUPPORT_LABELS[0])} · ${escapeHTML(support)}</span>`}<p class="opportunity-reason">${escapeHTML(rankReason)}</p>${signals}<div class="item-actions"><button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(entry.watchKey)}">Details</button><button class="button ghost small" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(entry.watchKey)}">${compareSelection.includes(entry.watchKey) ? '☑ Comparing' : '☐ Compare'}</button><button class="button secondary small" type="button" data-action="add-watched" data-watch-key="${escapeAttribute(entry.watchKey)}">Add to portfolio</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(entry.watchKey)}">Target &amp; alerts</button></div></div></article>`;
 }
 
@@ -258,8 +263,10 @@ function intelligenceSummary(intelligence, currency, compact = false) {
 }
 
 function forecastCard(state, publication) {
-  const holding = state.holdings.find((entry) => entry.canonicalVariantId === publication.variantId);
-  const watched = state.watchlistItems.find((entry) => entry.canonicalVariantId === publication.variantId);
+  const holding = state.holdings.find((entry) => entry.canonicalVariantId === publication.variantId
+    && selectPublicationForHolding(publication, entry, holdingMarketCurrency(entry)));
+  const watched = state.watchlistItems.find((entry) => entry.canonicalVariantId === publication.variantId
+    && selectPublicationForWatchlist(publication, entry, entry.targetCurrency || entry.catalogRef?.currency || 'USD'));
   const item = holding?.item || watched?.catalogRef || {};
   const currency = publication.observed?.currency || item.currency || state.settings.currency || 'USD';
   const forecasts = Object.values(publication.forecasts).sort((left, right) => left.horizon - right.horizon);

@@ -1,8 +1,9 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
-import { watchKeyForItem } from '../core/catalog-identity.js';
 import { catalogPriceOptionsForDisplay } from '../core/pricing-policy.js';
 import { searchResultViewModel } from '../core/view-models.js';
-import { escapeAttribute, escapeHTML, formatCurrency } from '../core/utils.js';
+import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
+import { selectPublicationForCatalogItem } from '../core/market-series.js';
+import { findWatchedItem } from '../services/watchlist.js';
 
 export const DISCOVER_VIEWS = Object.freeze(['gallery', 'list']);
 
@@ -45,16 +46,37 @@ function pricingMarkup(model) {
   return `<div class="result-pricing ${escapeAttribute(model.pricingStatus)}"><strong>${hasValue ? escapeHTML(formatCurrency(model.currentMarketValue, model.currency)) : escapeHTML(labels[model.pricingStatus] || 'Pricing pending')}</strong>${hasValue ? `<small>${escapeHTML(labels[model.pricingStatus] || 'Pricing pending')}</small>` : ''}</div>`;
 }
 
+function signedPercent(value) {
+  if (!Number.isFinite(value)) return '—';
+  return formatPercent(value * 100);
+}
+
+function marketOutlookMarkup(model) {
+  const horizons = [
+    [model.forecast30d, '1 mo est.'],
+    [model.forecast90d, '3 mo est.'],
+    [model.forecast180d, '6 mo est.'],
+    [model.forecast365d, '1 year est.']
+  ].filter(([forecast]) => forecast);
+  if (model.change30d === null && !horizons.length) return '';
+  const trendClass = model.change30d === null ? '' : model.change30d >= 0 ? 'positive' : 'negative';
+  return `<dl class="result-market-outlook" aria-label="Published market trend and forecast estimates">
+    <div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}</dd><small>${model.change30d === null ? 'Not enough history' : model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></div>
+    ${horizons.map(([forecast, label]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, model.currency))}</dd><small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))} modeled</small></div>`).join('')}
+  </dl>`;
+}
+
 function resultCard(item, index, state, view) {
-  const publication = item.canonicalVariantId ? state.intelligence?.byVariant?.[item.canonicalVariantId] : null;
+  const rawPublication = item.canonicalVariantId ? state.intelligence?.byVariant?.[item.canonicalVariantId] : null;
+  const publication = selectPublicationForCatalogItem(rawPublication, item, state.settings.currency);
   const model = searchResultViewModel(item, { publication, currency: state.settings.currency });
-  const watching = state.watchlistItems.some((entry) => entry.watchKey === watchKeyForItem(item));
+  const watching = Boolean(findWatchedItem(state.watchlistItems, item));
   const finishes = catalogPriceOptionsForDisplay(item);
   const watchLabel = finishes.length > 1 ? 'Choose finish' : watching ? 'Watching' : 'Watch';
-  const identity = [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.variant, model.rarity].filter(Boolean).join(' · ');
+  const identity = [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.type, model.variant, model.rarity].filter(Boolean).join(' · ');
   return `<article class="result-card ${escapeAttribute(view)}" data-action="open-detail" data-index="${index}" tabindex="0" aria-label="Inspect ${escapeAttribute(model.name || 'catalog result')}">
     <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(model.matchBucket === 'exact' ? 'Exact' : model.matchBucket === 'likely' ? 'Likely' : model.matchBucket === 'possible' ? 'Possible' : 'Review')}</span></div>
-    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model)}<div class="result-facts"><span>${escapeHTML(model.category || 'other')}</span>${finishes.length > 1 ? `<span>${finishes.length} finishes</span>` : ''}<span>${model.forecastStatus === 'available' ? 'Outlook available' : 'No outlook'}</span></div></div>
+    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model)}${marketOutlookMarkup(model)}<div class="result-facts"><span>${escapeHTML(model.category || 'other')}</span>${finishes.length > 1 ? `<span>${finishes.length} finishes</span>` : ''}<span>${model.forecastStatus === 'available' ? 'Published outlook' : 'No published outlook'}</span></div></div>
     <div class="result-actions"><button class="button small" type="button" data-action="add-catalog" data-index="${index}">Add</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-index="${index}">${escapeHTML(watchLabel)}</button>` : ''}</div>
   </article>`;
 }

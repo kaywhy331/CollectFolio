@@ -41,7 +41,8 @@
       "edition": "standard",
       "finish": "holofoil",
       "variantName": "",
-      "conditionClass": "raw"
+      "conditionClass": "raw",
+      "marketCondition": "provider-aggregate"
     }
   ],
   "mappingReview": {
@@ -60,7 +61,9 @@
       "variantId": "af796afb-d8d3-5b4b-a95a-417e39e77b0a",
       "mappingConfidence": 1.0,
       "finish": "holofoil",
-      "conditionClass": "raw"
+      "conditionClass": "raw",
+      "language": "en",
+      "marketCondition": "provider-aggregate"
     }
   ],
   "ingestionRunId": "a64773a6-7ff8-5c32-a4ed-6116d0a1ec83",

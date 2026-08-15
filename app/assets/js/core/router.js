@@ -112,7 +112,8 @@ function detailPath(detail = {}) {
   const provider = bounded(selected.item?.provider || selected.catalogRef?.provider, 50).toLowerCase();
   const externalId = bounded(selected.item?.externalId || selected.catalogRef?.externalId, 400);
   const providerId = provider && externalId ? `${provider}:${externalId}` : '';
-  const id = providerId
+  const id = selected.watched?.watchKey
+    || providerId
     || selected.catalogRef?.canonicalVariantId
     || selected.catalogRef?.watchKey
     || selected.item?.id;

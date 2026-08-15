@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   alertHistoryModels,
   forecastAvailabilityForHolding,
+  forecastAssets,
   portfolioForecastSummary,
   predictionHistoryModels,
   publishedScorecards
@@ -11,11 +12,12 @@ import { renderInsights } from '../app/assets/js/views/insights.js';
 
 const variantId = '123e4567-e89b-42d3-a456-426614174000';
 const secondVariantId = '223e4567-e89b-42d3-a456-426614174000';
-const item = { provider: 'pokemon', category: 'pokemon', name: 'Pikachu ex', setName: 'Test Set', number: '1', variant: 'holofoil', price: 80, currency: 'USD' };
+const item = { provider: 'pokemon', category: 'pokemon', name: 'Pikachu ex', setName: 'Test Set', number: '1', variant: 'holofoil', language: 'en', price: 80, currency: 'USD' };
 
 function publication(overrides = {}) {
   return {
     variantId,
+    seriesIdentity: { sourceId: 'approved-source', currency: 'USD', language: 'en', finish: 'holofoil', conditionClass: 'raw', marketCondition: 'near-mint', priceSemantics: 'market' },
     supportTier: 4,
     publishedAt: '2026-08-01T00:00:00.000Z',
     reasonCodes: [],
@@ -41,7 +43,7 @@ function publication(overrides = {}) {
 }
 
 function state(overrides = {}) {
-  const holding = { id: 'h1', canonicalVariantId: variantId, item, quantity: 2, purchasePrice: 60, fees: 0, manualMarketPrice: '' };
+    const holding = { id: 'h1', canonicalVariantId: variantId, item, condition: 'Near Mint', marketCondition: 'near-mint', quantity: 2, purchasePrice: 60, fees: 0, manualMarketPrice: '' };
   return {
     holdings: [holding],
     snapshots: [],
@@ -58,10 +60,10 @@ function state(overrides = {}) {
 
 test('portfolio forecast summary covers only approved non-manual holdings in the same currency', () => {
   const holdings = [
-    { id: 'covered', canonicalVariantId: variantId, item, quantity: 2, manualMarketPrice: '' },
-    { id: 'manual', canonicalVariantId: variantId, item, quantity: 1, manualMarketPrice: 50 },
+    { id: 'covered', canonicalVariantId: variantId, item, condition: 'Near Mint', marketCondition: 'near-mint', quantity: 2, manualMarketPrice: '' },
+    { id: 'manual', canonicalVariantId: variantId, item, condition: 'Near Mint', marketCondition: 'near-mint', quantity: 1, manualMarketPrice: 50 },
     { id: 'unmapped', canonicalVariantId: '', item: { ...item, price: null }, quantity: 1, manualMarketPrice: '' },
-    { id: 'currency', canonicalVariantId: secondVariantId, item, quantity: 1, manualMarketPrice: '' }
+    { id: 'currency', canonicalVariantId: secondVariantId, item, condition: 'Near Mint', marketCondition: 'near-mint', quantity: 1, manualMarketPrice: '' }
   ];
   const eur = publication({ variantId: secondVariantId, payload: {
     observed: { price: 90, currency: 'EUR', observedAt: '2026-08-01T00:00:00.000Z' },
@@ -81,11 +83,55 @@ test('portfolio forecast summary covers only approved non-manual holdings in the
 test('forecast availability preserves explicit limited status and explains missing horizons', () => {
   const limited = publication();
   limited.payload.forecasts[90].status = 'limited';
-  const holding = { canonicalVariantId: variantId, item, quantity: 1, manualMarketPrice: '' };
+  const holding = { canonicalVariantId: variantId, item, condition: 'Near Mint', marketCondition: 'near-mint', quantity: 1, manualMarketPrice: '' };
   assert.equal(forecastAvailabilityForHolding(holding, limited, 90).status, 'limited');
   const unavailable = forecastAvailabilityForHolding(holding, limited, 30);
   assert.equal(unavailable.status, 'unavailable');
   assert.match(unavailable.nextAction, /90 days/);
+});
+
+test('forecast availability selects one exact market series and rejects condition mismatches', () => {
+  const nearMint = publication();
+  const lightlyPlayed = publication({
+    seriesIdentity: { ...publication().seriesIdentity, marketCondition: 'lightly-played' },
+    payload: { ...publication().payload, forecasts: { 90: { ...publication().payload.forecasts[90], q50: 75 } } }
+  });
+  const holding = { canonicalVariantId: variantId, item, condition: 'Near Mint', marketCondition: 'near-mint', quantity: 1, manualMarketPrice: '' };
+  const selected = forecastAvailabilityForHolding(holding, [lightlyPlayed, nearMint], 90);
+  assert.equal(selected.status, 'available');
+  assert.equal(selected.forecast.q50, 110);
+  const mismatch = forecastAvailabilityForHolding({ ...holding, marketCondition: 'moderately-played' }, [nearMint, lightlyPlayed], 90);
+  assert.equal(mismatch.status, 'unavailable');
+  assert.match(mismatch.reason, /different language, printing, or market condition/i);
+});
+
+test('generic collection condition never substitutes for confirmed marketplace condition', () => {
+  const legacy = { canonicalVariantId: variantId, item, condition: 'Good', quantity: 1, manualMarketPrice: '' };
+  const result = forecastAvailabilityForHolding(legacy, publication(), 90);
+  assert.equal(result.status, 'unavailable');
+  assert.match(result.reason, /complete exact market identity/i);
+});
+
+test('forecast assets deduplicate only the same exact series', () => {
+  const holding = { id: 'nm', canonicalVariantId: variantId, item, marketCondition: 'near-mint', quantity: 1, manualMarketPrice: '' };
+  const watch = (condition) => ({
+    watchKey: `watch:${condition}`,
+    canonicalVariantId: variantId,
+    marketCondition: condition,
+    catalogRef: { ...item, finish: 'holofoil', conditionClass: 'raw', marketCondition: condition, currency: 'USD' }
+  });
+  const nearMint = publication();
+  const lightlyPlayed = publication({
+    seriesIdentity: { ...publication().seriesIdentity, marketCondition: 'lightly-played' }
+  });
+  const assets = forecastAssets(
+    [holding],
+    [watch('near-mint'), watch('lightly-played')],
+    { [variantId]: [nearMint, lightlyPlayed] },
+    90,
+    { currency: 'USD' }
+  );
+  assert.deepEqual(assets.map((asset) => asset.key).sort(), ['holding:nm', 'watch:watch:lightly-played']);
 });
 
 test('prediction history links immutable revisions and excludes incomplete matured outcomes from metrics', () => {
@@ -110,6 +156,17 @@ test('prediction history links immutable revisions and excludes incomplete matur
   const evaluated = predictionHistoryModels([{ value: second }], {}, new Date('2026-08-10T00:00:00.000Z'));
   assert.equal(evaluated[0].status, 'matured');
   assert.equal(evaluated[0].absoluteError, 3);
+});
+
+test('prediction history never chains revisions across market conditions', () => {
+  const nearMint = publication({ publishedAt: '2026-08-01T00:00:00.000Z' });
+  const lightlyPlayed = publication({
+    publishedAt: '2026-08-02T00:00:00.000Z',
+    seriesIdentity: { ...publication().seriesIdentity, marketCondition: 'lightly-played' }
+  });
+  const history = predictionHistoryModels([], { [variantId]: [nearMint, lightlyPlayed] });
+  assert.equal(history.length, 2);
+  assert.ok(history.every((value) => value.previousForecastId === ''));
 });
 
 test('track record exposes percentages only from complete tier-5 scorecards', () => {

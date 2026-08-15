@@ -7,7 +7,9 @@ once a period/variant clears the minimum distinct-user count (PRD Sec 29.2).
 This module never re-derives that threshold from raw counts; it only trusts
 the flag it is given and refuses to blend a below-threshold period into a
 windowed rate, so a small, potentially identifying cohort can never leak
-into a feature through averaging.
+into a feature through averaging. Rates use an interim period-distinct
+engaged-variant-user intensity proxy; they are not active-user-day counts or
+estimates of platform-wide demand prevalence.
 """
 
 from __future__ import annotations
@@ -15,6 +17,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Callable, Sequence
+
+
+DEMAND_NORMALIZATION_VERSION = (
+    "period-distinct-engaged-variant-user-per-day-explicit-intent-v1"
+)
+DEMAND_NORMALIZATION_UNIT = (
+    "events_per_period_distinct_engaged_variant_user_per_calendar_day"
+)
+DEMAND_MODEL_COMPONENTS = (
+    "watch_adds",
+    "watch_removes_signed",
+    "portfolio_adds",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +66,18 @@ class DemandPeriod:
 
     @property
     def total_engagement(self) -> int:
-        return self.watch_adds + self.watch_removes + self.searches + self.portfolio_adds + self.views
+        """Broad diagnostic engagement; a watch removal is never positive demand."""
+
+        return (
+            self.watch_adds - self.watch_removes
+            + self.searches + self.portfolio_adds + self.views
+        )
+
+    @property
+    def model_intent_engagement(self) -> int:
+        """Explicit-intent signal that excludes recommendation-contaminated views."""
+
+        return self.watch_adds - self.watch_removes + self.portfolio_adds
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +91,11 @@ class DemandVelocity:
     demand_acceleration: float | None
     evidence_periods: int
     privacy_supported: bool
+    normalization_version: str
+    normalization_unit: str
+    model_signal_components: tuple[str, ...]
+    population_normalized: bool
+    recommendation_exposure_adjusted: bool
 
 
 def _ordered(periods: Sequence[DemandPeriod]) -> tuple[DemandPeriod, ...]:
@@ -79,30 +110,55 @@ def _ordered(periods: Sequence[DemandPeriod]) -> tuple[DemandPeriod, ...]:
 
 
 def _trailing(periods: Sequence[DemandPeriod], window_end: date, days: int) -> tuple[DemandPeriod, ...]:
-    window_start = window_end - timedelta(days=days)
-    return tuple(
+    """Return only exact, gap-free coverage of the inclusive trailing window."""
+
+    window_start = window_end - timedelta(days=days - 1)
+    selected = tuple(
         period for period in periods
         if period.period_start >= window_start and period.period_end <= window_end
     )
+    if not selected:
+        return ()
+    expected_start = window_start
+    for period in selected:
+        if period.period_start != expected_start:
+            return ()
+        expected_start = period.period_end + timedelta(days=1)
+    if expected_start != window_end + timedelta(days=1):
+        return ()
+    return selected
 
 
-def _rate_per_day(periods: Sequence[DemandPeriod], selector: Callable[[DemandPeriod], int]) -> float | None:
-    """Total selected count over total days, or None without full evidence.
+def _rate_per_period_distinct_user_per_day(
+    periods: Sequence[DemandPeriod],
+    selector: Callable[[DemandPeriod], int],
+) -> float | None:
+    """Selected events per period-distinct engaged user per day.
 
     Every contributing period must be privacy-threshold-met; a single
     unsupported period makes the whole window unsupported rather than
     silently dropping it (dropping would understate the denominator and
-    bias the rate).
+    bias the rate). ``unique_users`` is one distinct count for the whole
+    variant-period, not a daily-active-user count. Multiplying by calendar
+    days is only a stable intensity proxy; it must never be called observed
+    active-user-days or platform prevalence.
     """
 
     if not periods:
         return None
     if not all(period.privacy_threshold_met for period in periods):
         return None
-    total_days = sum(period.days for period in periods)
-    if total_days <= 0:
+    if any(period.unique_users <= 0 for period in periods):
         return None
-    return float(sum(selector(period) for period in periods)) / total_days
+    period_distinct_user_day_equivalents = sum(
+        period.unique_users * period.days for period in periods
+    )
+    if period_distinct_user_day_equivalents <= 0:
+        return None
+    return (
+        float(sum(selector(period) for period in periods))
+        / period_distinct_user_day_equivalents
+    )
 
 
 def demand_velocity(periods: Sequence[DemandPeriod], feature_cutoff: date) -> DemandVelocity:
@@ -110,8 +166,13 @@ def demand_velocity(periods: Sequence[DemandPeriod], feature_cutoff: date) -> De
 
     Only periods ending at or before ``feature_cutoff`` are used (PRD Sec
     25.1/25.4: no future feature timestamps). ``demand_acceleration`` is the
-    change in total daily engagement between the trailing 7 days and the 7
-    days before that, matching ``demand_acceleration`` in Sec 23.7.
+    change in explicit-intent event intensity between the trailing 7 days and
+    the 7 days before that. Only signed watch flow plus portfolio adds enter
+    that model-facing diagnostic; search and card views remain diagnostics
+    because recommendation exposure contaminates them. These aggregates do
+    not contain a full active-user denominator or recommendation-impression
+    lineage, so this value remains a diagnostic. Forecast Ensemble v2 rejects
+    demand inputs entirely rather than treating caller-authored flags as proof.
     """
 
     if not isinstance(feature_cutoff, date):
@@ -122,8 +183,12 @@ def demand_velocity(periods: Sequence[DemandPeriod], feature_cutoff: date) -> De
     window_30d = _trailing(eligible, feature_cutoff, 30)
     prior_window_7d = _trailing(eligible, feature_cutoff - timedelta(days=7), 7)
 
-    current_engagement_rate = _rate_per_day(window_7d, lambda period: period.total_engagement)
-    prior_engagement_rate = _rate_per_day(prior_window_7d, lambda period: period.total_engagement)
+    current_engagement_rate = _rate_per_period_distinct_user_per_day(
+        window_7d, lambda period: period.model_intent_engagement,
+    )
+    prior_engagement_rate = _rate_per_period_distinct_user_per_day(
+        prior_window_7d, lambda period: period.model_intent_engagement,
+    )
     demand_acceleration = (
         current_engagement_rate - prior_engagement_rate
         if current_engagement_rate is not None and prior_engagement_rate is not None
@@ -132,12 +197,30 @@ def demand_velocity(periods: Sequence[DemandPeriod], feature_cutoff: date) -> De
 
     return DemandVelocity(
         feature_cutoff=feature_cutoff,
-        watchlist_velocity_7d=_rate_per_day(window_7d, lambda period: period.watch_adds + period.watch_removes),
-        watchlist_velocity_30d=_rate_per_day(window_30d, lambda period: period.watch_adds + period.watch_removes),
-        search_velocity_7d=_rate_per_day(window_7d, lambda period: period.searches),
-        portfolio_add_velocity_30d=_rate_per_day(window_30d, lambda period: period.portfolio_adds),
-        view_velocity_7d=_rate_per_day(window_7d, lambda period: period.views),
+        watchlist_velocity_7d=_rate_per_period_distinct_user_per_day(
+            window_7d, lambda period: period.watch_adds - period.watch_removes,
+        ),
+        watchlist_velocity_30d=_rate_per_period_distinct_user_per_day(
+            window_30d, lambda period: period.watch_adds - period.watch_removes,
+        ),
+        search_velocity_7d=_rate_per_period_distinct_user_per_day(
+            window_7d, lambda period: period.searches,
+        ),
+        portfolio_add_velocity_30d=_rate_per_period_distinct_user_per_day(
+            window_30d, lambda period: period.portfolio_adds,
+        ),
+        view_velocity_7d=_rate_per_period_distinct_user_per_day(
+            window_7d, lambda period: period.views,
+        ),
         demand_acceleration=demand_acceleration,
         evidence_periods=len(eligible),
-        privacy_supported=any(period.privacy_threshold_met for period in eligible),
+        privacy_supported=(
+            bool(eligible)
+            and all(period.privacy_threshold_met for period in eligible)
+        ),
+        normalization_version=DEMAND_NORMALIZATION_VERSION,
+        normalization_unit=DEMAND_NORMALIZATION_UNIT,
+        model_signal_components=DEMAND_MODEL_COMPONENTS,
+        population_normalized=False,
+        recommendation_exposure_adjusted=False,
     )

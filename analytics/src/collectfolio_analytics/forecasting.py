@@ -18,7 +18,12 @@ from .trends import TrendSnapshot
 
 
 SUPPORTED_HORIZONS = (7, 30, 90, 180, 365)
-MODEL_FAMILIES = {"no_change_baseline", "damped_momentum_baseline"}
+MODEL_FAMILIES = {
+    "no_change_baseline",
+    "damped_momentum_baseline",
+    "structural_fair_value",
+    "quantile_return_forecast",
+}
 REQUIRED_PROMOTION_BASELINES = (
     "no_change",
     "damped_momentum",
@@ -164,6 +169,8 @@ class ResearchForecastPrediction:
     prediction_status: str
     reason_codes: tuple[str, ...]
     feature_dataset_hash: str | None = None
+    market_series_id: str | None = None
+    evidence_mode: str = "retrospective"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "analytics_run_id", _uuid(self.analytics_run_id, "analytics_run_id"))
@@ -196,6 +203,14 @@ class ResearchForecastPrediction:
         if len(dataset_hash) != 64 or any(value not in "0123456789abcdef" for value in dataset_hash):
             raise ValueError("feature_dataset_hash must be a SHA-256 digest")
         object.__setattr__(self, "feature_dataset_hash", dataset_hash)
+        if self.market_series_id is not None:
+            object.__setattr__(
+                self, "market_series_id", _uuid(self.market_series_id, "market_series_id")
+            )
+        if self.evidence_mode not in {"retrospective", "prospective"}:
+            raise ValueError("evidence_mode must be retrospective or prospective")
+        if self.evidence_mode == "prospective" and self.market_series_id is None:
+            raise ValueError("prospective predictions require immutable market-series lineage")
 
     @property
     def matures_at(self) -> datetime:
@@ -218,6 +233,17 @@ class ResearchForecastPrediction:
             "status": self.prediction_status,
             "reasons": self.reason_codes,
             "featureDatasetHash": self.feature_dataset_hash,
+            "marketSeriesId": self.market_series_id,
+            "evidenceMode": self.evidence_mode,
+            "seriesIdentity": {
+                "sourceId": self.snapshot.key.source_id,
+                "currency": self.snapshot.key.currency,
+                "language": self.snapshot.key.language,
+                "finish": self.snapshot.key.finish,
+                "conditionClass": self.snapshot.key.condition_class,
+                "marketCondition": self.snapshot.key.market_condition,
+                "priceSemantics": self.snapshot.key.price_semantics,
+            },
             "lineage": self.model.lineage.__dict__ if hasattr(self.model.lineage, "__dict__") else {
                 "dataset": self.model.lineage.dataset_sha256,
                 "code": self.model.lineage.code_version,
@@ -235,6 +261,8 @@ class ResearchForecastPrediction:
             "variant_id": self.snapshot.key.canonical_variant_id,
             "source_id": self.terms.source_id,
             "terms_review_id": self.terms.terms_review_id,
+            "market_series_id": self.market_series_id,
+            "evidence_mode": self.evidence_mode,
             "origin": self.origin.isoformat(),
             "feature_cutoff": self.snapshot.feature_cutoff.isoformat(),
             "horizon_days": self.horizon_days,
@@ -280,6 +308,8 @@ def build_research_baseline_packet(
     analytics_run_id: str,
     trend_snapshot_id: str,
     origin: datetime,
+    market_series_id: str | None = None,
+    evidence_mode: str = "retrospective",
 ) -> ResearchForecastPacket:
     """Build baseline predictions that are permanently marked research-only."""
 
@@ -346,6 +376,8 @@ def build_research_baseline_packet(
             confidence=confidence,
             prediction_status=status,
             reason_codes=tuple(reasons),
+            market_series_id=market_series_id,
+            evidence_mode=evidence_mode,
         ))
     rows = tuple(prediction.database_row() for prediction in predictions)
     model_row = model.database_row()
@@ -372,7 +404,11 @@ class PromotionPolicy:
         if not version or len(version) > 120:
             raise ValueError("promotion policy version must contain 1-120 characters")
         object.__setattr__(self, "version", version)
-        if isinstance(self.minimum_cases, bool) or self.minimum_cases < 1:
+        if (
+            isinstance(self.minimum_cases, bool)
+            or not isinstance(self.minimum_cases, int)
+            or self.minimum_cases < 1
+        ):
             raise ValueError("minimum_cases must be positive")
         _bounded(self.minimum_baseline_lift, -1, 1, "minimum_baseline_lift")
         lower = _bounded(self.interval_80_coverage_min, 0, 1, "interval_80_coverage_min")
@@ -384,8 +420,8 @@ class PromotionPolicy:
             str(value or "").strip() for value in self.required_baselines
             if str(value or "").strip()
         ))
-        if not baselines:
-            raise ValueError("required_baselines must not be empty")
+        if not baselines or len(baselines) > 16:
+            raise ValueError("required_baselines must contain between 1 and 16 values")
         object.__setattr__(self, "required_baselines", baselines)
 
     def as_dict(self) -> dict[str, object]:

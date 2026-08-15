@@ -45,6 +45,7 @@ def product(canonical_set, **overrides):
         "finish": "holofoil",
         "variant_name": "",
         "condition_class": "raw",
+        "market_condition": "near-mint",
     }
     values.update(overrides)
     return ExternalProduct(**values)
@@ -69,6 +70,7 @@ class CatalogMappingTests(unittest.TestCase):
         self.assertEqual(candidate.confidence, 0.99)
         self.assertEqual(candidate.disposition, "exact")
         self.assertIn("initial_mapping_review_required", candidate.reason_codes)
+        self.assertEqual(candidate.evidence["marketCondition"], "near-mint")
 
     def test_previously_approved_external_identity_is_reused_at_one(self):
         canonical_set, _, variants = catalog()

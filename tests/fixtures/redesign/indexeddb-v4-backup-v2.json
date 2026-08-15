@@ -34,6 +34,7 @@
         },
         "quantity": 2,
         "condition": "Near Mint",
+        "marketCondition": "near-mint",
         "gradeCompany": "",
         "grade": "",
         "purchasePrice": 7,

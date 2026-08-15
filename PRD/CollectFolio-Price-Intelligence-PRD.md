@@ -1,7 +1,7 @@
 # CollectFolio Price Intelligence, Watchlist, and Forecasting
 ## Product Requirements Document + Technical/Data Specification
 
-**Document version:** 1.1  
+**Document version:** 1.2
 **Prepared:** August 2026  
 **Repository:** `kaywhy331/CollectFolio`  
 **Deployment target:** Static Netlify PWA + Supabase Free + GitHub Actions  
@@ -17,11 +17,11 @@ CollectFolio should add a **Price Intelligence** system with four deliberately s
 1. **Observed market value** — the latest permitted market-data observation.
 2. **Trend analysis** — what the price has recently done.
 3. **Structural fair-value range** — what comparable cards with similar scarcity and demand characteristics usually trade around.
-4. **Probabilistic forecast** — the modeled distribution of possible prices at 7, 30, 90, 180, and 365 days.
+4. **Probabilistic forecast** — the modeled distribution of possible prices. The long-term contract may support 7, 30, 90, 180, and 365 days, but the first shadow engine is deliberately limited to 30 and 90 days and must qualify 30 days first.
 
 These outputs must never be collapsed into one opaque “AI price.” Explaining today’s price, measuring recent movement, and forecasting a future return are different statistical tasks.
 
-The video model is retained as **`video_model_v0`**, an educational benchmark that combines pull scarcity and desirability. It must not be promoted as the production forecasting model because its source workbook, point-in-time feature data, scoring rubric, and out-of-sample validation are unavailable.
+The video model is retained as **`video_model_v0`**, an educational benchmark that combines pull scarcity and desirability. The raw transcript is not present in the repository, and the surviving workbook contains only 22 observations, mixed price dates, hidden/manual desirability inputs, inconsistent coefficient versions, and no demonstrated out-of-sample validation. It is useful for feature hypotheses, not production training or evidence of accuracy.
 
 ### Critical data-rights conclusion
 
@@ -112,6 +112,43 @@ CollectFolio will not claim certainty. It will show:
 - Confidence and data-quality indicators.
 - The model’s past performance at the selected horizon.
 
+### Forecast-first product wedge
+
+Portfolio tracking is not the differentiator. CollectFolio's defensible wedge is an
+honest, cost-aware estimate for one exact market series—not a context-free target
+price. For the same provider mapping, currency, language, finish, condition/grade, and
+price semantics, an eligible result should present:
+
+- Fresh current reference and its semantics.
+- User-specific all-in acquisition cost.
+- Break-even gross resale price after selling fees and shipping.
+- 30/90-day q50 estimate and q10–q90 modeled range.
+- Directly calibrated probability that provider-reference-derived net proceeds exceed
+  all-in cost, withheld until that exact threshold has enough prospective calibration
+  cases. It is not a probability of an executed sale or guaranteed profit.
+- Evidence grade, freshness, liquidity, volatility, and reprint/restock risk.
+- Recorded drivers and limitations in plain language.
+
+Weak evidence must shrink the estimate toward no price change and widen the interval;
+insufficient or ambiguous evidence must abstain. Opportunity ranking uses conservative
+after-cost edge rather than headline median upside:
+
+```text
+conservative edge = q25 future sale price
+                  - selling fees
+                  - shipping
+                  - all-in acquisition cost
+```
+
+The first useful value pockets are, in order:
+
+1. Exact-offer dislocations against a fresh licensed reference.
+2. Cost-aware break-even opportunities after tax, shipping, and selling fees.
+3. Exact condition/finish spreads without mixing incomparable series.
+4. Comparable-card structural gaps, labeled as model gaps rather than “undervalued.”
+5. Risk-adjusted private watch candidates with intervals and calibrated probability.
+6. Buy-single-versus-chase analysis later, after pull-rate and sealed-price rights are cleared.
+
 ---
 
 ## 5. Goals
@@ -121,7 +158,7 @@ CollectFolio will not claim certainty. It will show:
 1. Let users create and manage a Pokémon card watchlist without adding cards to holdings.
 2. Display trustworthy 7/30/90/180/365-day price trends for supported cards.
 3. Produce structural fair-value ranges for sufficiently supported card cohorts.
-4. Produce probabilistic forecasts at 7, 30, 90, 180, and 365 days.
+4. Produce private 30/90-day probabilistic forecasts first, qualify 30 days first, and add 7/180/365-day horizons only after separate evidence gates pass.
 5. Maintain an immutable prediction ledger and automatically evaluate matured forecasts.
 6. Explain the strongest forecast drivers in collector-friendly language.
 7. Preserve source, timestamp, terms, mapping, feature, and model provenance.
@@ -146,6 +183,7 @@ The first production version will not:
 - Issue buy, sell, or investment advice.
 - Present an in-sample R² value as forecast accuracy.
 - Predict condition or grading outcomes.
+- Authenticate a physical card or certify that an item is genuine.
 - Forecast graded cards and raw cards with one shared model.
 - Treat active listing asks as completed-sale market value.
 - Assume pull-rate data exists for every historical set or promo.
@@ -392,6 +430,13 @@ The first forecast-supported cohort should be:
 - **MKT-005:** Price-source rights determine whether raw values and derivatives may be publicly displayed.
 - **MKT-006:** Stale prices display age and do not silently participate in fresh forecasts.
 - **MKT-007:** Extreme or impossible observations are quarantined, not deleted.
+- **MKT-008:** CollectFolio's operated central database retains normalized historical
+  pricing for every supported exact variant; provider archives may be loaded later in
+  bounded bulk imports without changing client storage.
+- **MKT-009:** Every historical row distinguishes market observation time, provider/archive
+  availability, CollectFolio database first-seen time, and effective feature availability.
+- **MKT-010:** A newly received backfill may support a present estimate but may not appear
+  in a feature snapshot or evaluation origin earlier than CollectFolio first saw it.
 
 ### 13.3 Trend analysis
 
@@ -401,6 +446,11 @@ The first forecast-supported cohort should be:
 - **TRD-004:** Trend confidence accounts for history density, staleness, and source quality.
 - **TRD-005:** Charts distinguish observed, interpolated, and missing periods.
 - **TRD-006:** User additions/removals from the portfolio never appear as market appreciation.
+- **TRD-007:** Published chart history is optional, rights-gated, exact-series-only,
+  cutoff-safe, ordered ascending, and bounded to the latest 180 final accepted points.
+  The trend/observed payload must first reproduce from database-sealed,
+  point-in-time-eligible centralized evidence; pre-seal packets and availability proxies
+  cannot authorize publication.
 
 ### 13.4 Structural fair value
 
@@ -554,7 +604,15 @@ historical_price
 sealed_price
 active_listings
 completed_sales
+sales_volume
+listing_count
 pull_rates
+private_forecast_modeling_allowed
+prospective_capture_allowed
+exact_condition_labels_allowed
+retention_through_maturity_allowed
+liquidity_derivation_allowed
+predictive_derivatives_allowed
 public_raw_display_allowed
 public_derived_display_allowed
 commercial_use_allowed
@@ -572,10 +630,17 @@ No source enters production merely because it is technically accessible.
 | **CollectFolio user records** | Holdings, watchlists, purchase data, manual values | Free | Existing | Preferred | Private by default |
 | **User-owned card photos** | Portfolio thumbnails and scan evidence | Free | Existing | Preferred | Never reuse for training without opt-in |
 | **JustTCG paid API** | Condition/printing-specific current prices, one-year daily history, derived analytics | $19/month Starter | Bounded server adapter implemented | **Preferred pending paid activation review** | Free tier is non-commercial; no raw feed/export/API substitute; stored service use ends with the license |
-| **Pokémon TCG API** | English catalog metadata, sets, images | Free tier | Existing metadata-only adapter | Catalog candidate pending IP/image review | Embedded TCGplayer/Cardmarket pricing is deliberately excluded; authenticated key cannot be exposed in browser |
+| **Pokémon TCG API** | English catalog identity and lifecycle metadata, sets, images | Free tier | Existing metadata-only adapter | Catalog candidate pending IP/image review | Embedded TCGplayer/Cardmarket pricing is deliberately excluded from labels and public derivatives; authenticated key cannot be exposed in browser |
 | **pokemon-tcg-data GitHub** | Bulk English catalog seed | Free access | Candidate | Candidate pending rights review | Repository has raw data; do not assume all underlying imagery/IP is commercially licensed |
-| **TCGdex** | Multilingual metadata fallback and catalog reconciliation | Free/MIT database project | Existing fallback | Candidate | Language completion differs; Pokémon IP still requires review |
+| **TCGdex / Scrydex** | Multilingual catalog, image, finish, and lifecycle reconciliation | Free/community surfaces | Existing enrichment/fallback | Catalog only | Embedded marketplace prices are excluded; mapping quality, upstream market rights, and Pokémon IP/image use require separate review |
 | **TCGCSV** | Internal historical-price research and mapping | Free access | Strong research source | **Research only until written approval** | Data is TCGplayer-derived; TCGplayer API terms restrict third-party and competitive use |
+| **`tcgapi.dev`** | Current per-condition listings, listing-count/shipping signals, and printing-level sales-price/volume history | Paid commercial tiers advertised | Strong technical candidate | **Contract/provenance review required** | Current listings are asks, not completed sales; reviewed history was not exact-condition history. Prospective exact-condition snapshots plus a contract covering upstream provenance, retention, and predictive derivatives are required |
+| **PokéWallet** | Supplemental Pokémon/One Piece mapping and price-semantics research | Free/paid | Research candidate | Supplemental only | Commercial API access is stated, but upstream TCGplayer/Cardmarket redistribution, retention, and derivative-model rights are not established |
+| **Card Hedge AI** | Potential sales, liquidity, grade, and vision research | Enterprise inquiry | Marketing surface reviewed | **Blocked pending written ML/derivative permission** | “ML & AI Ready” marketing conflicts with Terms that prohibit derivative works without express permission; provenance and exact sale semantics also need a contract |
+| **TCGIndex** | Product/interaction inspiration | Unverified | Cloudflare-blocked review | Do not ingest | No stable API, schema, price semantics, or reviewable terms were established |
+| **MTGJSON** | Later Magic-only catalog and limited-history research | Free/open project | Candidate | Separate Magic cohort only | Do not mix games; third-party price/content rights still require feed-specific review |
+| **Lorcana API** | Later Lorcana catalog metadata | Free/open source | Candidate | Catalog only | No market-history label contract; underlying game IP/images require separate review |
+| **GoAgain** | Flesh and Blood catalog, set, legality, keyword, and lifecycle metadata | Free/MIT API | Candidate | Catalog only | Reviewed OpenAPI exposes no price/history endpoints; underlying dataset/IP review remains separate |
 | **TCGplayer pull-rate articles** | Curated modern-set pull-rate observations | Free reading | Candidate manual registry | Research/derived facts with provenance review | Sample estimates, confidence intervals, equal-population assumptions; not all sets covered |
 | **Wikimedia Analytics API** | External character-interest proxy | Free/CC0 | Candidate | Good production candidate | Requires identifying User-Agent/Api-User-Agent; page identity mapping required |
 | **Google Trends UI/API** | Optional broad-interest feature | Free UI / limited alpha API | Optional | Not a core dependency | API remains alpha/limited; UI values depend on geography, time window, comparison set, and normalization |
@@ -617,6 +682,13 @@ source mappings
 ### 15.4 Historical prices
 
 The preferred production history is JustTCG's paid `priceHistoryDuration=1y` response, followed by daily prospective snapshots. Initial backfill points use the real retrieval time as `available_at`; their historical market dates must never be relabeled as proof that CollectFolio possessed the data at an earlier walk-forward origin. Provider storage remains app-bound and usable only while the paid license is active.
+
+No printing-level history may be relabeled as exact-condition training evidence. When a
+challenger supplies current per-condition listings but only printing-level history,
+CollectFolio must begin its own licensed prospective exact-condition snapshots and wait
+for those labels to mature. Active listing count, ask price, and shipping can become
+liquidity or cost features only when their semantics and rights are independently
+approved; they are not completed-sale labels.
 
 Because the free Supabase database cannot hold a full dense daily panel for every Pokémon printing indefinitely, use a tiered storage policy:
 
@@ -1049,7 +1121,45 @@ quality_score
 source_record_hash
 ```
 
-Only active cards receive dense rows in the free-tier pilot.
+The production ledger also records `available_at`, `source_available_at`,
+`collectfolio_first_seen_at`, ingestion lineage, exact market-series identity, mapping,
+condition/finish/language, quality status, and reason codes. CollectFolio's centralized
+database—not the browser—is the durable historical store. Coverage grows through bounded
+bulk imports until every supported exact variant has the history available under its
+source rights; sparse or unavailable history remains explicit rather than invented.
+
+#### `centralized_historical_price_imports`
+
+```text
+id
+ingestion_run_id
+source_id
+terms_review_id
+dataset_sha256
+series_set_sha256
+observation_set_sha256
+stored_rows_sha256
+quality_policy_hash
+expected_series_count
+expected_observation_count
+expected_accepted_count
+observed_from / observed_through
+available_from / available_through
+first_seen_from / first_seen_through
+availability_semantics
+point_in_time_eligible
+mapping_version
+parser_version
+code_version
+operator_label
+```
+
+An append-only membership table binds every import to its exact observations. Identical
+rolling-archive overlap reuses an immutable observation; inconsistent overlap is rejected.
+Provider/archive availability is preserved separately, while the database authors first
+sight and prevents effective `available_at` from preceding it. `observed_at_proxy` history
+is retained for current descriptive/modeling use after ingestion but is never eligible as
+historical point-in-time evidence.
 
 ### 19.4 Pull and sealed data
 
@@ -1288,6 +1398,75 @@ evaluated_at
 #### `model_metrics`
 
 Store results by model, horizon, cohort, time period, lifecycle, set, and price tier.
+
+#### Prospective forecast evidence ledger
+
+Prospective status is established by database time, never a caller field. One guarded
+transaction creates `prospective_forecast_runs`, a sealed
+`prospective_candidate_universes` row, every exact-series membership, one origin-time
+cost-quote state per member, and every prediction. The immutable run binds:
+
+```text
+database-authored origin and maturity
+30/90-day horizon
+model version and fitted artifact hash
+feature/forecast dataset hashes
+source-policy, mapping, feature, and code versions
+preregistered deterministic selection policy and maximum feature/quote ages
+database-sealed pre-execution expected exact-series count/hash
+complete candidate-universe snapshot hash
+complete submitted prediction/cost packet hash
+```
+
+Only succeeded trend runs can enter the challenged path. The forecast run must still
+be `running` and output-free when the database issues its nonce; the guarded receipt
+transaction alone finalizes it as `succeeded` with the independently recomputed output
+hash. Feature cutoffs must be fresh under the preregistered policy, and v1 cannot preregister an evidence
+quality floor below 0.55. Every label-source review must explicitly
+permit private modeling, prospective capture, exact-condition labels, retention through
+maturity, and predictive derivatives. Provider-backed liquidity also requires an
+explicit liquidity-derivation grant; a user-entered offer can only carry `unknown`
+liquidity. The ledger retains fee-only break-even and separately derives the higher
+liquidity-adjusted reference threshold.
+
+An after-cost universe requires complete acquisition, tax, shipping, selling-fee, and
+source-backed liquidity evidence for every member. A forecast-validation universe may
+preserve an explicit `unavailable` cost state, but it cannot become
+`eligible_for_operator_review`. Membership, costs, predictions, and outcomes are
+append-only and service-private. Prospective evaluation timestamps are database-authored
+at insertion. Migration 0017 adds no publication path and deliberately keeps model
+scorecards retrospective-only. Unapplied migration 0018 adds the guarded activation
+layer: a scorecard plan must be sealed before its future 105–365 day origin window; each
+plan preregisters 6–18 exact origin slots with anchors at least 22 days apart so there
+are 21 full days between their 24-hour windows, with one mandatory challenge per slot;
+each run receives a one-use five-minute database nonce;
+one model version may register only one plan per horizon/source/purpose, so a missed or
+abandoned schedule cannot be silently replaced;
+the independent executor signs the
+exact order-independent input/output commitment with a key unavailable to
+`service_role`; and one RPC later selects every planned receipt/evaluation and derives
+membership, hashes, error/calibration/baseline/after-cost/pocket metrics, clustered lift,
+reason codes, and recommendation atomically.
+
+The receipt transaction and scorecard derivation independently reconstruct the signed
+canonical output hash from immutable typed prediction, cost, baseline, and reason-code
+rows. A rounded decimal, reformatted timestamp, missing database-required reason, or
+other signed-versus-stored mismatch invalidates the transaction rather than creating
+unverifiable evidence.
+
+The ledger independently selects and seals the expected exact-series input count/hash
+while the trend run is still `running` and before any trend output exists. The completed
+run must reproduce that exact inventory, including explicit low-evidence snapshots,
+before its higher-quality subset may define a forecast universe. This prevents a merely
+`succeeded` but incomplete run from defining completeness by its own omissions.
+
+The HMAC receipt proves that the independently provisioned executor principal signed the
+challenged input/output packet while binding the configured artifact, executor-build,
+and runtime hashes. It does **not** cryptographically prove that the referenced artifact
+executed; `artifact_execution_verified` is permanently false in this contract. A run can
+count only after the key is provisioned outside `service_role`, the trusted runner is
+operationally isolated and audited, migration 0018 is rehearsed/applied, and the receipt
+passes independent review.
 
 ---
 
@@ -1531,7 +1710,26 @@ wikimedia_pageview_index
 demand_acceleration
 ```
 
-Normalize first-party signals by active-user count and protect against repeated self-generated events.
+The current aggregate has only a variant-period `unique_users` count, not daily active-user
+days or a recommendation-independent platform denominator. Until that richer denominator
+exists, label every interim diagnostic as **events per period-distinct engaged variant user
+per calendar day** and use only exact, gap-free windows:
+
+```text
+interim intensity proxy = selected events / sum(period_distinct_users × period_days)
+explicit-intent diagnostic components = watch_adds - watch_removes + portfolio_adds
+```
+
+The multiplication makes a stable rate proxy; it does not invent or claim observed user-days.
+Return no rate for zero-user, gapped, overlapping, incomplete, or failed-privacy windows.
+Search and card-view rates remain noncausal diagnostics because the app's own recommendations
+can create them. Forecast Ensemble v2 rejects demand opt-in entirely. Existing history has no
+immutable input hash, trustworthy availability/origin, exposure identifier, or daily
+population denominator and cannot be retrospectively de-biased. A later demand model requires
+immutable daily denominators, a private exposure ledger (surface, rank, model/policy version,
+experiment arm or propensity, and served time), organic versus exposed contexts, fitted
+per-channel weights, and randomized holdout or propensity-aware evaluation. Protect all
+signals against repeated self-generated events.
 
 ### 23.8 Data-quality features
 
@@ -1661,6 +1859,69 @@ Model 0 is for:
 
 It is not the production forecast.
 
+The forensic workbook cannot establish a coefficient or accuracy claim: its 22 rows do
+not form a point-in-time panel, desirability cannot be independently reconstructed,
+price dates are mixed, coefficient versions disagree, and no held-out or prospective
+score exists. Preserve scarcity and desirability only as challenger features and run
+ablations to prove whether they add future-return signal beyond price, momentum,
+lifecycle, and market baselines.
+
+### 24.7 Pilot and publication gate
+
+The first cohort is Pokémon, English, raw Near Mint, exact finish, USD, and one approved
+licensed provider. Run 30- and 90-day forecasts only in private shadow mode and make
+30 days the first horizon eligible for operator review.
+
+The repository's observation-panel compiler is the required bridge into Forecast
+Ensemble v2. It exact-identity checks a bounded hosted ledger export, reconstructs trend
+features at preregistered origins using only then-available accepted revisions, derives
+labels only from complete expected-cadence coverage in the immutable trailing-seven-day
+maturity window, and records missing trend/feature/label evidence as hashed abstentions.
+Every caller-declared member × origin × horizon is preserved exactly once as
+`feature_abstained`, `open`, `scored`, or `unscorable`; even a zero-example run must emit
+an auditable coverage-only insufficient report. It deliberately leaves market, lifecycle,
+structural, reprint, demand, and cost features absent until separately sourced
+point-in-time evidence exists.
+
+The compiler's local operator export is not an independent expected-input inventory. It
+must therefore label universe completeness `declared_only`, label its evidence
+retrospective and prospectively ineligible, issue no `candidateUniverseId`, and bind those
+promotion blockers into each report hash. Only an externally verifiable database seal
+created before model output—binding exact membership/count/hash, observation count/hash,
+mapping/source/query policy, and seal time—can support a candidate-universe claim. This
+bridge enables honest real-data experiments; it does not make the current one-card TCGCSV
+cohort broad enough, establish predictive accuracy, or grant public derivative rights.
+
+No horizon may become public until it has all of the following:
+
+- At least 200 prospectively generated and scored forecasts. Retrospective held-out
+  evidence may admit a challenger to private shadow mode, but cannot satisfy this
+  publication count.
+- At least 50 exact variants, five sets, and six forecast origins spaced by at least 21 days.
+- A positive 95% origin-clustered lift lower bound over all five required baselines.
+- Acceptable interval coverage and width plus enough directly calibrated probability cases.
+- At least 30 prospectively selected-pocket outcomes from immutable complete candidate
+  universes, a positive median provider-reference-implied net ROI, an acceptable
+  provider-reference-positive rate, and an acceptable false-discovery rate after all
+  origin-time acquisition, tax, shipping, fee, and approved liquidity adjustments.
+- Exact immutable lineage, approved source rights, exact mapping, operator promotion, a disabled-by-default publication flag, and a kill switch.
+- Database-derived prospective scorecard scope/membership/metrics and independently
+  verifiable executor-principal attestation binding every sealed quantile packet to the
+  configured fitted-artifact/build/runtime hashes. Migration 0018 implements these
+  private, fail-closed repository paths but is unapplied and intentionally reports no
+  cryptographic artifact-execution proof.
+- An independently sealed expected-input inventory proving that a succeeded trend run
+  did not silently omit eligible exact series before defining its candidate universe.
+
+Software passing these gates makes a model eligible for human review; it never proves a
+guaranteed future value.
+
+Six 24-hour origin slots with 22-day anchor spacing span 111 days through the final
+slot window. The last 30-day prediction therefore cannot mature before day 141; operational ingestion,
+mapping review, evaluation, and missed runs make **five to six months** the realistic
+minimum for the 30-day gate. The equivalent mathematical minimum for 90 days is 201
+days, before operational margin.
+
 ---
 
 ## 25. Walk-forward validation
@@ -1732,8 +1993,12 @@ Direction/probability:
 
 - Direction accuracy.
 - Accuracy for moves exceeding ±10% and ±25%.
-- Brier score for positive-return probability.
-- Probability calibration.
+- Brier score and calibration for `P(provider reference increases)`.
+
+After-cost break-even probability is a different threshold-specific claim. Evaluate
+and calibrate `P(provider-reference-derived net proceeds > all-in acquisition cost)`
+separately for each origin-time cost threshold. Report its case count, Brier score, and
+calibration error; direction calibration cannot substitute for this evidence.
 
 Intervals:
 
@@ -1753,7 +2018,17 @@ A challenger cannot become champion unless:
 - Improvement persists across multiple rolling origins.
 - No critical cohort degrades beyond tolerance.
 - Source and derived-output rights permit production use.
+- Each prospective label review explicitly permits exact-condition labels, retention
+  through maturity, and predictive derivatives; each source-backed liquidity input has
+  an explicit liquidity-derivation grant.
+- Every prospectively scored member belongs to an immutable candidate universe and has
+  a captured origin-time cost-quote state. Missing or incomplete costs prohibit an
+  after-cost `eligible_for_operator_review` result.
 - An operator approves the model card.
+- A database-derived prospective scorecard and independently signed execution receipt
+  exist; caller-supplied metrics, `service_role` alone, or a matching artifact hash
+  cannot satisfy this gate. Trusted-runner isolation and independent receipt review are
+  still required because principal attestation is not cryptographic workload proof.
 
 ---
 
@@ -2266,7 +2541,7 @@ This ordering prevents a polished forecast UI from being built on data that cann
 
 - Current CollectFolio repository README and technical specification.
 - Existing Supabase migration `0001_initial.sql`.
-- User-supplied video transcript and screenshots.
+- Prior-session video discussion (the raw transcript/screenshots are not present in this repository).
 - `CollectFolio-video-model-forensic-reconstruction.xlsx`.
 
 ### Catalog and metadata
@@ -2277,6 +2552,9 @@ This ordering prevents a polished forecast UI from being built on data that cann
 - Pokémon TCG raw data: https://github.com/PokemonTCG/pokemon-tcg-data
 - TCGdex: https://tcgdex.dev/
 - TCGdex database: https://github.com/tcgdex/cards-database
+- PokéWallet: https://www.pokewallet.io/
+- Lorcana API: https://lorcana-api.com/
+- GoAgain Flesh and Blood API: https://goagain.dev/docs
 
 ### Market and listings
 
@@ -2290,6 +2568,10 @@ This ordering prevents a polished forecast UI from being built on data that cann
 - eBay API call limits: https://developer.ebay.com/develop/get-started/api-call-limits
 - PriceCharting API docs: https://www.pricecharting.com/api-documentation
 - PriceCharting terms: https://www.pricecharting.com/page/terms-of-service
+- TCG API: https://tcgapi.dev/ and https://tcgapi.dev/legal/terms
+- Card Hedge API services and terms: https://ai.cardhedger.com/api-services and https://ai.cardhedger.com/terms
+- MTGJSON: https://mtgjson.com/ and https://mtgjson.com/license/
+- TCGIndex: https://tcgindex.io/
 
 ### Pull rates
 

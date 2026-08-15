@@ -112,6 +112,7 @@ class PrivateResearchEvidence:
     analytics_run_rows: tuple[Mapping[str, object], ...]
     analytics_run_source_rows: tuple[Mapping[str, object], ...]
     trend_snapshot_row: Mapping[str, object]
+    market_series_row: Mapping[str, object]
     forecast_packet: ResearchForecastPacket
     dataset_hash: str
     packet_hash: str
@@ -152,6 +153,7 @@ class PrivateResearchEvidence:
             "observations": {
                 "datasetHash": self.history_observations.dataset_hash,
                 "statusCounts": self.history_observations.status_counts,
+                "marketSeriesRows": [dict(self.market_series_row)],
                 "databaseRows": list(self.history_observations.database_rows),
                 "qualityEvents": list(self.history_observations.quality_events),
             },
@@ -179,6 +181,7 @@ def _trend_snapshot_row(
     snapshot_id: str,
     analytics_run_id: str,
     terms: SourceTerms,
+    market_series_id: str,
 ) -> Mapping[str, object]:
     trend_state = "insufficient" if snapshot.trend_state == "insufficient_data" else snapshot.trend_state
     reasons = ["research_only_source", "weekly_archive_sampling", "uncalibrated_thresholds"]
@@ -189,6 +192,7 @@ def _trend_snapshot_row(
         "variant_id": snapshot.key.canonical_variant_id,
         "source_id": terms.source_id,
         "terms_review_id": terms.terms_review_id,
+        "market_series_id": _uuid(market_series_id, "market_series_id"),
         "feature_cutoff": snapshot.feature_cutoff.isoformat(),
         "latest_observed_at": snapshot.latest_observed_at.isoformat(),
         "price_current": snapshot.current_price,
@@ -316,6 +320,13 @@ def build_private_research_evidence(
         expected_interval_days=history.expected_interval_days,
         max_reference_lag_days=float(history.max_reference_lag_days),
     )
+    series_rows = {
+        str(row["identity_hash"]): row
+        for row in history_observations.market_series_rows + current_observations.market_series_rows
+    }
+    if len(series_rows) != 1:
+        raise ValueError("qualification requires one immutable market series")
+    market_series_row = next(iter(series_rows.values()))
     dataset_hash = _hash({
         "historyHash": history.history_hash,
         "historyObservationDatasetHash": history_observations.dataset_hash,
@@ -361,6 +372,7 @@ def build_private_research_evidence(
         snapshot_id=config.trend_snapshot_id,
         analytics_run_id=config.trend_analytics_run_id,
         terms=terms,
+        market_series_id=str(market_series_row["id"]),
     )
     forecast = build_research_baseline_packet(
         model,
@@ -369,6 +381,8 @@ def build_private_research_evidence(
         analytics_run_id=config.forecast_analytics_run_id,
         trend_snapshot_id=config.trend_snapshot_id,
         origin=config.forecast_origin,
+        market_series_id=str(market_series_row["id"]),
+        evidence_mode="retrospective",
     )
 
     observation_counts = history_observations.status_counts
@@ -452,6 +466,7 @@ def build_private_research_evidence(
         "analyticsRuns": (trend_run, forecast_run),
         "analyticsRunSources": source_rows,
         "trendSnapshot": trend_row,
+        "marketSeries": market_series_row,
         "forecastPacketHash": forecast.packet_hash,
         "datasetHash": dataset_hash,
         "publicCandidateRows": [],
@@ -464,6 +479,7 @@ def build_private_research_evidence(
         analytics_run_rows=(trend_run, forecast_run),
         analytics_run_source_rows=source_rows,
         trend_snapshot_row=trend_row,
+        market_series_row=market_series_row,
         forecast_packet=forecast,
         dataset_hash=dataset_hash,
         packet_hash=_hash(packet_values),

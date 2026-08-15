@@ -53,6 +53,10 @@ test('legacy view mappings create restorable route state', () => {
     item: { provider: 'scryfall', externalId: 'card/id' },
     catalogRef: { provider: 'scryfall', externalId: 'card/id', canonicalVariantId: '123e4567-e89b-42d3-a456-426614174000' }
   } }).canonicalPath, '/cards/scryfall%3Acard%2Fid');
+  assert.equal(appRouteForLegacyView('detail', state, { detail: {
+    item: { provider: 'scryfall', externalId: 'card/id' },
+    watched: { watchKey: 'variant:v2:123e4567-e89b-42d3-a456-426614174000:raw:near-mint' }
+  } }).canonicalPath, '/cards/variant%3Av2%3A123e4567-e89b-42d3-a456-426614174000%3Araw%3Anear-mint');
   const route = parseAppRoute('/portfolio?view=watchlist');
   assert.equal(routeStatePatch(route, state).portfolio.section, 'watchlist');
   const restored = routeStatePatch(parseAppRoute('/discover?mode=search&q=Different'), {

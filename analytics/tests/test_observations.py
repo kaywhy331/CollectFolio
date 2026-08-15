@@ -17,6 +17,8 @@ KEY = PriceSeriesKey(
     finish="Holo",
     condition_class="Raw",
     price_semantics="Market",
+    language="EN",
+    market_condition="Near_Mint",
 )
 
 
@@ -37,6 +39,8 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(KEY.currency, "USD")
         self.assertEqual(KEY.finish, "holo")
         self.assertEqual(KEY.condition_class, "raw")
+        self.assertEqual(KEY.language, "en")
+        self.assertEqual(KEY.market_condition, "near-mint")
 
     def test_observation_requires_aware_times_and_positive_price(self):
         with self.assertRaisesRegex(ValueError, "timezone-aware"):
@@ -79,7 +83,19 @@ class ObservationTests(unittest.TestCase):
         selected = point_in_time_series(values, START + timedelta(days=1), key=second_key)
         self.assertEqual([item.price for item in selected], [20])
 
+    def test_exact_identity_separates_market_condition_and_language(self):
+        lightly_played = PriceSeriesKey(
+            KEY.canonical_variant_id, KEY.source_id, KEY.currency, KEY.finish,
+            KEY.condition_class, KEY.price_semantics, KEY.language, "lightly-played",
+        )
+        japanese = PriceSeriesKey(
+            KEY.canonical_variant_id, KEY.source_id, KEY.currency, KEY.finish,
+            KEY.condition_class, KEY.price_semantics, "ja", KEY.market_condition,
+        )
+        self.assertNotEqual(KEY, lightly_played)
+        self.assertNotEqual(KEY, japanese)
+        self.assertEqual(len(KEY.exact_identity), 8)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -1,15 +1,16 @@
 import { externalImage, pageHeader } from '../core/components.js';
-import { watchKeyForItem } from '../core/catalog-identity.js';
 import { matchBucketFor } from '../core/view-models.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { CURRENCIES } from '../core/settings.js';
+import { RAW_MARKET_CONDITIONS } from '../core/market-series.js';
 import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from '../core/utils.js';
 import { normalizeAcquisition, scanReviewSummary, scanReviewTotals, selectedCropItem } from '../services/scan-review.js';
+import { findWatchedItem } from '../services/watchlist.js';
 
 const CONDITIONS = ['Mint', 'Near Mint', 'Excellent', 'Good', 'Played', 'Poor', 'Graded'];
 
-function option(value, selected) {
-  return `<option value="${escapeAttribute(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(value)}</option>`;
+function option(value, selected, label = value) {
+  return `<option value="${escapeAttribute(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(label)}</option>`;
 }
 
 function acquisitionFields(acquisition, { bulk = false } = {}) {
@@ -17,7 +18,8 @@ function acquisitionFields(acquisition, { bulk = false } = {}) {
   const marker = (field) => bulk ? '' : `data-crop-acquisition="${field}"`;
   return `<div class="acquisition-grid">
     <label>Quantity<input ${marker('quantity')} name="quantity" type="number" min="1" step="1" value="${escapeAttribute(value.quantity)}"></label>
-    <label>Condition<select ${marker('condition')} name="condition">${CONDITIONS.map((condition) => option(condition, value.condition)).join('')}</select></label>
+    <label>Collection condition<select ${marker('condition')} name="condition">${CONDITIONS.map((condition) => option(condition, value.condition)).join('')}</select></label>
+    <label>Marketplace condition<select ${marker('marketCondition')} name="marketCondition"><option value="">Not confirmed</option>${RAW_MARKET_CONDITIONS.map((entry) => option(entry.value, value.marketCondition, entry.label)).join('')}</select><span class="fine-print">Required for an exact-condition market forecast; never inferred from collection condition.</span></label>
     <label>Purchase price / item<input ${marker('purchasePrice')} name="purchasePrice" type="number" min="0" step="0.01" value="${escapeAttribute(value.purchasePrice)}" placeholder="Optional"></label>
     <label>Purchase currency<select ${marker('purchaseCurrency')} name="purchaseCurrency">${CURRENCIES.map((entry) => option(entry, value.purchaseCurrency)).join('')}</select></label>
     <label>Fees (total, same currency)<input ${marker('fees')} name="fees" type="number" min="0" step="0.01" value="${escapeAttribute(value.fees)}" placeholder="Optional"></label>
@@ -61,7 +63,7 @@ function matchStatus(crop, selected) {
 
 function selectedMatch(crop, selected, state) {
   if (!selected) return '';
-  const watching = state.watchlistItems?.some((entry) => entry.watchKey === watchKeyForItem(selected));
+  const watching = Boolean(findWatchedItem(state.watchlistItems, selected));
   const [bucket, label] = matchStatus(crop, selected);
   return `<section class="selected-match">
     <div><p class="eyebrow">Selected catalog candidate</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>

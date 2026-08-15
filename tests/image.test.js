@@ -169,6 +169,25 @@ test('versioned visual index hydrates nearest candidates without OCR evidence', 
   assert.equal(results[0].price, null);
 });
 
+test('visual index scans independent shards concurrently with a bounded worker pool', async () => {
+  const shards = Array.from({ length: 8 }, (_, index) => ({ name: String(index) }));
+  let active = 0;
+  let maximumActive = 0;
+  const results = await visualCandidatesFromHash('8c8e96868631b286', {
+    manifest: { format: 'collectfolio-visual-candidate-index', version: 1, shards },
+    loadShard: async (name) => {
+      active++;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, name === '0' ? 15 : 5));
+      active--;
+      return [[`card-${name}`, `Card ${name}`, 'Set', name, 'Common', '', '8c8e96868631b286']];
+    },
+    minimumScore: 0.9
+  });
+  assert.equal(maximumActive, 4);
+  assert.deepEqual(results.map((entry) => entry.id), shards.map(({ name }) => `pokemon:card-${name}`));
+});
+
 test('OCR query extraction favors distinctive words and number tokens', () => {
   const query = extractOCRQuery('POKEMON\nCharizard VMAX\nBrilliant Stars\nTG20/TG30\nCopyright 2026');
   assert.equal(query, 'Charizard VMAX TG20/TG30');

@@ -1,4 +1,5 @@
 import { normalizeIntelligencePayload } from './intelligence-contract.js';
+import { marketSeriesIdentity, selectPublicationForWatchlist } from './market-series.js';
 
 const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
 
@@ -20,14 +21,20 @@ function forecastSignature(forecasts = {}) {
 
 export function intelligenceAlertBaseline(publication, capturedAt = new Date().toISOString()) {
   const value = normalizeIntelligencePayload(publication);
+  const series = marketSeriesIdentity(value.seriesIdentity);
+  const seriesKey = [
+    series.sourceId, series.currency, series.language, series.finish,
+    series.conditionClass, series.marketCondition, series.priceSemantics
+  ].join('|');
   const fingerprint = [
-    value.variantId, value.supportTier, value.observed?.price ?? '',
+    value.variantId, seriesKey, value.supportTier, value.observed?.price ?? '',
     value.observed?.currency || '',
     value.trend.status, value.fairValue?.position || '', forecastSignature(value.forecasts),
     publication?.publishedAt || '', publication?.expiresAt || ''
   ].join('|');
   return {
     fingerprint: hashText(fingerprint),
+    seriesKey,
     observedPrice: value.observed?.price ?? null,
     currency: value.observed?.currency || 'USD',
     trendStatus: value.trend.status,
@@ -54,9 +61,15 @@ function event(entry, publication, baseline, kind, message, details, triggeredAt
 }
 
 export function evaluateWatchlistItemAlerts(entry, publication, now = new Date().toISOString()) {
-  if (!entry?.watchKey || !entry?.canonicalVariantId || !publication) {
+  const selected = selectPublicationForWatchlist(
+    publication,
+    entry,
+    entry.catalogRef?.currency || 'USD'
+  );
+  if (!entry?.watchKey || !entry?.canonicalVariantId || !selected) {
     return { baseline: entry?.intelligenceBaseline || null, alerts: [] };
   }
+  publication = selected;
   const value = normalizeIntelligencePayload(publication);
   if (value.variantId.toLowerCase() !== String(entry.canonicalVariantId).toLowerCase()) {
     return { baseline: entry.intelligenceBaseline || null, alerts: [] };

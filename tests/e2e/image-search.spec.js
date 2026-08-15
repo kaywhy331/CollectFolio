@@ -138,13 +138,20 @@ test('low-quality native OCR falls through and never exposes random characters',
       ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
     });`
   }));
+  await page.route('**/assets/data/visual-index/pokemon-v1/manifest.json', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      format: 'collectfolio-visual-candidate-index', version: 1,
+      fingerprintCount: 0, shards: []
+    })
+  }));
   await skipOnboarding(page);
   await openImageReview(page);
 
   await expect(page.locator('.review-card [role="status"]')).toContainText(/Text was unclear|tighter, well-lit crop/);
   await expect(page.locator('[data-crop-query]')).toHaveValue('');
   await expect(page.getByText('||| 1lI rrrr ???')).toHaveCount(0);
-  await expect(page.locator('.candidate-list')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry automatic OCR' })).toBeEnabled();
   await expect.poll(() => page.evaluate(() => window.__tesseractRecognized)).toBe(7);
 });
 

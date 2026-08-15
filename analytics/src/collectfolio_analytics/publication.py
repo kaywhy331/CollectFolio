@@ -11,11 +11,14 @@ from typing import Iterable, Mapping
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from .evaluation import ResearchLineage
-from .market_pipeline import ObservationMapping, SourceTerms
-from .trends import TrendSnapshot
+from .market_pipeline import ObservationMapping, SourceTerms, build_market_series_row
+from .observations import PriceObservation
+from .trends import TrendSnapshot, build_trend_snapshot
+from .walk_forward import HostedObservation
 
 PUBLICATION_NAMESPACE = uuid5(NAMESPACE_URL, "https://collectfolio.app/intelligence-publication/v1")
 USAGE_KINDS = {"catalog", "raw_price", "derived_feature"}
+MAX_PUBLIC_HISTORY_POINTS = 180
 
 
 def _uuid(value: str, name: str) -> str:
@@ -59,10 +62,26 @@ class DescriptiveCandidatePacket:
         return str(self.candidate_row["id"])
 
 
-def aggregate_source_policy_hash(lineage: Iterable[PublicationLineage]) -> str:
+def _canonical_publication_lineage(
+    lineage: Iterable[PublicationLineage],
+) -> tuple[PublicationLineage, ...]:
     values = tuple(lineage)
     if not values:
         raise ValueError("publication lineage cannot be empty")
+    if any(not isinstance(item, PublicationLineage) for item in values):
+        raise ValueError("publication lineage must contain PublicationLineage values")
+    unique: dict[tuple[str, str, str], PublicationLineage] = {}
+    for item in values:
+        key = (item.terms.source_id, item.terms.terms_review_id, item.usage_kind)
+        previous = unique.get(key)
+        if previous is not None and previous.terms != item.terms:
+            raise ValueError("duplicate publication lineage has conflicting source terms")
+        unique[key] = item
+    return tuple(unique[key] for key in sorted(unique))
+
+
+def aggregate_source_policy_hash(lineage: Iterable[PublicationLineage]) -> str:
+    values = _canonical_publication_lineage(lineage)
     return _hash(sorted(
         {
             (item.terms.source_id, item.terms.terms_review_id, item.usage_kind, item.terms.policy_hash)
@@ -93,7 +112,12 @@ def build_trend_snapshot_row(
         raise ValueError("mapping, source terms, and trend snapshot source IDs differ")
     if mapping.mapping_version != research_lineage.mapping_version:
         raise ValueError("mapping version differs from research lineage")
-    if mapping.finish != snapshot.key.finish or mapping.condition_class != snapshot.key.condition_class:
+    if (
+        mapping.finish != snapshot.key.finish
+        or mapping.condition_class != snapshot.key.condition_class
+        or mapping.language != snapshot.key.language
+        or mapping.market_condition != snapshot.key.market_condition
+    ):
         raise ValueError("mapping finish/condition differs from trend series")
 
     run_id = _uuid(analytics_run_id, "analytics_run_id")
@@ -201,6 +225,75 @@ def _reason_codes(snapshot: TrendSnapshot, *, include_observed: bool) -> list[st
     return reasons
 
 
+def _hosted_point_in_time_history(
+    history: Iterable[HostedObservation],
+    snapshot: TrendSnapshot,
+    *,
+    market_series_id: str,
+) -> tuple[PriceObservation, ...]:
+    """Select final accepted revisions from database-effective evidence.
+
+    Hosted ledger rows are ranked across every status before the winning
+    revision is filtered. That prevents a later quarantine/outlier revision
+    from accidentally resurrecting an older accepted price. Plain packet or
+    feature observations are refused because they do not prove the database's
+    effective availability/first-seen contract.
+    """
+
+    values = tuple(history)
+    if not values:
+        return ()
+    if any(not isinstance(item, HostedObservation) for item in values):
+        raise ValueError("publication history requires hosted ledger observations")
+    if any(item.centralized_import_id is None for item in values):
+        raise ValueError(
+            "publication evidence requires sealed centralized-import provenance"
+        )
+    if any(item.centralized_import_point_in_time_eligible is not True for item in values):
+        raise ValueError(
+            "publication evidence requires point-in-time-eligible centralized imports"
+        )
+    if any(item.key != snapshot.key for item in values):
+        raise ValueError("publication history must use the snapshot's exact price series")
+    if any(item.market_series_id != market_series_id for item in values):
+        raise ValueError("publication history differs from its exact market-series ID")
+    revisions: dict[datetime, HostedObservation] = {}
+    for item in values:
+        if (
+            item.observed_at > snapshot.feature_cutoff
+            or item.available_at > snapshot.feature_cutoff
+            or item.centralized_import_created_at > snapshot.feature_cutoff
+        ):
+            continue
+        current = revisions.get(item.observed_at)
+        if current is None or (item.available_at, item.id) > (
+            current.available_at,
+            current.id,
+        ):
+            revisions[item.observed_at] = item
+    selected = tuple(
+        PriceObservation(
+            key=item.key,
+            observed_at=item.observed_at,
+            available_at=item.available_at,
+            price=item.market_price,
+            quality=item.quality_score,
+            source_observation_id=item.id,
+        )
+        for item in (revisions[instant] for instant in sorted(revisions))
+        if item.observation_status == "accepted" and item.market_price is not None
+    )
+    if not selected:
+        raise ValueError("hosted ledger has no accepted observation known at the snapshot cutoff")
+    latest = selected[-1]
+    if (
+        latest.observed_at != snapshot.latest_observed_at
+        or latest.price != snapshot.current_price
+    ):
+        raise ValueError("publication history and trend snapshot latest price differ")
+    return selected
+
+
 def build_descriptive_candidate(
     snapshot: TrendSnapshot,
     mapping: ObservationMapping,
@@ -209,7 +302,9 @@ def build_descriptive_candidate(
     *,
     analytics_run_id: str,
     built_at: datetime,
+    hosted_evidence: Iterable[HostedObservation],
     include_observed: bool = False,
+    include_history: bool = False,
     ttl_hours: float = 26,
 ) -> DescriptiveCandidatePacket:
     """Build an immutable review packet; database review/promotion stays separate."""
@@ -219,12 +314,9 @@ def build_descriptive_candidate(
         raise ValueError("built_at cannot precede the feature cutoff")
     if isinstance(ttl_hours, bool) or not isfinite(ttl_hours) or ttl_hours <= 0 or ttl_hours > 168:
         raise ValueError("ttl_hours must be inside (0, 168]")
-    lineage = tuple(publication_lineage)
-    unique_lineage = {
-        (item.terms.source_id, item.terms.terms_review_id, item.usage_kind): item
-        for item in lineage
-    }
-    lineage = tuple(unique_lineage[key] for key in sorted(unique_lineage))
+    if not isinstance(include_observed, bool) or not isinstance(include_history, bool):
+        raise ValueError("publication inclusion flags must be boolean")
+    lineage = _canonical_publication_lineage(publication_lineage)
     if not any(item.usage_kind == "catalog" for item in lineage):
         raise PermissionError("a catalog-metadata lineage review is required")
     derived = [
@@ -247,6 +339,32 @@ def build_descriptive_candidate(
         raise PermissionError(f"current source terms deny publication usage: {', '.join(denied)}")
 
     source_terms = derived[0].terms
+    expected_series_row = build_market_series_row(
+        mapping,
+        source_terms,
+        currency=snapshot.key.currency,
+        price_semantics=snapshot.key.price_semantics,
+    )
+    eligible_history = _hosted_point_in_time_history(
+        hosted_evidence,
+        snapshot,
+        market_series_id=str(expected_series_row["id"]),
+    )
+    expected_snapshot = build_trend_snapshot(
+        eligible_history,
+        snapshot.feature_cutoff,
+        key=snapshot.key,
+    )
+    if expected_snapshot != snapshot:
+        raise ValueError("trend snapshot differs from hosted point-in-time evidence")
+    if include_history and not any(
+        item.usage_kind == "raw_price" and item.terms.source_id == snapshot.key.source_id
+        for item in lineage
+    ):
+        raise PermissionError("historical price display requires raw-price lineage")
+    public_history = (
+        eligible_history[-MAX_PUBLIC_HISTORY_POINTS:] if include_history else ()
+    )
     snapshot_row = build_trend_snapshot_row(
         snapshot,
         mapping,
@@ -258,6 +376,15 @@ def build_descriptive_candidate(
     support_tier = 2 if status == "published" else 0
     trend_status = "insufficient" if snapshot.trend_state == "insufficient_data" else snapshot.trend_state
     payload: dict[str, object] = {
+        "seriesIdentity": {
+            "sourceId": snapshot.key.source_id,
+            "currency": snapshot.key.currency,
+            "language": snapshot.key.language,
+            "finish": snapshot.key.finish,
+            "conditionClass": snapshot.key.condition_class,
+            "marketCondition": snapshot.key.market_condition,
+            "priceSemantics": snapshot.key.price_semantics,
+        },
         "trend": {
             "return7d": snapshot.return_7d,
             "return30d": snapshot.return_30d,
@@ -279,6 +406,14 @@ def build_descriptive_candidate(
             "observedAt": snapshot.latest_observed_at.isoformat(),
             "quality": snapshot.source_quality_90d,
         }
+    if public_history:
+        payload["history"] = [{
+            "price": item.price,
+            "currency": snapshot.key.currency,
+            "source": source_terms.source_name,
+            "observedAt": item.observed_at.isoformat(),
+            "quality": item.quality,
+        } for item in public_history]
     if "fairValue" in payload or "forecasts" in payload:
         raise ValueError("descriptive candidates cannot contain model outputs")
 
@@ -326,4 +461,3 @@ def build_descriptive_candidate(
         "usage_kind": item.usage_kind,
     } for item in lineage)
     return DescriptiveCandidatePacket(snapshot_row, candidate_row, source_rows)
-

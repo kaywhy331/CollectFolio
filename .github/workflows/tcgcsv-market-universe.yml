@@ -1,0 +1,272 @@
+name: Private TCGCSV market universe
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcgcsv-private-market-universe
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ vars.TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TCGCSV_SOURCE_ID: ${{ vars.TCGCSV_SOURCE_ID }}
+      TCGCSV_TERMS_REVIEW_ID: ${{ vars.TCGCSV_TERMS_REVIEW_ID }}
+      TCGCSV_USER_AGENT: ${{ vars.TCGCSV_USER_AGENT || 'CollectFolio/0.8.2 private-market-research' }}
+      TCGCSV_ARCHIVE_S3_URI: ${{ vars.TCGCSV_ARCHIVE_S3_URI }}
+      TCGCSV_ARCHIVE_S3_ENDPOINT: ${{ vars.TCGCSV_ARCHIVE_S3_ENDPOINT }}
+      TCGCSV_INGEST_DATABASE_URL: ${{ secrets.TCGCSV_INGEST_DATABASE_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.TCGCSV_ARCHIVE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TCGCSV_ARCHIVE_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.TCGCSV_ARCHIVE_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: analytics/pyproject.toml
+      - name: Install private market-universe dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+          python -m pip install -e 'analytics[market-universe]'
+          python -c 'import numpy; assert numpy.__version__ == "2.4.2", numpy.__version__'
+      - name: Validate gated operator configuration
+        run: |
+          : "${TCGCSV_SOURCE_ID:?TCGCSV_SOURCE_ID repository variable is required}"
+          : "${TCGCSV_TERMS_REVIEW_ID:?TCGCSV_TERMS_REVIEW_ID repository variable is required}"
+          : "${TCGCSV_ARCHIVE_S3_URI:?TCGCSV_ARCHIVE_S3_URI repository variable is required}"
+          : "${TCGCSV_INGEST_DATABASE_URL:?TCGCSV_INGEST_DATABASE_URL secret is required}"
+          : "${AWS_ACCESS_KEY_ID:?TCGCSV_ARCHIVE_ACCESS_KEY_ID secret is required}"
+          : "${AWS_SECRET_ACCESS_KEY:?TCGCSV_ARCHIVE_SECRET_ACCESS_KEY secret is required}"
+      - name: Resolve the upstream build once
+        id: source
+        run: |
+          source_updated_at=$(curl --fail --silent --show-error \
+            --header "User-Agent: ${TCGCSV_USER_AGENT}" \
+            https://tcgcsv.com/last-updated.txt)
+          source_updated_at=${source_updated_at%$'\r'}
+          [[ "$source_updated_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{4}|[+-][0-9]{2}:[0-9]{2})$ ]]
+          archive_date=${source_updated_at:0:10}
+          [[ "$archive_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          echo "source_updated_at=$source_updated_at" >> "$GITHUB_OUTPUT"
+          echo "archive_date=$archive_date" >> "$GITHUB_OUTPUT"
+      - name: Restore private normalized history
+        run: |
+          mkdir -p tcgcsv-history
+          s3_args=()
+          if [[ -n "$TCGCSV_ARCHIVE_S3_ENDPOINT" ]]; then
+            s3_args+=(--endpoint-url "$TCGCSV_ARCHIVE_S3_ENDPOINT")
+          fi
+          aws s3 sync "${TCGCSV_ARCHIVE_S3_URI%/}/history" tcgcsv-history \
+            --exclude '*' --include 'archive_date=*/prices.parquet' \
+            --only-show-errors "${s3_args[@]}"
+      - name: Prepare complete archive, Parquet, features, and estimates
+        run: |
+          archive_date='${{ steps.source.outputs.archive_date }}'
+          history_args=()
+          while IFS= read -r -d '' history_file; do
+            history_args+=(--history-parquet "$history_file")
+          done < <(find tcgcsv-history -type f -name prices.parquet \
+            ! -path "*/archive_date=${archive_date}/*" -print0 | sort -z)
+          python -m collectfolio_analytics.tcgcsv_universe_cli prepare-archive \
+            --source-id "$TCGCSV_SOURCE_ID" \
+            --terms-review-id "$TCGCSV_TERMS_REVIEW_ID" \
+            --archive-date "$archive_date" \
+            --source-updated-at '${{ steps.source.outputs.source_updated_at }}' \
+            --user-agent "$TCGCSV_USER_AGENT" \
+            --output-dir .tcgcsv-run \
+            --archive-object-uri "${TCGCSV_ARCHIVE_S3_URI%/}/raw/archive_date=${archive_date}/prices-${archive_date}.ppmd.7z" \
+            --parquet-object-uri "${TCGCSV_ARCHIVE_S3_URI%/}/history/archive_date=${archive_date}/prices.parquet" \
+            --feature-object-uri "${TCGCSV_ARCHIVE_S3_URI%/}/features/archive_date=${archive_date}/market-features.csv" \
+            --set-feature-object-uri "${TCGCSV_ARCHIVE_S3_URI%/}/features/archive_date=${archive_date}/set-features.csv" \
+            "${history_args[@]}"
+      - name: Retain raw and normalized history immutably
+        run: |
+          archive_date='${{ steps.source.outputs.archive_date }}'
+          s3_args=()
+          if [[ -n "$TCGCSV_ARCHIVE_S3_ENDPOINT" ]]; then
+            s3_args+=(--endpoint-url "$TCGCSV_ARCHIVE_S3_ENDPOINT")
+          fi
+          verify_dir=$(mktemp -d)
+          upload_immutable() {
+            local source_path="$1"
+            local object_uri="$2"
+            local verification_path="$3"
+            if aws s3 cp "$object_uri" "$verification_path" --only-show-errors "${s3_args[@]}" 2>/dev/null; then
+              cmp --silent "$source_path" "$verification_path" || {
+                echo "Existing immutable TCGCSV object has different content" >&2
+                return 1
+              }
+            else
+              aws s3 cp "$source_path" "$object_uri" --only-show-errors "${s3_args[@]}"
+            fi
+          }
+          upload_immutable ".tcgcsv-run/prices-${archive_date}.ppmd.7z" \
+            "${TCGCSV_ARCHIVE_S3_URI%/}/raw/archive_date=${archive_date}/prices-${archive_date}.ppmd.7z" \
+            "$verify_dir/archive.7z"
+          upload_immutable .tcgcsv-run/prices.parquet \
+            "${TCGCSV_ARCHIVE_S3_URI%/}/history/archive_date=${archive_date}/prices.parquet" \
+            "$verify_dir/prices.parquet"
+          upload_immutable .tcgcsv-run/market-features.csv \
+            "${TCGCSV_ARCHIVE_S3_URI%/}/features/archive_date=${archive_date}/market-features.csv" \
+            "$verify_dir/market-features.csv"
+          upload_immutable .tcgcsv-run/set-features.csv \
+            "${TCGCSV_ARCHIVE_S3_URI%/}/features/archive_date=${archive_date}/set-features.csv" \
+            "$verify_dir/set-features.csv"
+      - name: Seal current prices and full-market features
+        run: |
+          umask 077
+          python -m collectfolio_analytics.tcgcsv_universe_cli \
+            ingest-archive .tcgcsv-run/archive-packet.json \
+            > .tcgcsv-run/archive-ingest-receipt.json
+      - name: Refresh categories, sets, new cards, and rotating product audit
+        run: |
+          umask 077
+          python -m collectfolio_analytics.tcgcsv_universe_cli \
+            sync-catalog --source-id "$TCGCSV_SOURCE_ID" \
+            --terms-review-id "$TCGCSV_TERMS_REVIEW_ID" \
+            --user-agent "$TCGCSV_USER_AGENT" \
+            --output .tcgcsv-run/catalog-packet.json \
+            --use-database-state --ingest \
+            > .tcgcsv-run/catalog-ingest-receipt.json
+      - name: Export point-in-time catalog snapshot
+        run: |
+          umask 077
+          python -m collectfolio_analytics.tcgcsv_universe_cli \
+            export-catalog-snapshot --source-id "$TCGCSV_SOURCE_ID" \
+            --output .tcgcsv-run/catalog-snapshot.json \
+            > .tcgcsv-run/catalog-snapshot-receipt.json
+      - name: Retain immutable run and catalog receipts
+        run: |
+          archive_date='${{ steps.source.outputs.archive_date }}'
+          s3_args=()
+          if [[ -n "$TCGCSV_ARCHIVE_S3_ENDPOINT" ]]; then
+            s3_args+=(--endpoint-url "$TCGCSV_ARCHIVE_S3_ENDPOINT")
+          fi
+          verify_dir=$(mktemp -d)
+          upload_immutable() {
+            local source_path="$1"
+            local object_uri="$2"
+            local verification_path="$3"
+            if aws s3 cp "$object_uri" "$verification_path" --only-show-errors "${s3_args[@]}" 2>/dev/null; then
+              cmp --silent "$source_path" "$verification_path" || {
+                echo "Existing immutable TCGCSV receipt has different content" >&2
+                return 1
+              }
+            else
+              aws s3 cp "$source_path" "$object_uri" --only-show-errors "${s3_args[@]}"
+              aws s3 cp "$object_uri" "$verification_path" --only-show-errors "${s3_args[@]}"
+              cmp --silent "$source_path" "$verification_path"
+            fi
+          }
+          archive_packet_sha=$(sha256sum .tcgcsv-run/archive-packet.json | cut -d ' ' -f 1)
+          catalog_packet_sha=$(sha256sum .tcgcsv-run/catalog-packet.json | cut -d ' ' -f 1)
+          snapshot_sha=$(jq -r '.catalogSnapshotContentSha256' .tcgcsv-run/catalog-snapshot.json)
+          [[ "$archive_packet_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$catalog_packet_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$snapshot_sha" =~ ^[0-9a-f]{64}$ ]]
+          receipt_root="${TCGCSV_ARCHIVE_S3_URI%/}/receipts/archive_date=${archive_date}"
+          upload_immutable .tcgcsv-run/archive-packet.json \
+            "${receipt_root}/archive-packet-${archive_packet_sha}.json" \
+            "$verify_dir/archive-packet.json"
+          upload_immutable .tcgcsv-run/archive-ingest-receipt.json \
+            "${receipt_root}/archive-ingest-${archive_packet_sha}.json" \
+            "$verify_dir/archive-ingest.json"
+          upload_immutable .tcgcsv-run/catalog-packet.json \
+            "${receipt_root}/catalog-packet-${catalog_packet_sha}.json" \
+            "$verify_dir/catalog-packet.json"
+          upload_immutable .tcgcsv-run/catalog-ingest-receipt.json \
+            "${receipt_root}/catalog-ingest-${catalog_packet_sha}.json" \
+            "$verify_dir/catalog-ingest.json"
+          upload_immutable .tcgcsv-run/catalog-snapshot.json \
+            "${TCGCSV_ARCHIVE_S3_URI%/}/catalog-snapshots/snapshot_sha256=${snapshot_sha}.json" \
+            "$verify_dir/catalog-snapshot.json"
+          upload_immutable .tcgcsv-run/catalog-snapshot-receipt.json \
+            "${receipt_root}/catalog-snapshot-${snapshot_sha}.json" \
+            "$verify_dir/catalog-snapshot-receipt.json"
+      - name: Compile private weekly Structural Gap Lab packet
+        id: structural_gap
+        if: ${{ vars.TCGCSV_STRUCTURAL_GAP_LAB_ENABLED == 'true' }}
+        run: |
+          umask 077
+          echo "ran=false" >> "$GITHUB_OUTPUT"
+          origin_at=$(jq -r '.catalogAvailableAt' .tcgcsv-run/catalog-snapshot.json)
+          [[ "$origin_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]
+          origin_date=${origin_at:0:10}
+          [[ "$origin_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          echo "origin_date=$origin_date" >> "$GITHUB_OUTPUT"
+          if [[ "$(date -u -d "$origin_date" +%u)" != "7" ]]; then
+            echo "Structural Gap Lab runs only on the Sunday evidence origin"
+            exit 0
+          fi
+          s3_args=()
+          if [[ -n "$TCGCSV_ARCHIVE_S3_ENDPOINT" ]]; then
+            s3_args+=(--endpoint-url "$TCGCSV_ARCHIVE_S3_ENDPOINT")
+          fi
+          mkdir -p .tcgcsv-prior-structural
+          aws s3 sync "${TCGCSV_ARCHIVE_S3_URI%/}/structural-gap" .tcgcsv-prior-structural \
+            --exclude '*' --include 'origin_date=*/structural-gap.json' \
+            --only-show-errors "${s3_args[@]}"
+          prior_args=()
+          while IFS= read -r -d '' prior_packet; do
+            prior_args+=(--prior-packet "$prior_packet")
+          done < <(find .tcgcsv-prior-structural -type f -name structural-gap.json \
+            ! -path "*/origin_date=${origin_date}/*" -print0 | sort -z)
+          python -m collectfolio_analytics.structural_gap_cli \
+            --features .tcgcsv-run/market-features.csv \
+            --archive-packet .tcgcsv-run/archive-packet.json \
+            --catalog-snapshot .tcgcsv-run/catalog-snapshot.json \
+            --output .tcgcsv-run/structural-gap.json \
+            "${prior_args[@]}" \
+            > .tcgcsv-run/structural-gap-receipt.json
+          echo "ran=true" >> "$GITHUB_OUTPUT"
+      - name: Retain immutable Structural Gap Lab evidence
+        if: ${{ steps.structural_gap.outputs.ran == 'true' }}
+        run: |
+          origin_date='${{ steps.structural_gap.outputs.origin_date }}'
+          s3_args=()
+          if [[ -n "$TCGCSV_ARCHIVE_S3_ENDPOINT" ]]; then
+            s3_args+=(--endpoint-url "$TCGCSV_ARCHIVE_S3_ENDPOINT")
+          fi
+          object_uri="${TCGCSV_ARCHIVE_S3_URI%/}/structural-gap/origin_date=${origin_date}/structural-gap.json"
+          receipt_uri="${TCGCSV_ARCHIVE_S3_URI%/}/structural-gap/origin_date=${origin_date}/receipt.json"
+          verify_dir=$(mktemp -d)
+          upload_immutable() {
+            local source_path="$1"
+            local target_uri="$2"
+            local verification_path="$3"
+            if aws s3 cp "$target_uri" "$verification_path" --only-show-errors "${s3_args[@]}" 2>/dev/null; then
+              cmp --silent "$source_path" "$verification_path" || {
+                echo "Existing immutable Structural Gap Lab origin has different content" >&2
+                return 1
+              }
+            else
+              aws s3 cp "$source_path" "$target_uri" --only-show-errors "${s3_args[@]}"
+              aws s3 cp "$target_uri" "$verification_path" --only-show-errors "${s3_args[@]}"
+              cmp --silent "$source_path" "$verification_path"
+            fi
+          }
+          upload_immutable .tcgcsv-run/structural-gap.json "$object_uri" "$verify_dir/structural-gap.json"
+          upload_immutable .tcgcsv-run/structural-gap-receipt.json "$receipt_uri" "$verify_dir/receipt.json"
+      - name: Upload private run receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcgcsv-market-universe-${{ github.run_id }}
+          path: |
+            .tcgcsv-run/archive-ingest-receipt.json
+            .tcgcsv-run/catalog-ingest-receipt.json
+            .tcgcsv-run/catalog-snapshot-receipt.json
+            .tcgcsv-run/structural-gap-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

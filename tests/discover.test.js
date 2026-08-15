@@ -12,6 +12,27 @@ const item = {
   currency: 'USD', priceSource: 'Scryfall', priceUpdatedAt: '2026-08-09T00:00:00.000Z'
 };
 
+const forecastVariantId = '123e4567-e89b-42d3-a456-426614174000';
+const forecastPublication = {
+  variantId: forecastVariantId,
+  supportTier: 4,
+  publishedAt: '2026-08-14T00:00:00.000Z',
+  seriesIdentity: {
+    sourceId: 'licensed', currency: 'USD', language: 'en', finish: 'foil',
+    conditionClass: 'raw', marketCondition: 'near-mint', priceSemantics: 'market'
+  },
+  payload: {
+    observed: { price: 125, currency: 'USD', source: 'Licensed', observedAt: '2026-08-14T00:00:00.000Z' },
+    trend: { return30d: 0.08, status: 'rise', volatility: 0.03, confidence: 80, historyDensity: 0.9 },
+    forecasts: {
+      30: { q10: 110, q25: 120, q50: 130, q75: 140, q90: 150, probabilityUp: 0.6 },
+      90: { q10: 100, q25: 120, q50: 140, q75: 160, q90: 180, probabilityUp: 0.62 },
+      180: { q10: 90, q25: 120, q50: 150, q75: 180, q90: 210, probabilityUp: 0.64 },
+      365: { q10: 80, q25: 120, q50: 165, q75: 210, q90: 260, probabilityUp: 0.65 }
+    }
+  }
+};
+
 function state(overrides = {}) {
   return {
     holdings: [], watchlistItems: [], alerts: [], scanDraftCount: 0,
@@ -45,6 +66,33 @@ test('Discover adapts filters and keeps provider choice under Data source', () =
   assert.match(sports, /Grade/);
   assert.match(sports, /<summary>Data source<\/summary>/);
   assert.match(sports, /Create custom item/);
+});
+
+test('Discover shows approved 30-day trend and 1/3/6/12-month estimates on results', () => {
+  const forecastItem = {
+    ...item,
+    canonicalVariantId: forecastVariantId,
+    conditionClass: 'raw',
+    marketCondition: 'near-mint',
+    type: 'Artifact'
+  };
+  const html = renderSearch(state({
+    featureFlags: { watchlists: true, publicPriceIntelligence: true },
+    intelligence: { byVariant: { [forecastVariantId]: forecastPublication }, loading: false, error: '' },
+    search: {
+      query: 'Lotus', category: 'magic', provider: 'all', filters: {},
+      view: 'gallery', loading: false, warnings: [], results: [forecastItem]
+    }
+  }));
+  assert.match(html, /Synthetic Alpha · #001 · Artifact · foil · Rare/);
+  assert.match(html, /30D trend/);
+  assert.match(html, /\+8\.0%/);
+  assert.match(html, /1 mo est\./);
+  assert.match(html, /3 mo est\./);
+  assert.match(html, /6 mo est\./);
+  assert.match(html, /1 year est\./);
+  assert.match(html, /\$130\.00/);
+  assert.match(html, /\$165\.00/);
 });
 
 test('Quick Inspector shows exact identity and truthful unavailable states with all required actions', () => {

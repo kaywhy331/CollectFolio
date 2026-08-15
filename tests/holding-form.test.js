@@ -20,6 +20,8 @@ test('catalog add form carries exact printing metadata and asks only for ownersh
   assert.match(html, /type="hidden" name="setName" value="Commander Masters"/);
   assert.match(html, /name="quantity"[^>]*value="1"/);
   assert.match(html, /Near Mint/);
+  assert.match(html, /Marketplace condition/);
+  assert.match(html, /will not infer it from your collection condition/);
   assert.match(html, /Purchase price per item/);
   assert.match(html, /Purchase currency/);
   assert.match(html, /Manual-value currency/);
@@ -30,7 +32,7 @@ test('catalog add form carries exact printing metadata and asks only for ownersh
 
 test('advanced holding fields use progressive disclosure and preserve saved values', () => {
   const html = renderHoldingForm({
-    item: catalogItem, quantity: 2, condition: 'Graded', purchasePrice: 6,
+    item: catalogItem, quantity: 2, condition: 'Graded', marketCondition: 'lightly-played', purchasePrice: 6,
     purchaseDate: '2026-08-01', fees: 1.5, folder: 'Vault', gradeCompany: 'PSA',
     grade: '10', manualMarketPrice: 12, purchaseCurrency: 'EUR', manualMarketCurrency: 'GBP', notes: 'Centered copy', userImage: ''
   }, { currency: 'CAD' });
@@ -44,6 +46,7 @@ test('advanced holding fields use progressive disclosure and preserve saved valu
   assert.match(html, /<option value="EUR" selected>EUR<\/option>/);
   assert.match(html, /<option value="GBP" selected>GBP<\/option>/);
   assert.match(html, /Centered copy/);
+  assert.match(html, /<option value="lightly-played" selected>Lightly Played<\/option>/);
   assert.equal((html.match(/<details class="form-disclosure" open>/g) || []).length, 2);
 });
 

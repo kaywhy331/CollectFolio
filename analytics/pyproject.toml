@@ -5,6 +5,16 @@ description = "Rights-gated, point-in-time analytics primitives for CollectFolio
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+market-universe = [
+  "duckdb>=1.2,<2",
+  "numpy==2.4.2",
+  "psycopg[binary]>=3.2,<4",
+]
+
+[project.scripts]
+collectfolio-tcgcsv-universe = "collectfolio_analytics.tcgcsv_universe_cli:main"
+collectfolio-structural-gap-lab = "collectfolio_analytics.structural_gap_cli:main"
+
 [tool.collectfolio]
 publication-mode = "research-only"
-

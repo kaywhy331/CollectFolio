@@ -15,8 +15,9 @@ GENERATED_AT = datetime(2026, 8, 5, 23, 30, tzinfo=UTC)
 SOURCE_ID = "f24c78f8-d4b9-55a3-a8f7-b05d484c052e"
 TERMS_ID = "3bc792cf-ad71-54d1-a2f6-d5d5d521fba5"
 VARIANT_ID = "80b4934a-96db-5f4c-8641-f7c74e0eb949"
+MARKET_SERIES_ID = "22222222-2222-4222-8222-222222222222"
 KEY = PriceSeriesKey(
-    VARIANT_ID, SOURCE_ID, "USD", "holofoil", "raw", "tcgplayer_market"
+    VARIANT_ID, SOURCE_ID, "USD", "holofoil", "raw", "tcgplayer_market", "en", "provider-aggregate"
 )
 
 
@@ -81,6 +82,7 @@ def hosted_rows(count=40, *, include_outlier=False):
             "reason_codes": [],
             "currency": "USD",
             "price_semantics": "tcgplayer_market",
+            "market_series_id": MARKET_SERIES_ID,
         })
     if include_outlier:
         observed = start + timedelta(days=7 * 10, hours=1)
@@ -95,6 +97,7 @@ def hosted_rows(count=40, *, include_outlier=False):
             "reason_codes": ["robust_price_outlier"],
             "currency": "USD",
             "price_semantics": "tcgplayer_market",
+            "market_series_id": MARKET_SERIES_ID,
         })
     return rows
 
@@ -134,6 +137,7 @@ class RetrospectiveWalkForwardTests(unittest.TestCase):
             row["promotion_recommendation"]
             in {"insufficient", "reject", "eligible_for_operator_review"}
             and "operator_model_review_required" in row["reason_codes"]
+            and row["evidence_mode"] == "retrospective"
             for row in packet["scorecardRows"]
         ))
         unscorable = [

@@ -4,6 +4,7 @@ import { hashSimilarity } from './image-algorithms.js';
 const INDEX_ROOT = '/assets/data/visual-index/pokemon-v1';
 const INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_SCAN_RESULTS = 24;
+const SHARD_CONCURRENCY = 4;
 
 function normalizeEntry(entry) {
   if (!Array.isArray(entry)) return entry;
@@ -41,6 +42,34 @@ function scoreEntry(entry, cropHash) {
   return entry.hash ? { entry, score: hashSimilarity(cropHash, entry.hash) } : null;
 }
 
+async function scanShards(shards, loadShard, cropHash, {
+  minimumScore, maximumResults, onProgress = () => {}
+}) {
+  const best = [];
+  let nextIndex = 0;
+  let completed = 0;
+  const worker = async () => {
+    while (nextIndex < shards.length) {
+      const shard = shards[nextIndex++];
+      const entries = await loadShard(shard);
+      for (const entry of entries) {
+        const result = scoreEntry(entry, cropHash);
+        if (!result || result.score < minimumScore) continue;
+        best.push(result);
+        best.sort((left, right) => right.score - left.score || left.entry.id.localeCompare(right.entry.id));
+        if (best.length > maximumResults) best.length = maximumResults;
+      }
+      completed++;
+      onProgress({ completed, total: shards.length, candidates: best.length });
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(SHARD_CONCURRENCY, shards.length) },
+    () => worker()
+  ));
+  return best;
+}
+
 export async function discoverVisualCandidates(cropSource, {
   onProgress = () => {}, minimumScore = 0.72, maximumResults = MAX_SCAN_RESULTS
 } = {}) {
@@ -50,19 +79,12 @@ export async function discoverVisualCandidates(cropSource, {
     throw new Error('The visual candidate index format is not supported.');
   }
   if (!manifest.fingerprintCount) return [];
-  const best = [];
-  for (let shardIndex = 0; shardIndex < manifest.shards.length; shardIndex++) {
-    const shard = manifest.shards[shardIndex];
-    const entries = await fetchIndex(`${INDEX_ROOT}/${shard.name}.json`);
-    const scored = entries.map((entry) => scoreEntry(entry, cropHash));
-    for (const result of scored) {
-      if (!result || result.score < minimumScore) continue;
-      best.push(result);
-      best.sort((left, right) => right.score - left.score || left.entry.id.localeCompare(right.entry.id));
-      if (best.length > maximumResults) best.length = maximumResults;
-    }
-    onProgress({ completed: shardIndex + 1, total: manifest.shards.length, candidates: best.length });
-  }
+  const best = await scanShards(
+    manifest.shards,
+    (shard) => fetchIndex(`${INDEX_ROOT}/${shard.name}.json`),
+    cropHash,
+    { minimumScore, maximumResults, onProgress }
+  );
   return best.map(({ entry, score }) => ({ ...candidate(entry), visualScore: score, matchScore: score }));
 }
 
@@ -74,16 +96,11 @@ export async function visualCandidatesFromHash(cropHash, {
   if (index?.format !== 'collectfolio-visual-candidate-index' || index.version !== 1 || !Array.isArray(index.shards)) {
     throw new Error('The visual candidate index format is not supported.');
   }
-  const best = [];
-  for (const shard of index.shards) {
-    const entries = loadShard ? await loadShard(shard.name) : await fetchIndex(`${INDEX_ROOT}/${shard.name}.json`);
-    for (const entry of entries) {
-      const scored = scoreEntry(entry, cropHash);
-      if (!scored || scored.score < minimumScore) continue;
-      best.push(scored);
-      best.sort((left, right) => right.score - left.score || left.entry.id.localeCompare(right.entry.id));
-      if (best.length > maximumResults) best.length = maximumResults;
-    }
-  }
+  const best = await scanShards(
+    index.shards,
+    (shard) => loadShard ? loadShard(shard.name) : fetchIndex(`${INDEX_ROOT}/${shard.name}.json`),
+    cropHash,
+    { minimumScore, maximumResults }
+  );
   return best.map(({ entry, score }) => ({ ...candidate(entry), visualScore: score, matchScore: score }));
 }

@@ -1,4 +1,5 @@
 import { createId } from '../core/utils.js';
+import { canonicalRawMarketCondition } from '../core/market-series.js';
 import { deleteRecords, getAll, putRecord, saveHolding } from '../core/db.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { matchBucketFor } from '../core/view-models.js';
@@ -8,7 +9,7 @@ import { recordDemandEvent } from './demand-events.js';
 import { discoverVisualCandidates } from './visual-index.js';
 
 export const ACQUISITION_FIELDS = Object.freeze([
-  'quantity', 'condition', 'gradeCompany', 'grade', 'purchasePrice', 'purchaseCurrency', 'fees',
+  'quantity', 'condition', 'marketCondition', 'gradeCompany', 'grade', 'purchasePrice', 'purchaseCurrency', 'fees',
   'purchaseDate', 'seller', 'folder', 'manualMarketPrice', 'manualMarketCurrency', 'notes'
 ]);
 export const COMPLETED_SCAN_RETENTION_DAYS = 30;
@@ -64,6 +65,7 @@ export function normalizeAcquisition(value = {}) {
   return {
     quantity: Math.max(1, Math.trunc(Number(value.quantity) || 1)),
     condition: text(value.condition || 'Near Mint', 80),
+    marketCondition: canonicalRawMarketCondition(value.marketCondition),
     gradeCompany: text(value.gradeCompany, 40),
     grade: text(value.grade, 20),
     purchasePrice: moneyOrBlank(value.purchasePrice),

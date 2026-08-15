@@ -6,7 +6,8 @@ const variantId = '123e4567-e89b-42d3-a456-426614174000';
 const baseEntry = {
   watchKey: `variant:${variantId}`,
   canonicalVariantId: variantId,
-  catalogRef: { name: 'Pikachu ex' },
+  catalogRef: { name: 'Pikachu ex', language: 'en', finish: 'holofoil', conditionClass: 'raw', currency: 'USD' },
+  marketCondition: 'near-mint',
   targetPrice: 95,
   targetCurrency: 'USD',
   alertPercentChange: 10,
@@ -18,6 +19,7 @@ const baseEntry = {
 function publication(price = 100, trend = 'stable', position = 'within_range', median = 110, currency = 'USD') {
   return {
     variantId,
+    seriesIdentity: { sourceId: 'approved', currency, language: 'en', finish: 'holofoil', conditionClass: 'raw', marketCondition: 'near-mint', priceSemantics: 'market' },
     supportTier: 4,
     publishedAt: `2026-08-05T${price}:00:00Z`,
     payload: {
@@ -45,15 +47,15 @@ test('target alerts do not compare unlike currencies', () => {
   assert.equal(result.baseline.currency, 'USD');
 });
 
-test('publication currency changes refresh the baseline without mixing percent changes', () => {
+test('publication currency mismatches leave the exact-series baseline unchanged', () => {
   const original = evaluateWatchlistItemAlerts(baseEntry, publication(100), '2026-08-05T00:00:00Z');
   const corrected = evaluateWatchlistItemAlerts(
     { ...baseEntry, intelligenceBaseline: original.baseline },
     publication(90, 'stable', 'within_range', 110, 'CAD'),
     '2026-08-06T00:00:00Z'
   );
-  assert.equal(corrected.baseline.currency, 'CAD');
-  assert.notEqual(corrected.baseline.fingerprint, original.baseline.fingerprint);
+  assert.equal(corrected.baseline, original.baseline);
+  assert.equal(corrected.baseline.currency, 'USD');
   assert.deepEqual(corrected.alerts, []);
 });
 

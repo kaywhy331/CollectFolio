@@ -29,8 +29,21 @@ export async function fetchPublicFeatureFlags() {
 
 export function normalizeIntelligencePublication(row = {}) {
   const payload = row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : {};
+  const payloadSeries = payload.seriesIdentity && typeof payload.seriesIdentity === 'object'
+    ? payload.seriesIdentity
+    : {};
   return {
     variantId: row.catalog_variant_id || '',
+    publicationId: row.id || row.catalog_variant_id || '',
+    seriesIdentity: {
+      sourceId: row.market_source_id || payloadSeries.sourceId || '',
+      currency: row.market_currency || payloadSeries.currency || '',
+      language: row.market_language || payloadSeries.language || '',
+      finish: row.market_finish || payloadSeries.finish || '',
+      conditionClass: row.condition_class || payloadSeries.conditionClass || '',
+      marketCondition: row.market_condition || payloadSeries.marketCondition || '',
+      priceSemantics: row.price_semantics || payloadSeries.priceSemantics || ''
+    },
     supportTier: Math.max(0, Math.min(5, Number(row.support_tier) || 0)),
     status: row.publication_status || 'unsupported',
     reasonCodes: Array.isArray(row.reason_codes) ? row.reason_codes.map(String) : [],
@@ -363,6 +376,7 @@ export function remoteWatchlistItem(row) {
     watchKey: row.watch_key,
     canonicalVariantId: row.catalog_variant_id || catalogRef.canonicalVariantId || '',
     catalogRef,
+    marketCondition: row.market_condition || catalogRef.marketCondition || '',
     targetPrice: row.target_price === null || row.target_price === undefined ? '' : Number(row.target_price),
     targetCurrency: String(catalogRef.targetCurrency || catalogRef.currency || 'USD').toUpperCase(),
     alertPercentChange: row.alert_percent_change === null || row.alert_percent_change === undefined ? '' : Number(row.alert_percent_change),
@@ -382,6 +396,7 @@ export function watchlistRow(entry, userId, watchlistId) {
     user_id: userId,
     watch_key: entry.watchKey,
     catalog_variant_id: isUUID(entry.canonicalVariantId) ? entry.canonicalVariantId : null,
+    market_condition: entry.marketCondition || null,
     catalog_snapshot: { ...(entry.catalogRef || {}), targetCurrency: entry.targetCurrency || entry.catalogRef?.currency || 'USD' },
     target_price: entry.targetPrice === '' || entry.targetPrice === null || entry.targetPrice === undefined ? null : Number(entry.targetPrice),
     alert_percent_change: entry.alertPercentChange === '' || entry.alertPercentChange === null || entry.alertPercentChange === undefined ? null : Number(entry.alertPercentChange),
@@ -455,7 +470,7 @@ export async function syncWatchlist() {
   const [localItems, localTombstones, remoteRows, remoteDeletionRows] = await Promise.all([
     getAll('watchlistItems'),
     getAll('watchlistDeletions'),
-    requestAllPages(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc`, { session }),
+    requestAllPages(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,catalog_variant_id,market_condition,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc`, { session }),
     requestAllPages(`/rest/v1/watchlist_deletions?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,deleted_at&order=watch_key.asc`, { session })
   ]);
 

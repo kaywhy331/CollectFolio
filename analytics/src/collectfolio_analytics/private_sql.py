@@ -8,13 +8,20 @@ from uuid import UUID
 
 
 TABLE_COLUMNS = {
+    "market_series": (
+        "id", "catalog_variant_id", "source_id", "mapping_id",
+        "provider_product_id", "provider_variant_key", "mapping_version",
+        "currency", "language", "finish", "condition_class",
+        "market_condition", "price_semantics", "identity_hash",
+    ),
     "source_ingestion_runs": (
         "id", "source_id", "terms_review_id", "started_at", "completed_at",
         "status", "records_read", "records_written", "records_quarantined",
         "raw_payload_hash", "parser_version", "code_commit", "error_summary", "metadata",
     ),
     "price_observations": (
-        "ingestion_run_id", "source_id", "terms_review_id", "mapping_id", "variant_id",
+        "id", "ingestion_run_id", "source_id", "terms_review_id", "mapping_id", "variant_id",
+        "market_series_id",
         "external_record_id", "price_semantics", "currency", "market_price", "observed_at",
         "available_at", "ingested_at", "quality_score", "observation_status", "reason_codes",
         "source_record_hash", "metadata",
@@ -34,7 +41,7 @@ TABLE_COLUMNS = {
     ),
     "trend_feature_snapshots": (
         "id", "analytics_run_id", "variant_id", "source_id", "terms_review_id",
-        "feature_cutoff", "price_current", "return_7d", "return_30d", "return_90d",
+        "market_series_id", "feature_cutoff", "price_current", "return_7d", "return_30d", "return_90d",
         "return_180d", "return_365d", "robust_slope_30d", "robust_slope_90d",
         "momentum_acceleration", "volatility_30d", "volatility_90d",
         "max_drawdown_180d", "history_density_90d", "staleness_hours",
@@ -49,7 +56,8 @@ TABLE_COLUMNS = {
     ),
     "card_forecast_predictions": (
         "analytics_run_id", "model_version_id", "trend_snapshot_id", "variant_id",
-        "source_id", "terms_review_id", "origin", "feature_cutoff", "horizon_days",
+        "source_id", "terms_review_id", "market_series_id", "evidence_mode",
+        "origin", "feature_cutoff", "horizon_days",
         "matures_at", "currency", "current_price", "q10", "q25", "q50", "q75", "q90",
         "probability_up", "confidence", "prediction_status", "reason_codes", "dataset_hash",
         "feature_version", "mapping_version", "code_version", "prediction_hash",
@@ -158,6 +166,9 @@ def build_private_evidence_sql(
             raise PermissionError("prediction row omitted the operator review gate")
 
     history_rows = _rows(observations.get("databaseRows"), "observations.databaseRows")
+    market_series_rows = _rows(
+        observations.get("marketSeriesRows"), "observations.marketSeriesRows"
+    )
     quality_rows = _rows(observations.get("qualityEvents"), "observations.qualityEvents")
     analytics_rows = _rows(analytics.get("runRows"), "analytics.runRows")
     source_rows = _rows(analytics.get("runSourceRows"), "analytics.runSourceRows")
@@ -169,6 +180,12 @@ def build_private_evidence_sql(
     ingestion_run_id = _uuid(ingestion.get("id"), "ingestion run id")
     trend_snapshot_id = _uuid(trend_row.get("id"), "trend snapshot id")
     model_version_id = _uuid(model.get("id"), "model version id")
+    market_series_ids = tuple(
+        _uuid(row.get("id"), "market series id") for row in market_series_rows
+    )
+    if len(market_series_ids) != 1:
+        raise ValueError("private qualification requires exactly one market series")
+    market_series_id = market_series_ids[0]
     analytics_run_ids = tuple(
         _uuid(row.get("id"), "analytics run id") for row in analytics_rows
     )
@@ -186,6 +203,14 @@ def build_private_evidence_sql(
         raise ValueError("historical observation source IDs are inconsistent")
     if any(row.get("variant_id") != variant_id for row in history_rows):
         raise ValueError("historical observation variant IDs are inconsistent")
+    if any(_uuid(row.get("market_series_id"), "observation market series") != market_series_id for row in history_rows):
+        raise ValueError("historical observations do not share the exact market series")
+    if _uuid(trend_row.get("market_series_id"), "trend market series") != market_series_id:
+        raise ValueError("trend snapshot does not share the exact market series")
+    if any(_uuid(row.get("market_series_id"), "prediction market series") != market_series_id for row in prediction_rows):
+        raise ValueError("predictions do not share the exact market series")
+    if any(row.get("evidence_mode") != "retrospective" for row in prediction_rows):
+        raise ValueError("historical qualification predictions must be retrospective")
 
     model_key = str(model.get("model_key"))
     model_version = str(model.get("version"))
@@ -221,6 +246,7 @@ begin
   end if;
   if exists (select 1 from public.source_ingestion_runs where id = {_literal(ingestion_run_id)}::uuid)
      or exists (select 1 from public.analytics_runs where id in ({_uuid_list(analytics_run_ids)}))
+     or exists (select 1 from public.market_series where id = {_literal(market_series_id)}::uuid)
      or exists (select 1 from public.trend_feature_snapshots where id = {_literal(trend_snapshot_id)}::uuid)
      or exists (
        select 1 from public.model_versions
@@ -234,6 +260,7 @@ $collectfolio_guard$;"""
 
     inserts = (
         _insert_statement("source_ingestion_runs", (ingestion,)),
+        _insert_statement("market_series", market_series_rows),
         _insert_statement("price_observations", history_rows),
         _insert_statement("data_quality_events", quality_rows),
         _insert_statement("analytics_runs", analytics_rows),
@@ -247,6 +274,9 @@ $collectfolio_guard$;"""
 begin
   if (select count(*) from public.price_observations where ingestion_run_id = {_literal(ingestion_run_id)}::uuid) <> {len(history_rows)} then
     raise exception 'historical observation count mismatch';
+  end if;
+  if (select count(*) from public.market_series where id = {_literal(market_series_id)}::uuid) <> 1 then
+    raise exception 'market-series count mismatch';
   end if;
   if (select count(*) from public.card_forecast_predictions where analytics_run_id = {_literal(forecast_run_id)}::uuid) <> {len(prediction_rows)} then
     raise exception 'forecast prediction count mismatch';

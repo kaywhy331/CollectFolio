@@ -1,3 +1,5 @@
+import { marketSeriesIdentity } from './market-series.js';
+
 export const FORECAST_HORIZONS = Object.freeze([7, 30, 90, 180, 365]);
 const HORIZONS = new Set(FORECAST_HORIZONS);
 const TREND_STATUSES = new Set(['strong_rise', 'rise', 'stable', 'fall', 'strong_fall', 'insufficient']);
@@ -25,6 +27,8 @@ function orderedPrices(input = {}) {
 export function normalizeIntelligencePayload(publication = {}) {
   const supportTier = Math.max(0, Math.min(5, Number(publication.supportTier) || 0));
   const input = publication.payload && typeof publication.payload === 'object' ? publication.payload : {};
+  const seriesInput = publication.seriesIdentity || input.seriesIdentity || {};
+  const seriesIdentity = marketSeriesIdentity(seriesInput);
   const observedInput = input.observed || {};
   const observedPrice = nonNegative(observedInput.price);
   const currency = text(observedInput.currency || 'USD', 3).toUpperCase();
@@ -115,6 +119,7 @@ export function normalizeIntelligencePayload(publication = {}) {
 
   return {
     variantId: publication.variantId || '',
+    seriesIdentity,
     supportTier,
     observed: supportTier >= 1 ? observed : null,
     history: supportTier >= 2 ? history : [],

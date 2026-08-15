@@ -33,7 +33,7 @@ TABLE_COLUMNS = {
     ),
     "trend_feature_snapshots": (
         "id", "analytics_run_id", "variant_id", "source_id", "terms_review_id",
-        "feature_cutoff", "price_current", "return_7d", "return_30d", "return_90d",
+        "market_series_id", "feature_cutoff", "price_current", "return_7d", "return_30d", "return_90d",
         "return_180d", "return_365d", "robust_slope_30d", "robust_slope_90d",
         "momentum_acceleration", "volatility_30d", "volatility_90d",
         "max_drawdown_180d", "history_density_90d", "staleness_hours",
@@ -42,7 +42,8 @@ TABLE_COLUMNS = {
     ),
     "card_forecast_predictions": (
         "id", "analytics_run_id", "model_version_id", "trend_snapshot_id", "variant_id",
-        "source_id", "terms_review_id", "origin", "feature_cutoff", "horizon_days",
+        "source_id", "terms_review_id", "market_series_id", "evidence_mode",
+        "origin", "feature_cutoff", "horizon_days",
         "matures_at", "currency", "current_price", "q10", "q25", "q50", "q75",
         "q90", "probability_up", "confidence", "prediction_status", "reason_codes",
         "dataset_hash", "feature_version", "mapping_version", "code_version",
@@ -53,7 +54,10 @@ TABLE_COLUMNS = {
         "evaluation_status", "unscorable_reason", "target_window_start",
         "target_window_end", "realized_price", "exact_date_price", "observation_count", "absolute_log_error",
         "absolute_percentage_error", "direction_correct", "brier_component",
-        "pinball_losses", "evaluation_hash",
+        "pinball_losses", "evaluation_hash", "evidence_mode",
+    ),
+    "forecast_evaluation_observations": (
+        "evaluation_id", "observation_id",
     ),
     "model_scorecards": (
         "id", "analytics_run_id", "model_version_id", "horizon_days", "cohort_key",
@@ -168,6 +172,60 @@ def _insert_statement(table: str, rows: Sequence[Mapping[str, object]]) -> str:
     )
 
 
+def _json_object_literal(value: Mapping[str, object]) -> str:
+    payload = _canonical_json(value)
+    tag = "$collectfolio_evaluation_rpc_json$"
+    if tag in payload:
+        raise ValueError("evaluation RPC JSON contains the reserved SQL delimiter")
+    return f"{tag}{payload}{tag}::jsonb"
+
+
+def _evaluation_rpc_statements(
+    rows: Sequence[Mapping[str, object]],
+) -> str:
+    allowed = ("id", "analytics_run_id", "prediction_id", "evaluated_at")
+    statements: list[str] = []
+    for row in rows:
+        request = {name: row[name] for name in allowed}
+        function = (
+            "record_scored_forecast_evaluation"
+            if row.get("evaluation_status") == "scored"
+            else "record_unscorable_forecast_evaluation"
+        )
+        statements.append(
+            f"select public.{function}({_json_object_literal(request)});"
+        )
+    return "\n".join(statements)
+
+
+def _membership_mismatch_condition(
+    evaluation_rows: Sequence[Mapping[str, object]],
+    membership_rows: Sequence[Mapping[str, object]],
+) -> str:
+    expected: dict[str, list[str]] = {
+        _uuid(row.get("id"), "evaluation id"): [] for row in evaluation_rows
+    }
+    for row in membership_rows:
+        evaluation_id = _uuid(row.get("evaluation_id"), "membership evaluation id")
+        expected[evaluation_id].append(
+            _uuid(row.get("observation_id"), "membership observation id")
+        )
+    conditions: list[str] = []
+    for evaluation_id in sorted(expected):
+        observation_ids = sorted(expected[evaluation_id])
+        expected_array = (
+            f"array[{_uuid_list(observation_ids)}]"
+            if observation_ids else "array[]::uuid[]"
+        )
+        conditions.append(
+            "(select coalesce(array_agg(observation_id order by observation_id), "
+            "array[]::uuid[]) from public.forecast_evaluation_observations "
+            f"where evaluation_id = {_literal(evaluation_id)}::uuid) "
+            f"is distinct from {expected_array}"
+        )
+    return "\n     or ".join(conditions) or "false"
+
+
 def _ids(rows: Sequence[Mapping[str, object]], name: str) -> tuple[str, ...]:
     values = tuple(_uuid(row.get("id"), f"{name} id") for row in rows)
     if len(set(values)) != len(values):
@@ -209,6 +267,11 @@ def build_walk_forward_evidence_sql(
     trend_rows = _rows(root.get("trendSnapshotRows"), "trendSnapshotRows")
     prediction_rows = _rows(root.get("predictionRows"), "predictionRows")
     evaluation_rows = _rows(root.get("evaluationRows"), "evaluationRows")
+    target_membership_rows = _rows(
+        root.get("evaluationObservationRows", []),
+        "evaluationObservationRows",
+        required=False,
+    )
     scorecard_rows = _rows(root.get("scorecardRows"), "scorecardRows")
     membership_rows = _rows(
         root.get("scorecardEvaluationRows"), "scorecardEvaluationRows"
@@ -285,6 +348,7 @@ def build_walk_forward_evidence_sql(
     source_id = next(iter(source_ids))
     terms_review_id = next(iter(terms_ids))
     variant_id = next(iter(variant_ids))
+    market_series_id = _uuid(root.get("marketSeriesId"), "market series id")
     trend_by_id = {_uuid(row.get("id"), "trend snapshot id"): row for row in trend_rows}
 
     if any(
@@ -348,6 +412,10 @@ def build_walk_forward_evidence_sql(
             raise ValueError("prediction terms lineage is inconsistent")
         if _uuid(row.get("variant_id"), "prediction variant id") != variant_id:
             raise ValueError("prediction variant lineage is inconsistent")
+        if row.get("evidence_mode") != "retrospective":
+            raise ValueError("walk-forward predictions must be retrospective")
+        if _uuid(row.get("market_series_id"), "prediction market series id") != market_series_id:
+            raise ValueError("prediction market-series lineage is inconsistent")
 
     prediction_id_set = set(prediction_ids)
     evaluation_by_id = {
@@ -372,6 +440,8 @@ def build_walk_forward_evidence_sql(
         status = row.get("evaluation_status")
         if status not in {"scored", "unscorable"}:
             raise ValueError("evaluation status must be scored or unscorable")
+        if row.get("evidence_mode") != "retrospective":
+            raise ValueError("walk-forward evaluations must be retrospective")
         if status == "scored" and (
             row.get("realized_price") is None
             or isinstance(row.get("observation_count"), bool)
@@ -412,6 +482,24 @@ def build_walk_forward_evidence_sql(
             "modelVersionId": model_id,
         }):
             raise ValueError("evaluation hash is inconsistent")
+
+    target_membership: dict[str, set[str]] = {}
+    for row in target_membership_rows:
+        evaluation_id = _uuid(row.get("evaluation_id"), "target membership evaluation id")
+        observation_id = _uuid(row.get("observation_id"), "target membership observation id")
+        if evaluation_id not in evaluation_by_id:
+            raise ValueError("target membership references an evaluation outside the packet")
+        values = target_membership.setdefault(evaluation_id, set())
+        if observation_id in values:
+            raise ValueError("target observation membership must be unique")
+        values.add(observation_id)
+    for evaluation_id, row in evaluation_by_id.items():
+        actual = len(target_membership.get(evaluation_id, set()))
+        expected = int(row.get("observation_count") or 0)
+        if row.get("evaluation_status") == "scored" and actual != expected:
+            raise ValueError("scored evaluation target-observation membership is incomplete")
+        if row.get("evaluation_status") == "unscorable" and actual:
+            raise ValueError("unscorable evaluation cannot have target observations")
     scorecard_id_set = set(scorecard_ids)
     evaluation_id_set = set(evaluation_ids)
     membership_keys: set[tuple[str, str]] = set()
@@ -458,6 +546,8 @@ def build_walk_forward_evidence_sql(
             raise ValueError("scorecard does not reference the evaluation run")
         if _uuid(row.get("model_version_id"), "scorecard model id") != model_id:
             raise ValueError("scorecard model lineage is inconsistent")
+        if row.get("evidence_mode") != "retrospective":
+            raise ValueError("walk-forward scorecards must be retrospective")
         reasons = row.get("reason_codes")
         if not isinstance(reasons, list) or not {
             SIMULATION_MODE, "not_prospectively_generated", "operator_model_review_required"
@@ -604,6 +694,8 @@ def build_walk_forward_evidence_sql(
         "trendSnapshotRows": list(trend_rows),
         "predictionRows": list(prediction_rows),
         "evaluationRows": list(evaluation_rows),
+        "evaluationObservationRows": list(target_membership_rows),
+        "marketSeriesId": market_series_id,
         "scorecardRows": list(scorecard_rows),
         "scorecardEvaluationRows": list(membership_rows),
         "promotionReviewRows": [],
@@ -673,14 +765,21 @@ begin
 end
 $collectfolio_walk_forward_guard$;"""
 
+    # Migration 0018 reserves evidence_mode and prospective plan lineage from
+    # direct service-role inserts. Retrospective rows use the database's
+    # fail-closed default after this field has already been validated above.
+    scorecard_insert_rows = tuple(
+        {name: value for name, value in row.items() if name != "evidence_mode"}
+        for row in scorecard_rows
+    )
     inserts = (
         _insert_statement("model_versions", (model,)),
         _insert_statement("analytics_runs", run_rows),
         _insert_statement("analytics_run_sources", source_rows),
         _insert_statement("trend_feature_snapshots", trend_rows),
         _insert_statement("card_forecast_predictions", prediction_rows),
-        _insert_statement("forecast_evaluations", evaluation_rows),
-        _insert_statement("model_scorecards", scorecard_rows),
+        _evaluation_rpc_statements(evaluation_rows),
+        _insert_statement("model_scorecards", scorecard_insert_rows),
         _insert_statement("model_scorecard_evaluations", membership_rows),
     )
     inserts_sql = "\n\n".join(inserts)
@@ -690,10 +789,15 @@ begin
      or (select count(*) from public.trend_feature_snapshots where id in ({_uuid_list(trend_ids)})) <> {len(trend_ids)}
      or (select count(*) from public.card_forecast_predictions where id in ({_uuid_list(prediction_ids)})) <> {len(prediction_ids)}
      or (select count(*) from public.forecast_evaluations where id in ({_uuid_list(evaluation_ids)})) <> {len(evaluation_ids)}
+     or (select count(*) from public.forecast_evaluation_observations
+         where evaluation_id in ({_uuid_list(evaluation_ids)})) <> {len(target_membership_rows)}
      or (select count(*) from public.model_scorecards where id in ({_uuid_list(scorecard_ids)})) <> {len(scorecard_ids)}
      or (select count(*) from public.model_scorecard_evaluations
          where scorecard_id in ({_uuid_list(scorecard_ids)})) <> {len(membership_rows)} then
     raise exception 'retrospective evidence count mismatch';
+  end if;
+  if {_membership_mismatch_condition(evaluation_rows, target_membership_rows)} then
+    raise exception 'database-derived target-observation membership differs from the complete export';
   end if;
   if exists (
     select 1 from public.card_forecast_predictions

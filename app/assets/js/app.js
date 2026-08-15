@@ -263,7 +263,11 @@ let intelligenceHydrationId = 0;
 async function hydrateIntelligence() {
   const hydrationId = ++intelligenceHydrationId;
   const state = getState();
-  const variantIds = intelligenceVariantIds(state.holdings, state.watchlistItems);
+  const variantIds = intelligenceVariantIds(
+    state.holdings,
+    state.watchlistItems,
+    state.search?.results || []
+  );
   if (!variantIds.length || !state.featureFlags.publicPriceIntelligence) {
     setState({ intelligence: { ...state.intelligence, byVariant: {}, history: [], loading: false, error: '' } });
     return;
@@ -276,7 +280,7 @@ async function hydrateIntelligence() {
   setState({ intelligence: {
     ...getState().intelligence,
     byVariant: cached,
-    history: mergePublicationHistory(archived, Object.values(cached)),
+    history: mergePublicationHistory(archived, Object.values(cached).flat()),
     loading: true,
     error: ''
   } });
@@ -296,7 +300,7 @@ async function hydrateIntelligence() {
       .sort((left, right) => String(right.triggeredAt).localeCompare(String(left.triggeredAt)));
     setState({ intelligence: {
       byVariant,
-      history: mergePublicationHistory(current.intelligence?.history || archived, Object.values(fresh), now),
+      history: mergePublicationHistory(current.intelligence?.history || archived, Object.values(fresh).flat(), now),
       loading: false,
       error: '',
       lastRefresh: now
@@ -317,6 +321,18 @@ function routeItemIdentifiers(item = {}, options = {}) {
   return new Set([catalogRouteId(item), reference.canonicalVariantId, reference.watchKey, reference.externalId, item.id].filter(Boolean));
 }
 
+function watchedItemForRoute(items = [], entityId = '') {
+  const exact = items.filter((entry) => entry.watchKey === entityId || entry.id === entityId);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+  const matches = items.filter((entry) => routeItemIdentifiers(entry.catalogRef, {
+    canonicalVariantId: entry.canonicalVariantId,
+    conditionClass: entry.catalogRef?.conditionClass,
+    marketCondition: entry.marketCondition || entry.catalogRef?.marketCondition || ''
+  }).has(entityId));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 async function hydrateCardRoute(route) {
   const hydrationId = ++routeHydrationId;
   if (route.key !== 'card-detail') return;
@@ -327,17 +343,15 @@ async function hydrateCardRoute(route) {
   try {
     const item = await getCatalogRouteItem(route.entityId);
     if (hydrationId !== routeHydrationId || activeRoute.canonicalPath !== route.canonicalPath) return;
-    const watched = getState().watchlistItems.find((entry) => routeItemIdentifiers(entry.catalogRef, {
-      canonicalVariantId: entry.canonicalVariantId,
-      conditionClass: entry.catalogRef?.conditionClass
-    }).has(route.entityId));
+    const watched = watchedItemForRoute(getState().watchlistItems, route.entityId);
     activeDetail = {
       origin: route.origin || 'search',
       item,
       watched: watched || undefined,
       catalogRef: catalogReferenceForItem(item, {
         canonicalVariantId: watched?.canonicalVariantId,
-        conditionClass: watched?.catalogRef?.conditionClass
+        conditionClass: watched?.catalogRef?.conditionClass,
+        marketCondition: watched?.marketCondition
       })
     };
     render();
@@ -353,14 +367,12 @@ function resolveRouteContext(route, state = getState()) {
     const holding = state.holdings.find((entry) => entry.id === route.entityId);
     activeDetail = holding ? { origin: route.origin || 'portfolio', item: holding.item, holding, catalogRef: catalogReferenceForItem(holding.item, {
       canonicalVariantId: holding.canonicalVariantId,
-      conditionClass: holding.grade ? 'graded' : 'raw'
+      conditionClass: holding.grade ? 'graded' : 'raw',
+      marketCondition: watchMarketConditionForHolding(holding)
     }) } : null;
   } else if (route.key === 'card-detail') {
     const item = state.search.results.find((entry) => routeItemIdentifiers(entry).has(route.entityId));
-    const watched = state.watchlistItems.find((entry) => routeItemIdentifiers(entry.catalogRef, {
-      canonicalVariantId: entry.canonicalVariantId,
-      conditionClass: entry.catalogRef?.conditionClass
-    }).has(route.entityId));
+    const watched = watchedItemForRoute(state.watchlistItems, route.entityId);
     const selected = item || (watched ? { ...watched.catalogRef, variant: watched.catalogRef.finish } : null);
     activeDetail = selected ? {
       origin: route.origin || 'search',
@@ -368,7 +380,8 @@ function resolveRouteContext(route, state = getState()) {
       watched: watched || undefined,
       catalogRef: catalogReferenceForItem(selected, {
         canonicalVariantId: watched?.canonicalVariantId,
-        conditionClass: watched?.catalogRef?.conditionClass
+        conditionClass: watched?.catalogRef?.conditionClass,
+        marketCondition: watched?.marketCondition
       })
     } : null;
   } else {
@@ -429,7 +442,8 @@ function holdingForm(holding = null, { title = '', image = '', item: proposedIte
         const saved = await saveHolding({
           ...holding,
           item: { ...providerItem, id: providerItem.id || createId(), externalId: providerItem.externalId || '', provider: providerItem.provider || 'custom', category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: finish?.finish || data.variant, rarity: providerItem.rarity || '', year: data.year, language: data.language || providerItem.language || getState().settings.defaultLanguage, image: providerItem.image || '', imageSmall: providerItem.imageSmall || '', price: finish?.price ?? providerItem.price ?? null, priceOptions: providerItem.priceOptions || [], currency: providerItem.currency || 'USD', priceSource: providerItem.priceSource || '', priceUrl: providerItem.priceUrl || '', priceUpdatedAt: providerItem.priceUpdatedAt || '' },
-          quantity: data.quantity, condition: data.condition, gradeCompany: data.gradeCompany, grade: data.grade,
+          quantity: data.quantity, condition: data.condition, marketCondition: data.marketCondition,
+          gradeCompany: data.gradeCompany, grade: data.grade,
           purchasePrice: data.purchasePrice, purchaseCurrency: data.purchaseCurrency, purchaseDate: data.purchaseDate, fees: data.fees, seller: data.seller,
           manualMarketPrice: data.manualMarketPrice, manualMarketCurrency: data.manualMarketCurrency, folder: data.folder, tags: data.tags, notes: data.notes, userImage
         });
@@ -626,6 +640,7 @@ async function runCatalogSearch(form) {
     if (generation !== searchGeneration) return;
     const results = filterCatalogResults(response.results || [], filters);
     setState({ search: { ...getState().search, loading: false, ...response, results } });
+    await hydrateIntelligence();
     if (response.manual) showToast('This category uses custom entry so coverage is not overstated', 'warning');
     else if (!results.length) showToast('No catalog candidates found', 'warning');
   } catch (error) {
@@ -836,6 +851,13 @@ async function requestPriceRefreshAction() {
   }
 }
 
+function watchMarketConditionForHolding(holding) {
+  if (!holding) return '';
+  return holding.grade
+    ? `${holding.gradeCompany || 'unknown'}-${holding.grade || 'ungraded'}`
+    : holding.marketCondition || '';
+}
+
 async function toggleWatchedItem(item, options = {}) {
   if (!item || getState().featureFlags.watchlists === false) return;
   const existing = findWatchedItem(getState().watchlistItems, item, options);
@@ -901,7 +923,10 @@ async function chooseWatchVariant(item) {
 
 function watchlistPreferencesForm(entry) {
   const targetCurrency = entry.targetCurrency || entry.catalogRef?.currency || getState().settings.currency || 'USD';
+  const rawMarket = (entry.catalogRef?.conditionClass || 'raw') === 'raw';
+  const marketConditions = [['', 'Select condition'], ['near-mint', 'Near Mint'], ['lightly-played', 'Lightly Played'], ['moderately-played', 'Moderately Played'], ['heavily-played', 'Heavily Played'], ['damaged', 'Damaged']];
   const content = `<form id="watch-preferences-form"><div class="field-grid">
+    ${rawMarket ? `<label>Market condition<select name="marketCondition">${marketConditions.map(([value, label]) => `<option value="${value}" ${value === (entry.marketCondition || '') ? 'selected' : ''}>${label}</option>`).join('')}</select></label>` : ''}
     <label>Target price<input name="targetPrice" type="number" min="0" step="0.01" value="${escapeAttribute(entry.targetPrice ?? '')}"></label>
     <label>Target currency<select name="targetCurrency">${CURRENCIES.map((value) => `<option value="${value}" ${value === targetCurrency ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
     <label>Percent-change alert<input name="alertPercentChange" type="number" min="0" step="0.1" value="${escapeAttribute(entry.alertPercentChange ?? '')}"></label>
@@ -925,6 +950,8 @@ function watchlistPreferencesForm(entry) {
         await watchItem({ ...entry.catalogRef, variant: entry.catalogRef.finish }, {
           canonicalVariantId: entry.canonicalVariantId,
           conditionClass: entry.catalogRef.conditionClass,
+          marketCondition: data.marketCondition || entry.marketCondition || '',
+          replacesWatchKey: entry.watchKey,
           targetPrice: data.targetPrice,
           targetCurrency: data.targetCurrency,
           alertPercentChange: data.alertPercentChange,
@@ -945,15 +972,23 @@ function watchlistPreferencesForm(entry) {
 // Opens the price-intelligence detail view for an item resolved from search,
 // a holding, or a watchlist entry. card_view (and search_view when arriving
 // from search) demand events are recorded here — both are no-ops for
-// unmapped items, opted-out users, and signed-out sessions.
+// unmapped items, opted-out users, signed-out sessions, and model-mediated
+// Insights opens that would create a recommendation feedback loop.
 function openDetail(detail) {
   const catalogRef = catalogReferenceForItem(detail.item, {
     canonicalVariantId: detail.holding?.canonicalVariantId || detail.watched?.canonicalVariantId,
-    conditionClass: detail.holding?.grade ? 'graded' : detail.watched?.catalogRef?.conditionClass
+    conditionClass: detail.holding?.grade ? 'graded' : detail.watched?.catalogRef?.conditionClass,
+    marketCondition: detail.holding
+      ? watchMarketConditionForHolding(detail.holding)
+      : detail.watched?.marketCondition
   });
   activeDetail = { ...detail, catalogRef };
-  recordDemandEvent(catalogRef.canonicalVariantId, 'card_view').catch(() => {});
-  if (detail.origin === 'search') recordDemandEvent(catalogRef.canonicalVariantId, 'search_view').catch(() => {});
+  recordDemandEvent(
+    catalogRef.canonicalVariantId, 'card_view', { origin: detail.origin }
+  ).catch(() => {});
+  if (detail.origin === 'search') recordDemandEvent(
+    catalogRef.canonicalVariantId, 'search_view', { origin: detail.origin }
+  ).catch(() => {});
   applyAppRoute(appRouteForLegacyView('detail', getState(), { detail: activeDetail }), { focus: false, scroll: false });
 }
 
@@ -996,7 +1031,7 @@ function openCompareModal() {
     ['Trend', (column) => column.trendStatus],
     ['Volatility', (column) => column.volatility],
     ['Fair-value position', (column) => column.fairValuePosition],
-    ['1Y probability of gain', (column) => column.probabilityUp],
+    ['30/90-day probability of gain', (column) => column.forecastHorizon ? `${column.forecastHorizon}D · ${column.probabilityUp}` : column.probabilityUp],
     ['Evidence confidence', (column) => column.confidenceLabel]
   ];
   const content = `<div class="compare-scroll"><table class="compare-table"><thead><tr><th scope="col"></th>${comparison.columns.map((column) => `<th scope="col">${escapeHTML(column.name)}<span class="fine-print">${escapeHTML(column.meta)}</span><span class="support-badge ${column.supportTier >= 4 ? 'supported' : column.supportTier >= 2 ? 'partial' : 'unsupported'}">Evidence level ${column.supportTier}</span></th>`).join('')}</tr></thead><tbody>${rows.map(([label, cell]) => `<tr><th scope="row">${escapeHTML(label)}</th>${comparison.columns.map((column) => `<td>${escapeHTML(cell(column))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
@@ -1277,13 +1312,18 @@ root.addEventListener('click', async (event) => {
       item = activeDetail.item;
       options = {
         canonicalVariantId: activeDetail.catalogRef.canonicalVariantId,
-        conditionClass: activeDetail.catalogRef.conditionClass
+        conditionClass: activeDetail.catalogRef.conditionClass,
+        marketCondition: activeDetail.catalogRef.marketCondition
       };
     }
     if (action.dataset.holdingId) {
       const holding = getState().holdings.find((entry) => entry.id === action.dataset.holdingId);
       item = holding?.item;
-      options = { canonicalVariantId: holding?.canonicalVariantId, conditionClass: holding?.grade ? 'graded' : 'raw' };
+      options = {
+        canonicalVariantId: holding?.canonicalVariantId,
+        conditionClass: holding?.grade ? 'graded' : 'raw',
+        marketCondition: watchMarketConditionForHolding(holding)
+      };
     }
     if (action.dataset.cropWatch && activeDraft) {
       const crop = activeDraft.crops.find((entry) => entry.id === action.dataset.cropWatch);
@@ -1328,7 +1368,7 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'bulk-export-holdings') exportCSV(getState().portfolio.selected || []);
   if (action.dataset.action === 'bulk-delete-holdings') confirmBulkDelete(getState().portfolio.selected || []);
   if (action.dataset.action === 'load-more-holdings') setState({ portfolio: { ...getState().portfolio, limit: (getState().portfolio.limit || 100) + 100 } });
-  if (action.dataset.action === 'clear-watchlist-filters') setState({ watchlist: { query: '', category: 'all', sort: getState().watchlist?.sort || 'opportunity-desc' } });
+  if (action.dataset.action === 'clear-watchlist-filters') setState({ watchlist: { query: '', category: 'all', sort: getState().watchlist?.sort || 'forecast-desc' } });
   if (action.dataset.action === 'clear-portfolio-filters') setState({ portfolio: { ...getState().portfolio, query: '', category: 'all', filters: {}, limit: 100 } });
   if (action.dataset.action === 'remove-portfolio-filter') {
     const filter = action.dataset.filter;

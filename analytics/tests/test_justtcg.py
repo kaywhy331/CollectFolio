@@ -205,6 +205,7 @@ class JustTCGTests(unittest.TestCase):
         self.assertEqual(product.external_variant_key, NM_VARIANT_UUID)
         self.assertEqual(product.finish, "holofoil")
         self.assertEqual(product.condition_class, "raw")
+        self.assertEqual(product.market_condition, "near-mint")
 
     def test_payload_rejects_future_duplicate_and_mismatched_variants(self):
         future = payload()
@@ -294,6 +295,8 @@ class JustTCGTests(unittest.TestCase):
             mapping_version="justtcg-mapping-v1",
             finish="holofoil",
             condition_class="raw",
+            language="english",
+            market_condition="near-mint",
         )
         batch = prepare_justtcg_observation_batch(
             snapshot,
@@ -313,6 +316,10 @@ class JustTCGTests(unittest.TestCase):
         self.assertTrue(all(
             row["available_at"] == RETRIEVED.isoformat() for row in batch.database_rows
         ))
+        self.assertNotIn("market_condition", batch.database_rows[0])
+        self.assertEqual(
+            {row["market_condition"] for row in batch.market_series_rows}, {"near-mint"}
+        )
 
     def test_client_requires_one_stable_lookup_and_supported_history(self):
         client = JustTCGClient("server-secret", fetch_json=lambda _url, _headers: payload())

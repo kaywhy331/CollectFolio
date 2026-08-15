@@ -98,6 +98,14 @@ def build_packet_from_exports(
             mapping.get("priceSemantics", "tcgplayer_market"),
             "approvedMappings[0].priceSemantics",
         ),
+        language=_text(mapping.get("language", "en"), "approvedMappings[0].language"),
+        market_condition=_text(
+            mapping.get("marketCondition"),
+            "approvedMappings[0].marketCondition",
+        ),
+    )
+    market_series_id = _text(
+        mapping.get("marketSeriesId"), "approvedMappings[0].marketSeriesId"
     )
     research = _mapping(manifest.get("retrospectiveResearch"), "retrospectiveResearch")
     model = _mapping(research.get("model"), "retrospectiveResearch.model")
@@ -152,7 +160,9 @@ def build_packet_from_exports(
         hosted_rows = _rows(hosted_export.get("rows"), "hosted export rows")
     else:
         hosted_rows = _rows(hosted_export, "hosted export rows")
-    ledger = parse_hosted_observation_rows(hosted_rows, key)
+    ledger = parse_hosted_observation_rows(
+        hosted_rows, key, market_series_id=market_series_id,
+    )
     return build_retrospective_walk_forward(ledger, terms, config).as_dict()
 
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { catalogReferenceForItem, watchKeyForItem } from '../app/assets/js/core/catalog-identity.js';
-import { createWatchlistItem, mergeWatchlistItems, mergeWatchlistTombstones } from '../app/assets/js/services/watchlist.js';
+import { createWatchlistItem, findWatchedItem, mergeWatchlistItems, mergeWatchlistTombstones } from '../app/assets/js/services/watchlist.js';
 
 const card = {
   provider: 'pokemon', externalId: 'sv3-223', category: 'pokemon', game: 'Pokémon',
@@ -21,6 +21,66 @@ test('approved canonical UUID supersedes provider-scoped identity', () => {
   const reference = catalogReferenceForItem({ ...card, canonicalVariantId });
   assert.equal(reference.watchKey, `variant:${canonicalVariantId}`);
   assert.equal(reference.mappingStatus, 'mapped');
+  const conditioned = catalogReferenceForItem({ ...card, canonicalVariantId }, {
+    marketCondition: 'Near Mint'
+  });
+  assert.equal(
+    conditioned.watchKey,
+    `variant:v2:${canonicalVariantId}:raw:near-mint`
+  );
+});
+
+test('conditionless catalog lookups recognize v2 watches without crossing exact conditions', () => {
+  const canonicalVariantId = '123e4567-e89b-42d3-a456-426614174000';
+  const nearMint = createWatchlistItem(card, {
+    canonicalVariantId,
+    marketCondition: 'Near Mint'
+  }, null, '2026-08-01T00:00:00.000Z');
+  const lightlyPlayed = createWatchlistItem(card, {
+    canonicalVariantId,
+    marketCondition: 'Lightly Played'
+  }, null, '2026-08-02T00:00:00.000Z');
+
+  assert.equal(findWatchedItem([nearMint, lightlyPlayed], {
+    ...card,
+    canonicalVariantId
+  }), lightlyPlayed);
+  assert.equal(findWatchedItem([lightlyPlayed], card, {
+    canonicalVariantId,
+    marketCondition: 'Near Mint'
+  }), null);
+});
+
+test('unmapped source and catalog identities use condition-aware v2 keys', () => {
+  const sourceNearMint = catalogReferenceForItem(card, { marketCondition: 'Near Mint' });
+  const sourceLightlyPlayed = catalogReferenceForItem(card, { marketCondition: 'Lightly Played' });
+  assert.match(sourceNearMint.watchKey, /^source:v2:/);
+  assert.notEqual(sourceNearMint.watchKey, sourceLightlyPlayed.watchKey);
+
+  const identityOnly = { ...card, externalId: '', provider: 'custom' };
+  const catalogNearMint = catalogReferenceForItem(identityOnly, { marketCondition: 'Near Mint' });
+  const catalogLightlyPlayed = catalogReferenceForItem(identityOnly, { marketCondition: 'Lightly Played' });
+  assert.match(catalogNearMint.watchKey, /^catalog:v2:/);
+  assert.notEqual(catalogNearMint.watchKey, catalogLightlyPlayed.watchKey);
+});
+
+test('unmapped v2 lookups preserve legacy fallback without crossing conditions', () => {
+  const legacy = createWatchlistItem(card);
+  const nearMint = createWatchlistItem(card, { marketCondition: 'Near Mint' }, null, '2026-08-01T00:00:00.000Z');
+  const lightlyPlayed = createWatchlistItem(card, { marketCondition: 'Lightly Played' }, null, '2026-08-02T00:00:00.000Z');
+  assert.equal(findWatchedItem([legacy], card, { marketCondition: 'Near Mint' }), legacy);
+  assert.equal(findWatchedItem([nearMint, lightlyPlayed], card), lightlyPlayed);
+  assert.equal(findWatchedItem([lightlyPlayed], card, { marketCondition: 'Near Mint' }), null);
+});
+
+test('legacy mapped watches remain discoverable until a market condition is selected', () => {
+  const canonicalVariantId = '123e4567-e89b-42d3-a456-426614174000';
+  const legacy = createWatchlistItem(card, { canonicalVariantId });
+  assert.equal(legacy.marketCondition, '');
+  assert.equal(findWatchedItem([legacy], card, {
+    canonicalVariantId,
+    marketCondition: 'Near Mint'
+  }), legacy);
 });
 
 test('watchlist item snapshots identity and preserves created time on edits', () => {

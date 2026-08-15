@@ -1,8 +1,9 @@
 import { externalImage } from '../core/components.js';
-import { watchKeyForItem } from '../core/catalog-identity.js';
 import { searchResultViewModel } from '../core/view-models.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
+import { selectPublicationForCatalogItem, selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
+import { findWatchedItem } from '../services/watchlist.js';
 
 function pricingSummary(model) {
   const labels = {
@@ -24,17 +25,23 @@ export function renderQuickInspector(detail, state) {
   const item = detail?.item;
   if (!item) return '';
   const canonicalId = detail.catalogRef?.canonicalVariantId || detail.holding?.canonicalVariantId || detail.watched?.canonicalVariantId || '';
-  const publication = state.featureFlags?.publicPriceIntelligence && canonicalId
+  const rawPublication = state.featureFlags?.publicPriceIntelligence && canonicalId
     ? state.intelligence?.byVariant?.[canonicalId]
     : null;
+  const publication = detail.holding
+    ? selectPublicationForHolding(rawPublication, detail.holding, state.settings.currency)
+    : detail.watched
+      ? selectPublicationForWatchlist(rawPublication, detail.watched, state.settings.currency)
+      : selectPublicationForCatalogItem(rawPublication, item, state.settings.currency);
   const model = searchResultViewModel({ ...item, canonicalVariantId: canonicalId }, { publication, currency: state.settings.currency });
   const localScenario = detail.holding
     ? buildHoldingLocalScenario(detail.holding, state.localValueObservations || [], state.settings?.defaultForecastHorizon || 90)
     : null;
   const localScenarioAvailable = ['early', 'limited', 'available'].includes(localScenario?.status);
-  const watching = state.watchlistItems.some((entry) => entry.watchKey === watchKeyForItem(item, {
+  const watching = Boolean(findWatchedItem(state.watchlistItems, item, {
     canonicalVariantId: canonicalId,
-    conditionClass: detail.catalogRef?.conditionClass
+    conditionClass: detail.catalogRef?.conditionClass,
+    marketCondition: detail.catalogRef?.marketCondition || detail.watched?.marketCondition
   }));
   const identity = [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.variant, model.language, model.rarity].filter(Boolean).join(' · ');
   return `<div class="quick-inspector-layer"><button class="inspector-scrim" type="button" data-action="close-detail" aria-label="Close card inspector"></button><aside class="quick-inspector" role="dialog" aria-modal="true" aria-labelledby="quick-inspector-title">

@@ -7,7 +7,7 @@ import { portfolioMovers, renderHome, watchlistSignals } from '../app/assets/js/
 const variantId = '123e4567-e89b-42d3-a456-426614174000';
 const item = {
   provider: 'pokemon', externalId: 'sv3-223', category: 'pokemon', game: 'Pokémon',
-  name: 'Charizard ex', setName: 'Obsidian Flames', number: '223', variant: 'holofoil',
+  name: 'Charizard ex', setName: 'Obsidian Flames', number: '223', variant: 'holofoil', language: 'en', marketCondition: 'near-mint',
   rarity: 'Special Illustration Rare', image: '', imageSmall: '', price: 90, currency: 'USD'
 };
 
@@ -28,7 +28,7 @@ function baseState(overrides = {}) {
 }
 
 function publication(payload, supportTier, reasonCodes = []) {
-  return { variantId, supportTier, publicationStatus: 'published', reasonCodes, payload, sourceAttributions: [], publishedAt: '2026-08-01T00:00:00Z', expiresAt: '' };
+  return { variantId, seriesIdentity: { sourceId: 'approved', currency: 'USD', language: 'en', finish: 'holofoil', conditionClass: 'raw', marketCondition: 'near-mint', priceSemantics: 'market' }, supportTier, publicationStatus: 'published', reasonCodes, payload, sourceAttributions: [], publishedAt: '2026-08-01T00:00:00Z', expiresAt: '' };
 }
 
 test('detail view without a selection offers a way back instead of crashing', () => {
@@ -54,11 +54,26 @@ test('mapped card without a publication states unavailability honestly', () => {
   assert.match(html, /disabled until source rights/);
 });
 
+test('detail abstains instead of choosing the first ambiguous holding series', () => {
+  const conditionlessItem = { ...item, marketCondition: '' };
+  const catalogRef = catalogReferenceForItem(conditionlessItem, { canonicalVariantId: variantId, marketCondition: '' });
+  const holdings = [
+    { id: 'nm', canonicalVariantId: variantId, item: conditionlessItem, condition: 'Near Mint', marketCondition: 'near-mint', quantity: 1 },
+    { id: 'lp', canonicalVariantId: variantId, item: conditionlessItem, condition: 'Excellent', marketCondition: 'lightly-played', quantity: 1 }
+  ];
+  const html = renderPriceIntelligenceDetail(
+    { origin: 'search', item: conditionlessItem, catalogRef },
+    baseState({ holdings })
+  );
+  assert.doesNotMatch(html, /Your holding/);
+  assert.match(html, /Market condition<\/dt><dd>Not confirmed/);
+});
+
 test('owned card detail renders a local scenario even when public intelligence is disabled', () => {
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const holding = {
     id: 'owned-local', canonicalVariantId: variantId, item, quantity: 1,
-    manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
+    condition: 'Near Mint', manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
   };
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef, holding }, baseState({ holdings: [holding] }));
   assert.match(html, /Local scenario outlook/);
@@ -89,6 +104,7 @@ test('tier-4 publication renders observed, trend, fair value, forecast, and driv
   assert.match(html, /Approved forecast projection/);
   assert.match(html, /Observed now/);
   assert.match(html, /Probability of gain/);
+  assert.match(html, /Market condition<\/dt><dd>near-mint/);
   assert.match(html, /Strong character premium/);
   assert.match(html, /Current price above structural band/);
   assert.match(html, /never rewritten/);
@@ -100,6 +116,10 @@ test('tier-2 publication shows trend but explicitly withholds fair value and for
     featureFlags: { watchlists: true, publicPriceIntelligence: true },
     intelligence: { byVariant: { [variantId]: publication({
       observed: { price: 90, currency: 'USD', source: 'Approved source', observedAt: '2026-08-06T00:00:00Z' },
+      history: [
+        { price: 85, currency: 'USD', source: 'Approved source', observedAt: '2026-07-06T00:00:00Z', quality: 0.9 },
+        { price: 90, currency: 'USD', source: 'Approved source', observedAt: '2026-08-06T00:00:00Z', quality: 0.9 }
+      ],
       trend: { return30d: -0.05, status: 'fall', volatility: 0.2, confidence: 55 }
     }, 2) }, loading: false, error: '' }
   });
@@ -107,6 +127,7 @@ test('tier-2 publication shows trend but explicitly withholds fair value and for
   assert.match(html, /Fair value not supported/);
   assert.match(html, /No forecast published/);
   assert.doesNotMatch(html, /projection-chart/);
+  assert.match(html, /2 final approved price points/);
   assert.match(html, /No recorded driver evidence/);
 });
 
@@ -123,8 +144,8 @@ test('portfolio movers ranks by absolute 30-day move and requires trend support'
   };
   byVariant['223e4567-e89b-42d3-a456-426614174000'].variantId = '223e4567-e89b-42d3-a456-426614174000';
   const holdings = [
-    { id: 'h1', canonicalVariantId: variantId, item, quantity: 1 },
-    { id: 'h2', canonicalVariantId: '223e4567-e89b-42d3-a456-426614174000', item: { ...item, name: 'Pikachu' }, quantity: 1 },
+    { id: 'h1', canonicalVariantId: variantId, item, condition: 'Near Mint', quantity: 1 },
+    { id: 'h2', canonicalVariantId: '223e4567-e89b-42d3-a456-426614174000', item: { ...item, name: 'Pikachu' }, condition: 'Near Mint', quantity: 1 },
     { id: 'h3', canonicalVariantId: '', item: { ...item, name: 'Unmapped' }, quantity: 1 }
   ];
   const movers = portfolioMovers(holdings, byVariant);

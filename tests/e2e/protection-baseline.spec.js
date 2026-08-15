@@ -130,6 +130,11 @@ async function configureApprovedPhase4Publication(page) {
         publication_status: 'published',
         reason_codes: [],
         payload: {
+          seriesIdentity: {
+            sourceId: 'approved-synthetic-market', currency: 'USD', language: 'en',
+            finish: 'regular', conditionClass: 'raw', marketCondition: 'near-mint',
+            priceSemantics: 'market'
+          },
           observed: { price: 14, currency: 'USD', source: 'Approved synthetic market', observedAt: '2026-08-09T00:00:00.000Z', quality: 0.94 },
           history: [
             { price: 11, currency: 'USD', source: 'Approved synthetic market', observedAt: '2026-06-09T00:00:00.000Z' },

@@ -11,6 +11,7 @@ import {
   scanReviewSummary,
   scanReviewTotals
 } from '../app/assets/js/services/scan-review.js';
+import { catalogReferenceForItem } from '../app/assets/js/core/catalog-identity.js';
 import { renderScanReview } from '../app/assets/js/views/scan.js';
 
 const card = {
@@ -42,11 +43,12 @@ test('bulk acquisition applies normalized shared fields without approving any cr
   const draft = reviewDraft();
   const approvals = draft.crops.map((crop) => crop.approved);
   assert.equal(applyAcquisitionPatch(draft, {
-    quantity: '3', condition: 'Good', purchaseCurrency: 'cad', manualMarketCurrency: 'eur',
+    quantity: '3', condition: 'Good', marketCondition: 'lightly-played', purchaseCurrency: 'cad', manualMarketCurrency: 'eur',
     purchaseDate: '2026-08-10', seller: 'Local show'
   }), 2);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.quantity), [3, 3]);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.condition), ['Good', 'Good']);
+  assert.deepEqual(draft.crops.map((crop) => crop.acquisition.marketCondition), ['lightly-played', 'lightly-played']);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.purchaseCurrency), ['CAD', 'CAD']);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.manualMarketCurrency), ['EUR', 'EUR']);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.seller), ['Local show', 'Local show']);
@@ -79,9 +81,31 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   assert.match(html, /data-crop-acquisition="purchasePrice"/);
   assert.match(html, /data-crop-acquisition="purchaseCurrency"/);
   assert.match(html, /data-crop-acquisition="manualMarketCurrency"/);
+  assert.match(html, /data-crop-acquisition="marketCondition"/);
   assert.match(html, /\$22\.00 USD cost basis/);
   assert.match(html, /Add 1 approved/);
   assert.match(html, /Unapproved and unmatched items are skipped/);
+});
+
+test('scan review recognizes a condition-aware mapped watch', () => {
+  const variantId = '123e4567-e89b-42d3-a456-426614174000';
+  const mappedCard = { ...card, canonicalVariantId: variantId };
+  const catalogRef = catalogReferenceForItem(mappedCard, { marketCondition: 'Near Mint' });
+  const draft = reviewDraft();
+  draft.crops[0].candidates = [mappedCard];
+  const html = renderScanReview(draft, {
+    settings: { currency: 'USD' },
+    featureFlags: { watchlists: true },
+    watchlistItems: [{
+      id: catalogRef.watchKey,
+      watchKey: catalogRef.watchKey,
+      canonicalVariantId: variantId,
+      catalogRef,
+      marketCondition: 'near-mint',
+      updatedAt: '2026-08-10T00:00:00.000Z'
+    }]
+  });
+  assert.match(html, /★ Watching/);
 });
 
 test('review labels candidates as similarity evidence rather than calibrated confidence', () => {

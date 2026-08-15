@@ -90,6 +90,24 @@ test('search shows watching state and forecast center publishes no invented numb
   assert.doesNotMatch(forecasts, /Probability of gain|\$845/);
 });
 
+test('conditionless search results recognize condition-aware mapped watches', () => {
+  const variantId = '123e4567-e89b-42d3-a456-426614174000';
+  const mappedItem = { ...item, canonicalVariantId: variantId };
+  const catalogRef = catalogReferenceForItem(mappedItem, { marketCondition: 'Near Mint' });
+  const search = renderSearch(baseState({
+    watchlistItems: [{
+      id: catalogRef.watchKey,
+      watchKey: catalogRef.watchKey,
+      canonicalVariantId: variantId,
+      catalogRef,
+      marketCondition: 'near-mint',
+      updatedAt: '2026-08-10T00:00:00.000Z'
+    }],
+    search: { query: 'Charizard', category: 'pokemon', provider: 'pokemon', loading: false, results: [mappedItem], warnings: [] }
+  }));
+  assert.match(search, />Watching</);
+});
+
 test('multi-finish search results require an explicit finish choice before watching', () => {
   const search = renderSearch(baseState({
     search: {
@@ -104,11 +122,14 @@ test('multi-finish search results require an explicit finish choice before watch
 test('forecast center renders only a validated approved publication contract', () => {
   const variantId = '123e4567-e89b-42d3-a456-426614174000';
   const html = renderInsights(baseState({
-    holdings: [{ id: 'holding', canonicalVariantId: variantId, item, quantity: 1, manualMarketPrice: '' }],
+    holdings: [{
+      id: 'holding', canonicalVariantId: variantId, item: { ...item, language: 'en' },
+      condition: 'Near Mint', marketCondition: 'near-mint', quantity: 1, manualMarketPrice: ''
+    }],
     insights: { view: 'forecasts', horizon: 30, alertFilter: 'all' },
     featureFlags: { watchlists: true, publicPriceIntelligence: true },
     intelligence: { byVariant: { [variantId]: {
-      variantId, supportTier: 4, reasonCodes: [], sourceAttributions: [{ name: 'Approved source' }],
+      variantId, seriesIdentity: { sourceId: 'approved', currency: 'USD', language: 'en', finish: 'holofoil', conditionClass: 'raw', marketCondition: 'near-mint', priceSemantics: 'market' }, supportTier: 4, reasonCodes: [], sourceAttributions: [{ name: 'Approved source' }],
       payload: {
         observed: { price: 100, currency: 'USD', source: 'Approved source' },
         forecasts: { 30: { q10: 80, q25: 90, q50: 105, q75: 120, q90: 140, probabilityUp: 0.6, confidence: 58, modelVersion: 'baseline-v1' } }

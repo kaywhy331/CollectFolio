@@ -2,6 +2,7 @@ import { catalogReferenceForItem } from './catalog-identity.js';
 import { holdingCostBasis, holdingMarketValue, unitMarketValue } from './calculations.js';
 import { normalizeIntelligencePayload } from './intelligence-contract.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from './pricing-policy.js';
+import { selectPublicationForCatalogItem, selectPublicationForHolding } from './market-series.js';
 
 export const MATCH_BUCKETS = Object.freeze(['exact', 'likely', 'possible', 'unmatched']);
 export const PRICING_STATUSES = Object.freeze(['verified', 'delayed', 'manual', 'pending', 'unsupported', 'unavailable', 'error']);
@@ -71,14 +72,43 @@ export function forecastViewModels(publication = {}, { holdingId = '' } = {}) {
 
 export function searchResultViewModel(item = {}, { publication = null, currency = 'USD' } = {}) {
   const reference = catalogReferenceForItem(item);
-  const pricingStatus = pricingStatusFor(item);
   const price = catalogPriceForValuation(item);
-  const intelligence = publication ? normalizeIntelligencePayload(publication) : null;
+  const selected = selectPublicationForCatalogItem(publication, item, currency);
+  const intelligence = selected ? normalizeIntelligencePayload(selected) : null;
+  const forecastBasis = intelligence?.observed?.price ?? null;
+  const currentMarketValue = price ?? forecastBasis;
+  const pricingStatus = price === null && forecastBasis !== null
+    ? 'verified'
+    : pricingStatusFor(item);
+  const forecastFor = (horizon) => {
+    const forecast = intelligence?.forecasts?.[horizon];
+    if (!forecast) return null;
+    return {
+      horizon,
+      estimatedValue: forecast.q50,
+      lowerBound: forecast.q10,
+      upperBound: forecast.q90,
+      estimatedChange: forecastBasis > 0 ? forecast.q50 / forecastBasis - 1 : null,
+      probabilityUp: forecast.probabilityUp,
+      confidence: forecast.confidence,
+      status: forecast.forecastStatus,
+      maturesAt: forecast.maturesAt,
+      modelVersion: forecast.modelVersion
+    };
+  };
+  const forecast30d = forecastFor(30);
+  const forecast90d = forecastFor(90);
+  const forecast180d = forecastFor(180);
+  const forecast365d = forecastFor(365);
+  const type = Array.isArray(item.types)
+    ? item.types.map((entry) => text(entry, 80)).filter(Boolean).join(' · ')
+    : text(item.type || item.supertype || item.cardType, 160);
   return {
     id: reference.watchKey,
     canonicalId: reference.canonicalVariantId,
     sourceId: reference.externalId,
     category: reference.category,
+    type,
     name: reference.name,
     setName: reference.setName,
     setCode: text(item.setCode, 80),
@@ -90,12 +120,24 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
     imageUrl: reference.imageSmall || reference.image,
     matchBucket: matchBucketFor(item),
     pricingStatus,
-    currentMarketValue: price,
+    currentMarketValue,
     currency: reference.currency || currency,
     change7d: intelligence?.trend.return7d ?? null,
     change30d: intelligence?.trend.return30d ?? null,
-    priceUpdatedAt: reference.priceUpdatedAt,
-    forecastStatus: intelligence && Object.keys(intelligence.forecasts).length ? 'available' : 'unavailable'
+    priceUpdatedAt: price === null && forecastBasis !== null
+      ? intelligence.observed.observedAt
+      : reference.priceUpdatedAt,
+    forecastStatus: intelligence && Object.keys(intelligence.forecasts).length ? 'available' : 'unavailable',
+    forecast30d,
+    forecast90d,
+    forecast180d,
+    forecast365d,
+    forecastEstimates: {
+      30: forecast30d,
+      90: forecast90d,
+      180: forecast180d,
+      365: forecast365d
+    }
   };
 }
 
@@ -103,10 +145,18 @@ export function holdingViewModel(holding = {}, { publication = null } = {}) {
   const item = holding.item || {};
   const reference = catalogReferenceForItem(item, {
     canonicalVariantId: holding.canonicalVariantId,
-    conditionClass: holding.grade ? 'graded' : 'raw'
+    conditionClass: holding.grade ? 'graded' : 'raw',
+    marketCondition: holding.grade
+      ? `${holding.gradeCompany || 'unknown'}-${holding.grade || 'ungraded'}`
+      : holding.marketCondition || ''
   });
   const manualValue = nonNegative(holding.manualMarketPrice);
-  const forecasts = publication ? forecastViewModels(publication, { holdingId: holding.id }) : [];
+  const selected = selectPublicationForHolding(
+    publication,
+    holding,
+    holding.manualMarketCurrency || item.currency || 'USD'
+  );
+  const forecasts = selected ? forecastViewModels(selected, { holdingId: holding.id }) : [];
   return {
     holdingId: text(holding.id, 160),
     canonicalId: reference.canonicalVariantId,
