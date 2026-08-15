@@ -23,6 +23,7 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
+import { clearBrowseCatalogCache, loadCatalogSetProducts, loadCatalogSets } from './services/catalog-browse.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
@@ -36,11 +37,11 @@ import { OVERVIEW_RANGES, renderHome } from './views/home.js';
 import { renderHoldingForm } from './views/holding-form.js';
 import { renderInsights } from './views/insights.js';
 import { renderOnboarding } from './views/onboarding.js';
-import { PORTFOLIO_VIEWS, renderPortfolio } from './views/portfolio.js';
+import { PORTFOLIO_SET_PAGE_SIZE, PORTFOLIO_VIEWS, renderPortfolio } from './views/portfolio.js';
 import { renderPriceIntelligenceDetail } from './views/price-intelligence-detail.js';
 import { renderProfile } from './views/profile.js';
 import { renderQuickInspector } from './views/quick-inspector.js';
-import { DISCOVER_RESULTS_PAGE_SIZE, DISCOVER_VIEWS, renderSearch } from './views/search.js';
+import { BROWSE_PRODUCTS_PAGE_SIZE, BROWSE_SETS_PAGE_SIZE, DISCOVER_RESULTS_PAGE_SIZE, DISCOVER_VIEWS, renderSearch } from './views/search.js';
 import { renderScanReview } from './views/scan.js';
 import { catalogReferenceForItem } from './core/catalog-identity.js';
 import { buildComparison, COMPARE_LIMIT, toggleCompareSelection } from './core/compare.js';
@@ -52,6 +53,8 @@ let activeRoute = parseAppRoute(location);
 let inspectorReturnTarget = null;
 let inspectorWasOpen = false;
 let searchGeneration = 0;
+let browseGeneration = 0;
+let browseFilterTimer = null;
 let routeHydrationId = 0;
 let identificationRun = 0;
 
@@ -117,7 +120,7 @@ function render(state = getState()) {
     const target = inspectorReturnTarget;
     queueMicrotask(() => {
       const origin = [...root.querySelectorAll('[data-action="open-detail"]')].find((element) =>
-        ['index', 'holdingId', 'watchKey'].every((key) => target[key] === undefined || element.dataset[key] === target[key]));
+        ['index', 'holdingId', 'watchKey', 'catalogScope'].every((key) => target[key] === undefined || element.dataset[key] === target[key]));
       origin?.focus({ preventScroll: true });
       inspectorReturnTarget = null;
     });
@@ -195,7 +198,7 @@ async function loadLocal() {
     },
     featureFlags: getState().featureFlags.loaded
       ? getState().featureFlags
-      : { ...getState().featureFlags, watchlists: runtimeFlag('ENABLE_WATCHLISTS', true), publicPriceIntelligence: false },
+      : { ...getState().featureFlags, watchlists: runtimeFlag('ENABLE_WATCHLISTS', true), setBrowsing: runtimeFlag('ENABLE_SET_BROWSING', true), publicPriceIntelligence: false },
     scanDraftCount: scanDrafts.length,
     ready: true
   };
@@ -246,6 +249,7 @@ function initializeAuth() {
 
 async function loadFeatureFlags() {
   const watchlistsEnabled = runtimeFlag('ENABLE_WATCHLISTS', true);
+  const setBrowsingEnabled = runtimeFlag('ENABLE_SET_BROWSING', true);
   const publicIntelligenceEnabled = runtimeFlag('ENABLE_PRICE_INTELLIGENCE', false);
   let remote = {};
   if (watchlistsEnabled || publicIntelligenceEnabled) {
@@ -253,6 +257,7 @@ async function loadFeatureFlags() {
   }
   setState({ featureFlags: {
     watchlists: watchlistsEnabled && (remote.watchlists ?? true),
+    setBrowsing: setBrowsingEnabled,
     publicPriceIntelligence: publicIntelligenceEnabled && Boolean(remote.public_price_intelligence),
     loaded: true
   } });
@@ -266,7 +271,7 @@ async function hydrateIntelligence() {
   const variantIds = intelligenceVariantIds(
     state.holdings,
     state.watchlistItems,
-    state.search?.results || []
+    [...(state.search?.results || []), ...(state.discover?.products || [])]
   );
   if (!variantIds.length || !state.featureFlags.publicPriceIntelligence) {
     setState({ intelligence: { ...state.intelligence, byVariant: {}, history: [], loading: false, error: '' } });
@@ -390,6 +395,46 @@ function resolveRouteContext(route, state = getState()) {
   if (route.key === 'add-review') activeDraft = state.scanDrafts?.[0] || activeDraft;
 }
 
+async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
+  if (route.key !== 'discover' || route.mode !== 'browse' || getState().featureFlags?.setBrowsing === false) return;
+  const generation = ++browseGeneration;
+  const requested = route.browse;
+  setState({ discover: { ...getState().discover, loading: true, error: '', warnings: [] } });
+  try {
+    const response = await loadCatalogSets({ gameId: requested.game, bypassCache });
+    if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
+    const selectedSet = requested.setId
+      ? response.sets.find((set) => set.gameId === requested.game && set.externalId === requested.setId)
+      : null;
+    if (requested.setId && !selectedSet) throw new Error('This set is not present in the current public catalog.');
+    let products = [];
+    if (selectedSet) {
+      products = await loadCatalogSetProducts({ gameId: requested.game, setId: requested.setId, bypassCache });
+      if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
+    }
+    setState({ discover: {
+      ...getState().discover,
+      loading: false,
+      sets: response.sets,
+      products,
+      selectedSet,
+      warnings: response.warnings || [],
+      error: '',
+      loadedGame: requested.game,
+      loadedSetId: requested.setId || ''
+    } });
+    if (products.length) await hydrateIntelligence();
+  } catch (error) {
+    if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
+    setState({ discover: {
+      ...getState().discover,
+      loading: false,
+      error: error.message || 'The set catalog could not be loaded.',
+      warnings: []
+    } });
+  }
+}
+
 function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = true } = {}) {
   activeRoute = route;
   if (route.key !== 'card-detail') routeHydrationId += 1;
@@ -411,10 +456,22 @@ function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = tru
   if (focus) root.focus({ preventScroll: true });
   if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
   if (state.ready && route.key === 'card-detail' && !activeDetail) hydrateCardRoute(route);
+  if (state.ready && route.key === 'discover' && route.mode === 'browse') hydrateBrowseRoute(route);
 }
 
 function navigate(view, context = {}) {
   applyAppRoute(appRouteForLegacyView(view, getState(), { ...context, detail: context.detail || activeDetail }));
+}
+
+function navigateBrowse(patch = {}) {
+  navigate('search', { discover: { ...getState().discover, ...patch, mode: 'browse' } });
+}
+
+function catalogActionItem(action) {
+  const source = action.dataset.catalogScope === 'browse'
+    ? getState().discover?.products || []
+    : getState().search.results;
+  return source[Number(action.dataset.index)];
 }
 
 function holdingForm(holding = null, { title = '', image = '', item: proposedItem = null } = {}) {
@@ -676,6 +733,7 @@ function confirmClear() {
     button.addEventListener('click', async () => {
       button.disabled = true;
       clearCatalogProviderCaches();
+      clearBrowseCatalogCache();
       await Promise.all([clearLocalData(), clearApplicationCacheStorage()]);
       closeModal();
       await loadLocal();
@@ -1191,6 +1249,35 @@ root.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]');
   if (!action) return;
   const id = action.dataset.id;
+  if (action.dataset.action === 'set-discover-mode') {
+    if (action.dataset.mode === 'browse' && getState().featureFlags?.setBrowsing !== false) navigateBrowse();
+    else navigate('search', { search: getState().search, discover: { ...getState().discover, mode: 'search' } });
+  }
+  if (action.dataset.action === 'select-browse-game') navigateBrowse({ game: action.dataset.game || 'all', setId: '' });
+  if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '' });
+  if (action.dataset.action === 'open-browse-set') navigateBrowse({ game: action.dataset.game, setId: action.dataset.setId });
+  if (action.dataset.action === 'browse-back-sets') navigateBrowse({ setId: '' });
+  if (action.dataset.action === 'retry-browse') hydrateBrowseRoute(activeRoute, { bypassCache: true });
+  if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (action.dataset.action === 'load-more-browse-sets') setState({ discover: { ...getState().discover, setLimit: (Number(getState().discover.setLimit) || BROWSE_SETS_PAGE_SIZE) + BROWSE_SETS_PAGE_SIZE } });
+  if (action.dataset.action === 'show-all-browse-sets') setState({ discover: { ...getState().discover, setLimit: getState().discover.sets.length } });
+  if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
+  if (action.dataset.action === 'load-more-browse-products') setState({ discover: { ...getState().discover, limit: (Number(getState().discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE } });
+  if (action.dataset.action === 'show-all-browse-products') setState({ discover: { ...getState().discover, limit: getState().discover.products.length } });
+  if (action.dataset.action === 'view-set-holdings') {
+    setState({ portfolio: {
+      ...getState().portfolio,
+      query: '',
+      category: action.dataset.setCategory || 'all',
+      filters: { setName: action.dataset.setName || '', setNameExact: true },
+      limit: 100,
+      selected: []
+    } });
+    navigate('portfolio', { portfolioSection: 'holdings' });
+    return;
+  }
+  if (action.dataset.action === 'clear-portfolio-set-filters') setState({ portfolio: { ...getState().portfolio, setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: PORTFOLIO_SET_PAGE_SIZE } });
+  if (action.dataset.action === 'load-more-portfolio-sets') setState({ portfolio: { ...getState().portfolio, setLimit: (Number(getState().portfolio.setLimit) || PORTFOLIO_SET_PAGE_SIZE) + PORTFOLIO_SET_PAGE_SIZE } });
   if (action.dataset.action === 'onboarding-storage') {
     await persistSettings({
       onboardingStorage: action.dataset.storage === 'cloud' ? 'cloud' : 'local',
@@ -1252,7 +1339,7 @@ root.addEventListener('click', async (event) => {
     }
   }
   if (action.dataset.action === 'add-catalog') {
-    const item = getState().search.results[Number(action.dataset.index)];
+    const item = catalogActionItem(action);
     if (item) holdingForm(null, { item });
   }
   if (action.dataset.action === 'toggle-compare') {
@@ -1267,10 +1354,10 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'clear-compare') setState({ compare: [] });
   if (action.dataset.action === 'open-compare') openCompareModal();
   if (action.dataset.action === 'open-detail') {
-    inspectorReturnTarget = Object.fromEntries(['index', 'holdingId', 'watchKey']
+    inspectorReturnTarget = Object.fromEntries(['index', 'holdingId', 'watchKey', 'catalogScope']
       .filter((key) => action.dataset[key] !== undefined).map((key) => [key, action.dataset[key]]));
     if (action.dataset.index !== undefined) {
-      const item = getState().search.results[Number(action.dataset.index)];
+      const item = catalogActionItem(action);
       if (item) openDetail({ origin: 'search', item });
     } else if (action.dataset.holdingId) {
       const holding = getState().holdings.find((entry) => entry.id === action.dataset.holdingId);
@@ -1314,7 +1401,7 @@ root.addEventListener('click', async (event) => {
     let options = {};
     let chooseFinish = false;
     if (action.dataset.index !== undefined) {
-      item = getState().search.results[Number(action.dataset.index)];
+      item = catalogActionItem(action);
       chooseFinish = catalogPriceOptionsForDisplay(item).length > 1;
     }
     if (action.dataset.detailWatch && activeDetail) {
@@ -1387,6 +1474,7 @@ root.addEventListener('click', async (event) => {
     else {
       portfolio.filters = { ...portfolio.filters };
       delete portfolio.filters[filter];
+      if (filter === 'setName') delete portfolio.filters.setNameExact;
     }
     setState({ portfolio });
   }
@@ -1475,6 +1563,38 @@ root.addEventListener('input', (event) => {
     const crop = activeDraft.crops.find((entry) => entry.id === cropId);
     if (crop) crop.query = event.target.value;
   }
+  const browseField = event.target.matches('[data-browse-set-query]')
+    ? ['query', '[data-browse-set-query]']
+    : event.target.matches('[data-browse-product-query]')
+      ? ['productQuery', '[data-browse-product-query]']
+      : null;
+  if (browseField) {
+    const [key, selector] = browseField;
+    const value = event.target.value;
+    const caret = event.target.selectionStart;
+    clearTimeout(browseFilterTimer);
+    browseFilterTimer = setTimeout(() => {
+      setState({ discover: { ...getState().discover, [key]: value, ...(key === 'query' ? { setLimit: BROWSE_SETS_PAGE_SIZE } : { limit: BROWSE_PRODUCTS_PAGE_SIZE }) } });
+      queueMicrotask(() => {
+        const input = root.querySelector(selector);
+        input?.focus({ preventScroll: true });
+        if (Number.isInteger(caret)) input?.setSelectionRange(caret, caret);
+      });
+    }, 120);
+  }
+  if (event.target.matches('[data-portfolio-set-query]')) {
+    const value = event.target.value;
+    const caret = event.target.selectionStart;
+    clearTimeout(browseFilterTimer);
+    browseFilterTimer = setTimeout(() => {
+      setState({ portfolio: { ...getState().portfolio, setQuery: value, setLimit: PORTFOLIO_SET_PAGE_SIZE } });
+      queueMicrotask(() => {
+        const input = root.querySelector('[data-portfolio-set-query]');
+        input?.focus({ preventScroll: true });
+        if (Number.isInteger(caret)) input?.setSelectionRange(caret, caret);
+      });
+    }, 120);
+  }
 });
 
 root.addEventListener('keydown', (event) => {
@@ -1517,13 +1637,20 @@ root.addEventListener('change', async (event) => {
     const data = Object.fromEntries(new FormData(form));
     setState({ search: { ...getState().search, query: data.query || '', category: data.category || 'all', provider: data.provider || 'all', filters: {} } });
   }
+  if (event.target.matches('[data-browse-set-sort]')) setState({ discover: { ...getState().discover, sort: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-set-scope]')) setState({ discover: { ...getState().discover, scope: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-product-sort]')) setState({ discover: { ...getState().discover, productSort: event.target.value, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (event.target.matches('[data-portfolio-query]')) setState({ portfolio: { ...getState().portfolio, query: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-category]')) setState({ portfolio: { ...getState().portfolio, category: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-sort]')) setState({ portfolio: { ...getState().portfolio, sort: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-filter]')) {
     const key = event.target.dataset.portfolioFilter;
-    setState({ portfolio: { ...getState().portfolio, filters: { ...getState().portfolio.filters, [key]: event.target.value }, limit: 100 } });
+    const filters = { ...getState().portfolio.filters, [key]: event.target.value };
+    if (key === 'setName') delete filters.setNameExact;
+    setState({ portfolio: { ...getState().portfolio, filters, limit: 100 } });
   }
+  if (event.target.matches('[data-portfolio-set-category]')) setState({ portfolio: { ...getState().portfolio, setCategory: event.target.value, setLimit: PORTFOLIO_SET_PAGE_SIZE } });
+  if (event.target.matches('[data-portfolio-set-sort]')) setState({ portfolio: { ...getState().portfolio, setSort: event.target.value, setLimit: PORTFOLIO_SET_PAGE_SIZE } });
   if (event.target.matches('[data-watchlist-query]')) setState({ watchlist: { ...getState().watchlist, query: event.target.value } });
   if (event.target.matches('[data-watchlist-category]')) setState({ watchlist: { ...getState().watchlist, category: event.target.value } });
   if (event.target.matches('[data-watchlist-sort]')) setState({ watchlist: { ...getState().watchlist, sort: event.target.value } });
@@ -1621,7 +1748,7 @@ addEventListener('popstate', () => {
 });
 loadLocal().then(() => {
   if (activeRoute.key === 'add-review') startDraftIdentification(activeDraft);
-  return hydrateCardRoute(activeRoute);
+  return Promise.all([hydrateCardRoute(activeRoute), hydrateBrowseRoute(activeRoute)]);
 }).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
   setState({ ready: true });
   showToast(error.message || 'Could not open local portfolio', 'error', 8000);

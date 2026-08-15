@@ -87,6 +87,74 @@ test('Discover retains a complete result set while rendering large catalogs in b
   assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
 });
 
+test('Discover browse renders a compact game-to-set index without exposing private sources', () => {
+  const html = renderSearch(state({
+    discover: {
+      mode: 'browse', game: 'pokemon', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
+      sets: [{ id: 'pokemon:swsh12', externalId: 'swsh12', gameId: 'pokemon', game: 'Pokémon', name: 'Silver Tempest', code: 'SIT', year: '2022', releasedAt: '2022-11-11', cardCount: 195, series: 'Sword & Shield', supplemental: false }],
+      products: []
+    }
+  }));
+  assert.match(html, /aria-label="Discover mode"/);
+  assert.match(html, /Browse sets/);
+  assert.match(html, /data-set-id="swsh12"/);
+  assert.match(html, /Silver Tempest/);
+  assert.match(html, /SIT · 2022 · 195 cards/);
+  assert.match(html, /More games will appear as coverage expands/);
+  assert.doesNotMatch(html, /TCGCSV|Data source/);
+  assert.doesNotMatch(html, /catalog-search/);
+});
+
+test('Discover browse retains a complete set manifest while rendering bounded tiles', () => {
+  const sets = Array.from({ length: 121 }, (_, index) => ({
+    id: `magic:set-${index}`,
+    externalId: `set-${index}`,
+    gameId: 'magic',
+    game: 'Magic: The Gathering',
+    name: `Set ${String(index).padStart(3, '0')}`,
+    code: `S${index}`,
+    releasedAt: `2025-01-${String((index % 28) + 1).padStart(2, '0')}`,
+    year: '2025',
+    cardCount: index + 1,
+    supplemental: false
+  }));
+  const html = renderSearch(state({
+    discover: { mode: 'browse', game: 'magic', setId: '', query: '', sort: 'alpha', scope: 'all', setLimit: 120, loading: false, warnings: [], error: '', sets, products: [] }
+  }));
+  assert.match(html, /Showing 120 of 121 sets/);
+  assert.match(html, /data-action="load-more-browse-sets">Show 1 more/);
+  assert.match(html, /data-action="show-all-browse-sets">Show all 121/);
+  assert.equal((html.match(/class="browse-set-tile"/g) || []).length, 120);
+});
+
+test('Discover set view renders complete card batches with browse-scoped actions and no SKU claim', () => {
+  const products = Array.from({ length: 121 }, (_, index) => ({
+    ...item,
+    id: `pokemon:card-${index + 1}`,
+    externalId: `card-${index + 1}`,
+    provider: 'pokemon',
+    category: 'pokemon',
+    game: 'Pokémon',
+    setName: 'Silver Tempest',
+    number: String(index + 1),
+    name: `Card ${index + 1}`,
+    price: null,
+    priceOptions: []
+  }));
+  const html = renderSearch(state({
+    discover: {
+      mode: 'browse', game: 'pokemon', setId: 'swsh12', query: '', sort: 'newest', scope: 'all', productQuery: '', productSort: 'number', limit: 120, loading: false, warnings: [], error: '',
+      selectedSet: { externalId: 'swsh12', gameId: 'pokemon', name: 'Silver Tempest', code: 'SIT', year: '2022' },
+      sets: [], products
+    }
+  }));
+  assert.match(html, /121 cards/);
+  assert.match(html, /Showing 1 more|Show 1 more/);
+  assert.equal((html.match(/data-action="open-detail" data-catalog-scope="browse" data-index=/g) || []).length, 120);
+  assert.doesNotMatch(html, /match-badge/);
+  assert.doesNotMatch(html, /Near Mint|English SKU|Condition price/);
+});
+
 test('Discover shows approved 30-day trend and 1/3/6/12-month estimates on results', () => {
   const forecastItem = {
     ...item,

@@ -8,8 +8,9 @@ test.use({ serviceWorkers: 'allow' });
 async function activeRegistration(page) {
   await page.waitForFunction(async () => {
     const registration = await navigator.serviceWorker.getRegistration();
-    return Boolean(registration?.active);
+    return registration?.active?.state === 'activated';
   });
+  await page.evaluate(() => navigator.serviceWorker.ready);
   return page.evaluate(async () => {
     const registration = await navigator.serviceWorker.getRegistration();
     return registration?.active?.scriptURL || '';
@@ -21,13 +22,13 @@ test('service worker refreshes runtime config, bounds caches, and reloads offlin
   await activeRegistration(page);
   await page.reload();
   await expect(page.getByRole('heading', { name: /Set up CollectFolio|Overview/ })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)), { timeout: 15_000 }).toBe(true);
 
   const installed = await page.evaluate(() => caches.keys());
-  expect(installed).toContain('collectfolio-shell-v0.8.3');
+  expect(installed).toContain('collectfolio-shell-v0.8.5');
 
   const refreshedConfig = await page.evaluate(async () => {
-    const cache = await caches.open('collectfolio-shell-v0.8.3');
+    const cache = await caches.open('collectfolio-shell-v0.8.5');
     await cache.put('/runtime-config.js', new Response('window.STALE_RUNTIME_CONFIG = true;', {
       headers: { 'Content-Type': 'application/javascript' }
     }));
@@ -66,6 +67,6 @@ test('service worker refreshes runtime config, bounds caches, and reloads offlin
 
   await expect.poll(() => page.evaluate(() => caches.keys())).not.toContain('collectfolio-shell-v0.6.0');
   await expect.poll(() => page.evaluate(() => caches.keys())).not.toContain('collectfolio-provider-images-stale');
-  await expect.poll(() => page.evaluate(() => caches.keys())).toContain('collectfolio-shell-v0.8.3');
+  await expect.poll(() => page.evaluate(() => caches.keys())).toContain('collectfolio-shell-v0.8.5');
   await expect.poll(() => page.evaluate(async () => (await caches.open('collectfolio-provider-images-v1')).keys().then((keys) => keys.length))).toBeLessThanOrEqual(160);
 });

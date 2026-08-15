@@ -2,6 +2,7 @@ import { fetchJSON } from '../../core/utils.js';
 
 const cardsEndpoint = 'https://api.scryfall.com/cards';
 const endpoint = `${cardsEndpoint}/search`;
+const setsEndpoint = 'https://api.scryfall.com/sets';
 const PAGE_DELAY_MS = 100;
 
 function pageDelay() {
@@ -42,6 +43,37 @@ export function normalizeScryfallCard(card) {
   };
 }
 
+export function normalizeScryfallSet(set) {
+  const externalId = String(set?.code || '').trim().toLowerCase();
+  if (!externalId) return null;
+  const cardCount = Number(set.card_count);
+  const setType = String(set.set_type || '');
+  return {
+    id: `magic:${externalId}`,
+    externalId,
+    provider: 'scryfall',
+    gameId: 'magic',
+    game: 'Magic: The Gathering',
+    name: set.name || externalId.toUpperCase(),
+    code: externalId.toUpperCase(),
+    series: '',
+    releasedAt: set.released_at || '',
+    year: String(set.released_at || '').slice(0, 4),
+    productCount: Number.isFinite(cardCount) ? cardCount : null,
+    cardCount: Number.isFinite(cardCount) ? cardCount : null,
+    setType,
+    supplemental: !['core', 'expansion'].includes(setType)
+  };
+}
+
+export async function listScryfallSets() {
+  const payload = await fetchJSON(setsEndpoint, { headers: { Accept: 'application/json' } });
+  return (payload.data || [])
+    .filter((set) => set?.digital !== true && Number(set?.card_count) > 0)
+    .map(normalizeScryfallSet)
+    .filter(Boolean);
+}
+
 export async function searchScryfall(query) {
   const url = new URL(endpoint);
   url.searchParams.set('q', query);
@@ -64,6 +96,12 @@ export async function searchScryfall(query) {
     if (nextPage && !requestedPages.has(nextPage)) await pageDelay();
   }
   return cards.map(normalizeScryfallCard);
+}
+
+export async function getScryfallSetCards(setId) {
+  const code = String(setId || '').trim().toLowerCase();
+  if (!/^[a-z0-9]+$/.test(code)) throw new Error('This Magic set identifier is not supported.');
+  return searchScryfall(`e:${code}`);
 }
 
 export async function getScryfallCard(externalId) {

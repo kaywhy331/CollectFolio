@@ -14,7 +14,8 @@ test('recommended routes resolve to dedicated renderers and expose only supporte
       .map((path) => parseAppRoute(path).legacyView),
     ['home', 'portfolio', 'portfolio', 'search', 'insights', 'add', 'scan', 'profile']
   );
-  assert.equal(parseAppRoute('/portfolio?view=sets').canonicalPath, '/portfolio?view=holdings');
+  assert.equal(parseAppRoute('/portfolio?view=sets').canonicalPath, '/portfolio?view=sets');
+  assert.equal(parseAppRoute('/portfolio?view=sets').portfolioSection, 'sets');
   assert.equal(parseAppRoute('/portfolio?view=sold').unsupported, 'portfolio-sold');
   assert.equal(parseAppRoute('/insights?view=alerts').canonicalPath, '/insights?view=alerts');
   assert.equal(parseAppRoute('/insights?view=track-record').unsupported, '');
@@ -27,6 +28,25 @@ test('discover route restores bounded supported search state in canonical order'
   assert.deepEqual(route.search, { query: 'Black Lotus', category: 'magic', provider: 'scryfall' });
   assert.equal(route.canonicalPath, '/discover?mode=search&q=Black+Lotus&category=magic&provider=scryfall');
   assert.equal(parseAppRoute('/discover?mode=market&provider=unknown').unsupported, 'discover-market');
+});
+
+test('browse routes preserve progressive game and set identity without hard-coding providers', () => {
+  const root = parseAppRoute('/discover?mode=browse');
+  assert.equal(root.mode, 'browse');
+  assert.equal(root.canonicalPath, '/discover/browse');
+  assert.deepEqual(root.browse, { game: 'all', setId: '', sort: 'newest', scope: 'all', productSort: 'number' });
+
+  const game = parseAppRoute('/discover/pokemon?sort=alpha&scope=main');
+  assert.equal(game.canonicalPath, '/discover/pokemon?sort=alpha&scope=main');
+  assert.deepEqual(game.browse, { game: 'pokemon', setId: '', sort: 'alpha', scope: 'main', productSort: 'number' });
+
+  const set = parseAppRoute('/discover/magic/mkm?sort=name');
+  assert.equal(set.canonicalPath, '/discover/magic/mkm?sort=name');
+  assert.deepEqual(set.browse, { game: 'magic', setId: 'mkm', sort: 'newest', scope: 'all', productSort: 'name' });
+
+  const dynamic = parseAppRoute('/discover/future-game/set%3A1');
+  assert.equal(dynamic.browse.game, 'future-game');
+  assert.equal(dynamic.browse.setId, 'set:1');
 });
 
 test('detail routes preserve safe opaque identities and map to their underlying destination', () => {
@@ -45,8 +65,10 @@ test('legacy view mappings create restorable route state', () => {
     portfolio: { section: 'watchlist', query: '', category: 'all', sort: 'value-desc' }
   };
   assert.equal(appRouteForLegacyView('search', state).canonicalPath, '/discover?mode=search&q=Mew&category=pokemon&provider=pokemon');
+  assert.equal(appRouteForLegacyView('search', state, { discover: { mode: 'browse', game: 'pokemon', setId: 'swsh12' } }).canonicalPath, '/discover/pokemon/swsh12');
   assert.equal(appRouteForLegacyView('search', state, { detail: null }).canonicalPath, '/discover?mode=search&q=Mew&category=pokemon&provider=pokemon');
   assert.equal(appRouteForLegacyView('portfolio', state).canonicalPath, '/portfolio?view=watchlist');
+  assert.equal(appRouteForLegacyView('portfolio', { ...state, portfolio: { ...state.portfolio, section: 'sets' } }).canonicalPath, '/portfolio?view=sets');
   assert.equal(appRouteForLegacyView('insights', { ...state, insights: { view: 'alerts', horizon: 90 } }).canonicalPath, '/insights?view=alerts');
   assert.equal(appRouteForLegacyView('detail', state, { detail: { holding: { id: 'h 1' } } }).canonicalPath, '/holdings/h%201');
   assert.equal(appRouteForLegacyView('detail', state, { detail: {
@@ -65,6 +87,14 @@ test('legacy view mappings create restorable route state', () => {
   });
   assert.deepEqual(restored.search.results, []);
   assert.deepEqual(restored.search.warnings, []);
+  const browsed = routeStatePatch(parseAppRoute('/discover/pokemon/swsh12'), {
+    ...state,
+    discover: { mode: 'browse', game: 'magic', setId: 'mkm', sets: [{ id: 'stale' }], products: [{ id: 'stale' }], query: 'old', productQuery: 'old' }
+  });
+  assert.equal(browsed.discover.mode, 'browse');
+  assert.equal(browsed.discover.game, 'pokemon');
+  assert.deepEqual(browsed.discover.sets, []);
+  assert.deepEqual(browsed.discover.products, []);
   const insights = routeStatePatch(parseAppRoute('/insights?view=forecasts&horizon=180'), {
     ...state, insights: { view: 'alerts', horizon: 90, alertFilter: 'unread' }
   });

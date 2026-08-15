@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.3';
+const CACHE = 'collectfolio-shell-v0.8.5';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
@@ -10,12 +10,12 @@ const SHELL = [
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
   './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js',
   './assets/js/core/pricing-policy.js', './assets/js/core/market-series.js', './assets/js/core/compare.js', './assets/js/core/router.js',
-  './assets/js/core/view-models.js', './assets/js/core/settings.js',
+  './assets/js/core/view-models.js', './assets/js/core/settings.js', './assets/js/core/portfolio-sets.js',
   './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/local-scenarios.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
   './assets/js/views/insights.js', './assets/js/views/onboarding.js',
   './assets/js/views/price-intelligence-detail.js', './assets/js/views/quick-inspector.js', './assets/js/views/holding-form.js',
-  './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js',
+  './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js', './assets/js/services/catalog-browse.js',
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/image-algorithms.js',
   './assets/js/services/image.js', './assets/js/services/scan-workbench.js',

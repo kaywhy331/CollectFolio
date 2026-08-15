@@ -3,7 +3,9 @@ import { test, expect } from '@playwright/test';
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  if (await onboarding.isVisible().catch(() => false)) {
+  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  await expect(onboarding.or(overview).first()).toBeVisible();
+  if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
     await expect(onboarding).toBeHidden();
   }

@@ -238,6 +238,8 @@ Selecting a catalog result opens a prefilled exact-printing summary rather than 
 
 Market and cost lines are drawn separately so adding a collectible is not visually represented as pure market appreciation. The 90-day SVG includes an explicit currency scale, date anchors, series legend, and exact latest values; it does not rely on an unlabeled line shape.
 
+Portfolio Sets is a derived local view, not a new persistence store. Named sets are grouped by normalized game/category plus set name; exact canonical variants or provider printing/finish identities deduplicate multiple acquisition lots, while copies and lots remain separately counted. Tracked value includes only rights-permitted or manual values in the selected portfolio currency. Unpriced, other-currency, and missing-set records remain explicit. Search, category filters, and sorting only narrow or reorder the retained groups, and rendering begins at 60 groups. The browser never guesses a catalog total or completion percentage; those stay unavailable until an authoritative set manifest is linked.
+
 ## 6. Catalog provider abstraction
 
 Every provider normalizes into the internal item shape. The app never stores a provider ID as the holding’s primary key.
@@ -246,6 +248,7 @@ Every provider normalizes into the internal item shape. The app never stores a p
 
 - Search endpoint: `GET https://api.pokemontcg.io/v2/cards`.
 - Set discovery endpoint: `GET https://api.pokemontcg.io/v2/sets`, with TCGdex `/v2/en/sets` used for resilient set-name discovery.
+- Browse-set cards use the same paginated card endpoint constrained by exact set ID and retain every metadata-only result.
 - Detail endpoint: `/v2/cards/{id}`.
 - Query parsing prefers the longest contiguous exact set-name match, removes those tokens, and combines the remaining card name and number with the resolved set ID. Thus a set name searches the full set while `card name + set name` searches their intersection; numeric set names such as `Base Set 2` are resolved before card-number parsing.
 - Set metadata is cached in browser storage for 24 hours. A failed primary set-ID lookup has a short backoff and falls through to a set-name clause instead of blocking discovery.
@@ -256,6 +259,8 @@ Every provider normalizes into the internal item shape. The app never stores a p
 ### Magic: The Gathering
 
 - Search endpoint: `GET https://api.scryfall.com/cards/search`.
+- Set discovery endpoint: `GET https://api.scryfall.com/sets`; digital-only and empty sets are omitted from the paper-card browser.
+- Browse-set cards use exact set-code queries and follow every provider page.
 - Detail endpoint: `/cards/{id}`.
 - Printings remain distinct.
 - Regular, foil, and etched USD prices become selectable options.
@@ -264,6 +269,7 @@ Every provider normalizes into the internal item shape. The app never stores a p
 ### Yu-Gi-Oh!
 
 - Endpoint: `GET https://db.ygoprodeck.com/api/v7/cardinfo.php`.
+- Set discovery endpoint: `GET https://db.ygoprodeck.com/api/v7/cardsets.php`; exact set-name card requests are reduced back to matching printings.
 - Each returned set printing becomes a distinct internal candidate using set code.
 - A small remote image is displayed during search.
 - The service worker stores successfully retrieved provider images in a browser-local cache for repeat views.
@@ -272,6 +278,8 @@ Every provider normalizes into the internal item shape. The app never stores a p
 ### Failure isolation
 
 Catalog searches use `Promise.allSettled`. One provider failure produces a partial warning but retains successful provider results.
+
+Discover exposes Search cards and Browse sets as peer intents. Browse routes are `/discover/browse`, `/discover/{game}`, and `/discover/{game}/{set}`. Games and sets use a provider-neutral adapter, while set products keep their exact provider printing identity. Filtering and ranking only reorder or narrow the in-memory view; they never truncate the retained provider response. Product rendering starts at 120 cards and can reveal the complete set. `ENABLE_SET_BROWSING` provides a static rollback gate. Private `tcgcsv_*` tables are never read by this browser path.
 
 ### Local caching
 
@@ -535,7 +543,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.3` includes the Settings, onboarding, local-scenario, image-identification, and complete paginated catalog-search modules plus the visual-index manifest. Navigation
+`collectfolio-shell-v0.8.5` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, and local Portfolio Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth. The

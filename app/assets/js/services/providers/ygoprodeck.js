@@ -1,6 +1,7 @@
 import { fetchJSON } from '../../core/utils.js';
 
 const endpoint = 'https://db.ygoprodeck.com/api/v7/cardinfo.php';
+const setsEndpoint = 'https://db.ygoprodeck.com/api/v7/cardsets.php';
 
 function isNoMatch(error) {
   return error?.status === 400 && /^No card matching your query was found/i.test(error?.payload?.error || '');
@@ -38,6 +39,33 @@ export function normalizeYGOCard(card) {
   });
 }
 
+export function normalizeYGOSet(set) {
+  const externalId = String(set?.set_code || '').trim();
+  if (!externalId) return null;
+  const cardCount = Number(set.num_of_cards);
+  return {
+    id: `yugioh:${externalId}`,
+    externalId,
+    provider: 'ygoprodeck',
+    gameId: 'yugioh',
+    game: 'Yu-Gi-Oh!',
+    name: set.set_name || externalId,
+    code: externalId,
+    series: '',
+    releasedAt: set.tcg_date || '',
+    year: String(set.tcg_date || '').slice(0, 4),
+    productCount: Number.isFinite(cardCount) ? cardCount : null,
+    cardCount: Number.isFinite(cardCount) ? cardCount : null,
+    setType: 'expansion',
+    supplemental: false
+  };
+}
+
+export async function listYGOSets() {
+  const payload = await fetchJSON(setsEndpoint);
+  return (Array.isArray(payload) ? payload : []).map(normalizeYGOSet).filter(Boolean);
+}
+
 export async function searchYGOPRODeck(query) {
   const url = new URL(endpoint);
   url.searchParams.set('fname', String(query).trim());
@@ -49,6 +77,24 @@ export async function searchYGOPRODeck(query) {
     throw error;
   }
   return (payload.data || []).flatMap(normalizeYGOCard);
+}
+
+export async function getYGOSetCards(setId) {
+  const externalId = String(setId || '').trim();
+  const set = (await listYGOSets()).find((candidate) => candidate.externalId === externalId);
+  if (!set) throw new Error('This Yu-Gi-Oh! set could not be found.');
+  const url = new URL(endpoint);
+  url.searchParams.set('cardset', set.name);
+  let payload;
+  try {
+    payload = await fetchJSON(url);
+  } catch (error) {
+    if (isNoMatch(error)) return [];
+    throw error;
+  }
+  const expectedName = set.name.toLocaleLowerCase();
+  return (payload.data || []).flatMap(normalizeYGOCard)
+    .filter((card) => String(card.setName || '').toLocaleLowerCase() === expectedName);
 }
 
 export async function getYGOCard(externalId) {

@@ -12,7 +12,9 @@ const required = [
   'app/index.html', 'app/manifest.webmanifest', 'app/runtime-config.js', 'app/sw.js',
   'app/assets/css/app.css', 'app/assets/js/app.js', 'app/assets/js/core/db.js', 'app/assets/js/core/calculations.js',
   'app/assets/js/core/router.js', 'app/assets/js/core/view-models.js', 'app/assets/js/core/settings.js',
+  'app/assets/js/core/portfolio-sets.js',
   'app/assets/js/services/catalog.js', 'app/assets/js/services/image-algorithms.js', 'app/assets/js/services/image.js',
+  'app/assets/js/services/catalog-browse.js',
   'app/assets/js/services/scan-workbench.js', 'app/assets/js/services/scan-review.js', 'app/assets/js/services/supabase.js',
   'app/assets/js/services/visual-index.js', 'app/assets/data/visual-index/pokemon-v1/manifest.json',
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
@@ -107,7 +109,7 @@ const required = [
   'tests/redesign-protection.test.js',
   'tests/local-scenarios.test.js',
   'tests/router.test.js', 'tests/view-models.test.js', 'tests/overview.test.js',
-  'tests/discover.test.js', 'tests/portfolio-redesign.test.js',
+  'tests/discover.test.js', 'tests/catalog-browse.test.js', 'tests/portfolio-redesign.test.js', 'tests/portfolio-sets.test.js',
   'tests/intake-management.test.js', 'tests/watchlist-management.test.js', 'tests/insights.test.js',
   'tests/settings.test.js', 'tests/phase5-migration.test.js', 'tests/phase5-ui.test.js',
   'tests/forecast-engine-migration.test.js',
@@ -120,7 +122,7 @@ const required = [
   'tests/fixtures/redesign/indexeddb-v4-backup-v2.json',
   'tests/fixtures/redesign/cloud-sync.json',
   'tests/fixtures/redesign/legacy-routes.json',
-  'tests/e2e/catalog-pagination.spec.js', 'tests/e2e/protection-baseline.spec.js',
+  'tests/e2e/catalog-pagination.spec.js', 'tests/e2e/browse-sets.spec.js', 'tests/e2e/portfolio-sets.spec.js', 'tests/e2e/protection-baseline.spec.js',
   'tests/e2e/phase5.spec.js', 'tests/e2e/service-worker.spec.js',
   'tests/e2e/protection-baseline.spec.js-snapshots/legacy-overview-empty-chromium-linux.png',
   'tests/e2e/protection-baseline.spec.js-snapshots/core-slice-overview-empty-chromium-linux.png'
@@ -143,8 +145,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.3' || packageLock.version !== '0.8.3' || packageLock.packages?.['']?.version !== '0.8.3') {
-  errors.push('Application and lockfile versions must agree on 0.8.3.');
+if (packageJSON.version !== '0.8.5' || packageLock.version !== '0.8.5' || packageLock.packages?.['']?.version !== '0.8.5') {
+  errors.push('Application and lockfile versions must agree on 0.8.5.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -366,8 +368,8 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.3-dev'")) errors.push('Local runtime config must identify the 0.8.3 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.3'")) errors.push('Production builds must default APP_VERSION to 0.8.3.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.5-dev'")) errors.push('Local runtime config must identify the 0.8.5 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.5'")) errors.push('Production builds must default APP_VERSION to 0.8.5.');
 
 const ordinaryUiFiles = [
   resolve(app, 'index.html'), resolve(app, 'assets/js/app.js'),
@@ -461,10 +463,10 @@ for (const contract of ['SETTINGS_SCHEMA_VERSION = 1', 'migrateSettingsRecords',
   if (!settingsModule.includes(contract)) errors.push(`Phase 5 settings module is missing ${contract}.`);
 }
 if (!application.includes("await persistSettings({ currency, onboardingStep: 'add' }")) errors.push('Onboarding currency submission must await durable settings persistence.');
-if (!runtimeConfig.includes('ENABLE_WATCHLISTS: true') || !runtimeConfig.includes('ENABLE_PRICE_INTELLIGENCE: false') || !runtimeConfig.includes('ENABLE_CLOUD_DATA_REMOVAL: false')) {
+if (!runtimeConfig.includes('ENABLE_WATCHLISTS: true') || !runtimeConfig.includes('ENABLE_SET_BROWSING: true') || !runtimeConfig.includes('ENABLE_PRICE_INTELLIGENCE: false') || !runtimeConfig.includes('ENABLE_CLOUD_DATA_REMOVAL: false')) {
   errors.push('Runtime defaults must keep Watchlist independent and unqualified hosted capabilities fail-closed.');
 }
-if (!buildScript.includes("ENABLE_WATCHLISTS ?? 'true'") || !buildScript.includes("ENABLE_PRICE_INTELLIGENCE ?? 'false'") || !buildScript.includes("ENABLE_CLOUD_DATA_REMOVAL ?? 'false'")) {
+if (!buildScript.includes("ENABLE_WATCHLISTS ?? 'true'") || !buildScript.includes("ENABLE_SET_BROWSING ?? 'true'") || !buildScript.includes("ENABLE_PRICE_INTELLIGENCE ?? 'false'") || !buildScript.includes("ENABLE_CLOUD_DATA_REMOVAL ?? 'false'")) {
   errors.push('Build-time feature defaults must keep Watchlist independent and unqualified hosted capabilities fail-closed.');
 }
 const database = await readFile(resolve(app, 'assets/js/core/db.js'), 'utf8');
@@ -473,7 +475,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.3'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.3.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.5'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.5.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;

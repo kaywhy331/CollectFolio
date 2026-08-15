@@ -3,12 +3,14 @@ import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-c
 import { filterAndSortHoldings, holdingCostBasis, holdingCostCurrency, holdingGain, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioSummary, returnPercent } from '../core/calculations.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
+import { filterAndSortPortfolioSets, groupPortfolioSets } from '../core/portfolio-sets.js';
 import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
 import { findWatchedItem } from '../services/watchlist.js';
 
 export const PORTFOLIO_VIEWS = Object.freeze(['gallery', 'list']);
+export const PORTFOLIO_SET_PAGE_SIZE = 60;
 const SUPPORT_LABELS = Object.freeze([
   'Card identified; pricing pending', 'Current market price', 'Market history available',
   'Modeled value available', 'Forecast available', 'Forecast fully evaluated'
@@ -19,6 +21,7 @@ export function renderPortfolio(state) {
   const section = watchlistsEnabled ? state.portfolio.section || 'holdings' : 'holdings';
   const labels = {
     holdings: ['Collection', 'Portfolio', `${state.holdings.length} unique holdings across your local portfolio.`],
+    sets: ['Collection map', 'Sets', 'Group the exact printings already recorded in your local portfolio.'],
     watchlist: ['Collection', 'Watchlist', `${state.watchlistItems.length} exact variant${state.watchlistItems.length === 1 ? '' : 's'} saved on this device.`],
     forecasts: ['Evidence before prediction', 'Insights', 'Model output stays gated until its data rights and validation requirements pass.']
   };
@@ -27,14 +30,58 @@ export function renderPortfolio(state) {
     ? '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>'
     : '';
   return `${pageHeader(eyebrow, title, subtitle, refresh)}
-    ${watchlistsEnabled && section !== 'forecasts' ? segmentedControl(section) : ''}
-    ${section === 'watchlist' ? watchlistSection(state) : section === 'forecasts' ? forecastSection(state) : holdingsSection(state)}`;
+    ${section !== 'forecasts' ? segmentedControl(section, watchlistsEnabled) : ''}
+    ${section === 'sets' ? setsSection(state) : section === 'watchlist' ? watchlistSection(state) : section === 'forecasts' ? forecastSection(state) : holdingsSection(state)}`;
 }
 
-function segmentedControl(section) {
+function segmentedControl(section, watchlistsEnabled) {
+  const sections = [['holdings', 'Holdings'], ['sets', 'Sets'], ...(watchlistsEnabled ? [['watchlist', 'Watchlist']] : [])];
   return `<div class="segmented-control" role="tablist" aria-label="Portfolio sections">
-    ${[['holdings', 'Holdings'], ['watchlist', 'Watchlist']].map(([value, label]) => `<button type="button" role="tab" class="segment-button ${section === value ? 'active' : ''}" aria-selected="${section === value}" data-portfolio-section="${value}">${label}</button>`).join('')}
+    ${sections.map(([value, label]) => `<button type="button" role="tab" class="segment-button ${section === value ? 'active' : ''}" aria-selected="${section === value}" data-portfolio-section="${value}">${label}</button>`).join('')}
   </div>`;
+}
+
+function readableDate(value) {
+  if (!value || Number.isNaN(new Date(value).valueOf())) return 'Date unavailable';
+  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+function setValueStatus(group, currency) {
+  const value = group.pricedHoldingCount ? formatCurrency(group.marketValue, currency) : 'Unavailable';
+  const gaps = [
+    group.unpricedHoldingCount ? `${group.unpricedHoldingCount} unpriced` : '',
+    group.excludedCurrencyCount ? `${group.excludedCurrencyCount} other-currency excluded` : ''
+  ].filter(Boolean).join(' · ');
+  return { value, gaps: gaps || `${group.pricedHoldingCount} valued lot${group.pricedHoldingCount === 1 ? '' : 's'}` };
+}
+
+function portfolioSetCard(group, currency) {
+  const cover = group.coverHolding || {};
+  const value = setValueStatus(group, currency);
+  return `<article class="portfolio-set-card"><div class="portfolio-set-art">${externalImage({ ...(cover.item || {}), userImage: cover.userImage }, 'holding-image')}<span>${escapeHTML(group.game)}</span></div><div class="portfolio-set-main"><div><p class="eyebrow">${escapeHTML(group.category)}</p><h3>${escapeHTML(group.setName)}</h3><p>${group.uniquePrintingCount} distinct printing${group.uniquePrintingCount === 1 ? '' : 's'} · ${group.copyCount} cop${group.copyCount === 1 ? 'y' : 'ies'} across ${group.holdingCount} acquisition lot${group.holdingCount === 1 ? '' : 's'}</p></div><dl><div><dt>Tracked value</dt><dd>${escapeHTML(value.value)}<small>${escapeHTML(value.gaps)}</small></dd></div><div><dt>Last changed</dt><dd>${escapeHTML(readableDate(group.latestUpdatedAt))}<small>Saved on this device</small></dd></div></dl><p class="fine-print">Catalog total not linked; completion percentage is intentionally unavailable.</p><button class="button secondary small" type="button" data-action="view-set-holdings" data-set-name="${escapeAttribute(group.setName)}" data-set-category="${escapeAttribute(group.category)}">View holdings</button></div></article>`;
+}
+
+function setsSection(state) {
+  const currency = state.settings.currency || 'USD';
+  const collection = groupPortfolioSets(state.holdings, { currency });
+  if (!state.holdings.length) return emptyState('Build your first set group', 'Add a catalog card or record a set name on a custom collectible. Sets are derived from holdings already saved on this device.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Add collectible</button><button class="button ghost" type="button" data-go="search">Browse cards</button></div>');
+  if (!collection.totalSets) return emptyState('No set names recorded yet', `${collection.unassignedHoldings} holding${collection.unassignedHoldings === 1 ? '' : 's'} remain safely in Holdings, but cannot be grouped until a set name is recorded.`, '<button class="button" type="button" data-go="portfolio" data-portfolio-target="holdings">Review holdings</button>');
+  const controls = {
+    query: state.portfolio.setQuery || '',
+    category: state.portfolio.setCategory || 'all',
+    sort: state.portfolio.setSort || 'recent-desc'
+  };
+  const shown = filterAndSortPortfolioSets(collection.sets, controls);
+  const limit = Math.max(1, Number(state.portfolio.setLimit) || PORTFOLIO_SET_PAGE_SIZE);
+  const visible = shown.slice(0, limit);
+  const categories = [...new Set(collection.sets.map((group) => group.category))].sort();
+  const unassigned = collection.unassignedHoldings
+    ? `<p class="fine-print" role="status">${collection.unassignedHoldings} holding${collection.unassignedHoldings === 1 ? '' : 's'} (${collection.unassignedCopies} cop${collection.unassignedCopies === 1 ? 'y' : 'ies'}) without a set name stay in Holdings and are not hidden inside a guessed group.</p>`
+    : '';
+  return `<section class="portfolio-sets-summary" aria-label="Set collection summary"><dl><div><dt>Named sets</dt><dd>${collection.totalSets}</dd></div><div><dt>Distinct printings</dt><dd>${collection.distinctPrintings}</dd></div><div><dt>Copies in named sets</dt><dd>${collection.totalCopies}</dd></div></dl><p>Counts come only from exact local holding identity. An authoritative catalog total must be linked before CollectFolio will show set completion.</p>${unassigned}</section>
+    <section class="portfolio-set-controls" aria-label="Set controls"><label class="sr-only" for="portfolio-set-query">Search collected sets</label><input id="portfolio-set-query" type="search" value="${escapeAttribute(controls.query)}" placeholder="Search collected sets" data-portfolio-set-query><label>Category<select data-portfolio-set-category><option value="all">All categories</option>${categories.map((category) => `<option value="${escapeAttribute(category)}" ${controls.category === category ? 'selected' : ''}>${escapeHTML(category[0].toUpperCase() + category.slice(1))}</option>`).join('')}</select></label><label>Sort<select data-portfolio-set-sort>${[['recent-desc', 'Recently changed'], ['alpha', 'Set A–Z'], ['printings-desc', 'Most printings'], ['value-desc', 'Highest tracked value']].map(([value, label]) => `<option value="${value}" ${controls.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></section>
+    <div class="portfolio-result-heading"><div><strong>${shown.length} set${shown.length === 1 ? '' : 's'}</strong><span>${shown.length === collection.totalSets ? 'All named sets' : `Filtered from ${collection.totalSets}`}</span></div>${controls.query || controls.category !== 'all' || controls.sort !== 'recent-desc' ? '<button class="button ghost small" type="button" data-action="clear-portfolio-set-filters">Clear filters</button>' : ''}</div>
+    ${visible.length ? `<div class="portfolio-set-grid">${visible.map((group) => portfolioSetCard(group, currency)).join('')}</div>${shown.length > visible.length ? `<button class="button secondary portfolio-load-more" type="button" data-action="load-more-portfolio-sets">Show ${Math.min(PORTFOLIO_SET_PAGE_SIZE, shown.length - visible.length)} more</button>` : ''}` : emptyState('No sets match these filters', 'Clear the set search or category filter to see every named set in your portfolio.', '<button class="button ghost" type="button" data-action="clear-portfolio-set-filters">Clear filters</button>')}`;
 }
 
 function holdingsSection(state) {
@@ -78,7 +125,7 @@ function activeFilterChips(state) {
   const entries = [
     state.portfolio.query ? ['query', `Search: ${state.portfolio.query}`] : null,
     state.portfolio.category !== 'all' ? ['category', `Category: ${state.portfolio.category}`] : null,
-    ...Object.entries(filters).filter(([, value]) => value).map(([key, value]) => [key, `${({ setName: 'Set', ownership: 'Type', condition: 'Condition', gradeCompany: 'Grader', language: 'Language', tags: 'Tag', pricing: 'Pricing', performance: 'Performance' })[key] || key}: ${value}`])
+    ...Object.entries(filters).filter(([key, value]) => key !== 'setNameExact' && value).map(([key, value]) => [key, `${({ setName: 'Set', ownership: 'Type', condition: 'Condition', gradeCompany: 'Grader', language: 'Language', tags: 'Tag', pricing: 'Pricing', performance: 'Performance' })[key] || key}: ${value}`])
   ].filter(Boolean);
   if (!entries.length) return '';
   return `<div class="active-filters" aria-label="Active portfolio filters">${entries.map(([key, label]) => `<button type="button" data-action="remove-portfolio-filter" data-filter="${escapeAttribute(key)}">${escapeHTML(label)} <span aria-hidden="true">×</span></button>`).join('')}<button class="clear" type="button" data-action="clear-portfolio-filters">Clear all</button></div>`;
