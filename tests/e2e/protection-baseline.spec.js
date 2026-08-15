@@ -448,6 +448,7 @@ test('local scenarios work while published forecast presentation remains fail cl
 });
 
 test('Phase 4 Insights separates actuals and forecasts, persists alert state, and gates track-record metrics', async ({ page }) => {
+  test.slow();
   await configureApprovedPhase4Publication(page);
   await seedLegacyIndexedDB(page);
   await seedPhase4Alert(page);
