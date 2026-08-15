@@ -18,6 +18,7 @@ Included primitives:
 - reviewable Tier 0–2 observed/trend payloads that cannot contain fair value or forecasts.
 - bounded, snapshot-consistent TCGCSV research fetches with deterministic hashes, exact-variant mapping packets, and no public publication path.
 - fixed-origin, redirect-refusing JustTCG fetches with header-only authentication, stable card/variant UUIDs, bounded one-year daily history, response limits, and paid/effective/expiring-rights enforcement;
+- a fixed-origin Cardbase MTG history adapter with one-key authentication, bounded `Retry-After`, exact vendor/finish/type/currency series, honest first-seen backfill availability, an integrity-checked rolling state ledger, and incremental centralized-history packets that never contain publications or forecasts;
 - bounded PPMd history extraction: at most 53 exact-weekly archives, 8 MiB per archive, 2 MiB per selected member, next-day conservative availability, and a seven-day endpoint-reference tolerance;
 - bounded centralized historical-price imports for as many as 2,000 exact series and 100,000 observations per packet, with deterministic IDs, immutable import membership, explicit availability semantics, and rollback-first SQL;
 - rolling 90-day MAD quality checks that preserve anomalies without allowing obsolete price regimes to lock out all later observations;
@@ -77,6 +78,24 @@ support an estimate made now, but it cannot pretend CollectFolio knew the point 
 walk-forward origin. `observed_at_proxy` remains storable and permanently marked
 point-in-time-ineligible. Import packets contain empty forecast and publication arrays and
 do not enable public intelligence.
+
+For a reviewed Magic cohort, the Cardbase collector uses a private first-seen ledger so
+daily rolling responses add only new or revised points:
+
+```sh
+npm run cardbase:history -- /secure/cardbase-cohort.json \
+  --state /secure/prior-first-seen.json \
+  --output /secure/cardbase-import.json \
+  --state-output /secure/next-first-seen.json
+```
+
+The authenticated 365-day path requires exactly one server-side
+`CARDBASE_API_KEY`. The CLI rejects key-rotation fields, paces requests below the
+published 60/minute free-key limit, and honors `Retry-After`. An initial backfill is
+first-known at retrieval time; an exact replay produces a no-op; a corrected historical
+amount becomes a new value-digested record first seen at the correction time. Full
+configuration and rights boundaries are in
+[`CARDBASE_MTG_RESEARCH.md`](../docs/CARDBASE_MTG_RESEARCH.md).
 
 Raw history is optional in a descriptive publication. Both the trend snapshot and any
 observed value must first reproduce exactly from the service-private

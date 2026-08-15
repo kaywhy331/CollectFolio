@@ -13,6 +13,7 @@ market-universe = [
 ]
 
 [project.scripts]
+collectfolio-cardbase-history = "collectfolio_analytics.cardbase_history_cli:main"
 collectfolio-tcgcsv-universe = "collectfolio_analytics.tcgcsv_universe_cli:main"
 collectfolio-structural-gap-lab = "collectfolio_analytics.structural_gap_cli:main"
 

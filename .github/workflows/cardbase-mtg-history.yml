@@ -1,0 +1,143 @@
+name: Private Cardbase MTG history
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cardbase-private-mtg-history
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: ${{ vars.CARDBASE_MTG_RESEARCH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARDBASE_MTG_MANIFEST_S3_URI: ${{ vars.CARDBASE_MTG_MANIFEST_S3_URI }}
+      CARDBASE_MTG_ARCHIVE_S3_URI: ${{ vars.CARDBASE_MTG_ARCHIVE_S3_URI }}
+      CARDBASE_MTG_ARCHIVE_S3_ENDPOINT: ${{ vars.CARDBASE_MTG_ARCHIVE_S3_ENDPOINT }}
+      AWS_DEFAULT_REGION: ${{ vars.CARDBASE_MTG_ARCHIVE_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate gated operator configuration
+        env:
+          CARDBASE_API_KEY: ${{ secrets.CARDBASE_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.CARDBASE_MTG_ARCHIVE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CARDBASE_MTG_ARCHIVE_SECRET_ACCESS_KEY }}
+        run: |
+          : "${CARDBASE_API_KEY:?CARDBASE_API_KEY secret is required}"
+          [[ "$CARDBASE_API_KEY" == cbdev_?* ]]
+          : "${CARDBASE_MTG_MANIFEST_S3_URI:?CARDBASE_MTG_MANIFEST_S3_URI repository variable is required}"
+          : "${CARDBASE_MTG_ARCHIVE_S3_URI:?CARDBASE_MTG_ARCHIVE_S3_URI repository variable is required}"
+          : "${AWS_ACCESS_KEY_ID:?CARDBASE_MTG_ARCHIVE_ACCESS_KEY_ID secret is required}"
+          : "${AWS_SECRET_ACCESS_KEY:?CARDBASE_MTG_ARCHIVE_SECRET_ACCESS_KEY secret is required}"
+          [[ "$CARDBASE_MTG_MANIFEST_S3_URI" == s3://* ]]
+          [[ "$CARDBASE_MTG_ARCHIVE_S3_URI" == s3://* ]]
+      - name: Restore reviewed cohort and private first-seen state
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CARDBASE_MTG_ARCHIVE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CARDBASE_MTG_ARCHIVE_SECRET_ACCESS_KEY }}
+        run: |
+          umask 077
+          mkdir -p .cardbase-run
+          s3_args=()
+          if [[ -n "$CARDBASE_MTG_ARCHIVE_S3_ENDPOINT" ]]; then
+            s3_args+=(--endpoint-url "$CARDBASE_MTG_ARCHIVE_S3_ENDPOINT")
+          fi
+          aws s3 cp "$CARDBASE_MTG_MANIFEST_S3_URI" \
+            .cardbase-run/cohort.json --only-show-errors "${s3_args[@]}"
+          review_sha=$(sha256sum docs/source-reviews/CARDBASE_MTG_RESEARCH_CANDIDATE.md | cut -d ' ' -f 1)
+          manifest_review_sha=$(jq -r '.source.documentHash // empty' .cardbase-run/cohort.json)
+          [[ "$manifest_review_sha" == "$review_sha" ]]
+          aws s3 cp \
+            "${CARDBASE_MTG_ARCHIVE_S3_URI%/}/state/first-seen-ledger.json" \
+            .cardbase-run/prior-state.json --only-show-errors "${s3_args[@]}"
+      - name: Collect bounded replay-safe history
+        env:
+          CARDBASE_API_KEY: ${{ secrets.CARDBASE_API_KEY }}
+        run: |
+          umask 077
+          PYTHONPATH=analytics/src python3 -m collectfolio_analytics.cardbase_history_cli \
+            .cardbase-run/cohort.json \
+            --state .cardbase-run/prior-state.json \
+            --output .cardbase-run/import-packet.json \
+            --state-output .cardbase-run/next-state.json \
+            > .cardbase-run/collector-receipt.json
+      - name: Assert collection and publication boundaries
+        run: |
+          jq -e '
+            (.mode == "operator_centralized_history" or .mode == "private_cardbase_mtg_history_noop") and
+            .cardbaseReceipt.sourceCode == "cardbase" and
+            .cardbaseReceipt.authenticated == true and
+            .cardbaseReceipt.requestedHistoryDays == 365 and
+            .cardbaseReceipt.rateLimitStrategy == "single-key-paced-retry-after" and
+            .cardbaseReceipt.publicCandidateCount == 0 and
+            .cardbaseReceipt.forecastCount == 0 and
+            .publicCandidateRows == [] and
+            .forecastRows == []
+          ' .cardbase-run/import-packet.json
+          jq -e '
+            .outcome == "new_history" or .outcome == "no_change"
+          ' .cardbase-run/collector-receipt.json
+          jq '{
+            mode,
+            contractVersion,
+            generatedAt,
+            cardbaseReceipt,
+            importId: (.importManifestRow.id // null),
+            datasetSha256: (.importManifestRow.dataset_sha256 // null),
+            observationSetSha256: (.importManifestRow.observation_set_sha256 // null)
+          }' .cardbase-run/import-packet.json > .cardbase-run/redacted-receipt.json
+      - name: Retain packet, receipt, and versioned state privately
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CARDBASE_MTG_ARCHIVE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CARDBASE_MTG_ARCHIVE_SECRET_ACCESS_KEY }}
+        run: |
+          s3_args=()
+          if [[ -n "$CARDBASE_MTG_ARCHIVE_S3_ENDPOINT" ]]; then
+            s3_args+=(--endpoint-url "$CARDBASE_MTG_ARCHIVE_S3_ENDPOINT")
+          fi
+          generated_at=$(jq -r '.generatedAt' .cardbase-run/import-packet.json)
+          [[ "$generated_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2} ]]
+          archive_date=${generated_at:0:10}
+          run_prefix="${CARDBASE_MTG_ARCHIVE_S3_URI%/}/runs/date=${archive_date}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          verify_dir=$(mktemp -d)
+          upload_immutable() {
+            local source_path="$1"
+            local object_uri="$2"
+            local verification_path="$3"
+            if aws s3 cp "$object_uri" "$verification_path" --only-show-errors "${s3_args[@]}" 2>/dev/null; then
+              cmp --silent "$source_path" "$verification_path" || {
+                echo "Existing immutable Cardbase run object has different content" >&2
+                return 1
+              }
+            else
+              aws s3 cp "$source_path" "$object_uri" --only-show-errors "${s3_args[@]}"
+            fi
+          }
+          upload_immutable .cardbase-run/import-packet.json \
+            "${run_prefix}/import-packet.json" "$verify_dir/import-packet.json"
+          upload_immutable .cardbase-run/redacted-receipt.json \
+            "${run_prefix}/receipt.json" "$verify_dir/receipt.json"
+          upload_immutable .cardbase-run/next-state.json \
+            "${run_prefix}/first-seen-ledger.json" "$verify_dir/first-seen-ledger.json"
+          aws s3 cp .cardbase-run/next-state.json \
+            "${CARDBASE_MTG_ARCHIVE_S3_URI%/}/state/first-seen-ledger.json" \
+            --only-show-errors "${s3_args[@]}"
+      - name: Upload redacted operator receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: cardbase-mtg-receipt-${{ github.run_id }}
+          path: .cardbase-run/redacted-receipt.json
+          if-no-files-found: error
+          retention-days: 30

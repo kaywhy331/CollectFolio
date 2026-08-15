@@ -250,8 +250,9 @@ Before applying or enabling anything hosted:
 4. Give that identity read/write access only to the TCGCSV prefix.
 5. Record the expanded full-corpus source review and update the source's current
    immutable review row.
-6. Configure repository values below, manually dispatch one observed run, and
-   inspect its receipts before enabling the schedule.
+6. Configure repository values below and manually dispatch only reviewed static
+   batches. The TCGCSV workflow has no schedule; Cardbase is the preferred
+   continuous MTG research pull.
 
 Repository variables:
 

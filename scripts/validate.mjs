@@ -45,6 +45,9 @@ const required = [
   'analytics/src/collectfolio_analytics/historical_import.py',
   'analytics/src/collectfolio_analytics/historical_import_cli.py',
   'analytics/src/collectfolio_analytics/historical_import_sql.py',
+  'analytics/src/collectfolio_analytics/cardbase.py',
+  'analytics/src/collectfolio_analytics/cardbase_history.py',
+  'analytics/src/collectfolio_analytics/cardbase_history_cli.py',
   'analytics/src/collectfolio_analytics/baselines.py', 'analytics/src/collectfolio_analytics/quantiles.py',
   'analytics/src/collectfolio_analytics/scarcity.py', 'analytics/src/collectfolio_analytics/evaluation.py',
   'analytics/src/collectfolio_analytics/video_model_v0.py',
@@ -67,6 +70,7 @@ const required = [
   '.github/workflows/analytics-check.yml',
   '.github/workflows/price-intelligence-research.yml',
   '.github/workflows/tcgcsv-market-universe.yml',
+  '.github/workflows/cardbase-mtg-history.yml',
   '.github/workflows/pull-rate-integrity.yml',
   'analytics/manifests/tcgcsv-surging-sparks-research.json',
   'analytics/manifests/tcgcsv-surging-sparks-current-v2.json',
@@ -91,9 +95,11 @@ const required = [
   'docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md', 'docs/REDESIGN_FINAL_ACCEPTANCE.md',
   'docs/PRICE_INTELLIGENCE_FOUNDATION.md', 'docs/PRICE_INTELLIGENCE_RUNBOOK.md',
   'docs/TCGCSV_MARKET_UNIVERSE.md',
+  'docs/CARDBASE_MTG_RESEARCH.md',
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
   'docs/PULL_RATE_REGISTRY.md',
   'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md',
+  'docs/source-reviews/CARDBASE_MTG_RESEARCH_CANDIDATE.md',
   'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
@@ -153,7 +159,7 @@ if (JSON.stringify(Object.keys(devDependencies).sort()) !== JSON.stringify(Objec
     || Object.entries(approvedDevDependencies).some(([name, version]) => devDependencies[name] !== version)) {
   errors.push('Dev dependencies must be exactly the pinned Playwright, axe, and snapshot-font packages.');
 }
-for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:forecast-db', 'test:tcgcsv-db', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'forecast:lab', 'history:import', 'tcgcsv:universe', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
+for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:forecast-db', 'test:tcgcsv-db', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'forecast:lab', 'history:import', 'cardbase:history', 'tcgcsv:universe', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
 
 const researchManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-research.json'), 'utf8'));
 const researchReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md'));
@@ -212,13 +218,14 @@ const supersessionValidation = spawnSync('python3', ['-c', `import json\nfrom pa
 if (supersessionValidation.status !== 0) errors.push(`Mapping supersession manifest validation failed: ${supersessionValidation.stderr || supersessionValidation.stdout}`);
 
 const researchWorkflow = await readFile(resolve(root, '.github/workflows/price-intelligence-research.yml'), 'utf8');
-if (!researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty') || !researchWorkflow.includes('--skip-history')) errors.push('Scheduled TCGCSV research must use the current-only v2 manifest with --skip-history.');
-if (researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-research.json --pretty')) errors.push('Scheduled TCGCSV research must not route through the historical v1 manifest.');
+if (!researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty') || !researchWorkflow.includes('--skip-history')) errors.push('Manual TCGCSV research must use the current-only v2 manifest with --skip-history.');
+if (researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-research.json --pretty')) errors.push('Manual TCGCSV research must not route through the historical v1 manifest.');
 if (!researchWorkflow.includes("TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED != 'true'")) errors.push('Bounded TCGCSV qualification must stop when the full-universe workflow is active.');
+if (/(^|\n)\s*schedule:/.test(researchWorkflow)) errors.push('TCGCSV qualification must remain a manually dispatched static batch.');
 
 const universeWorkflow = await readFile(resolve(root, '.github/workflows/tcgcsv-market-universe.yml'), 'utf8');
 for (const contract of [
-  'TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED', 'schedule:', 'concurrency:',
+  'TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED', 'workflow_dispatch:', 'concurrency:',
   "analytics[market-universe]", 'last-updated.txt', 'prepare-archive',
   'archive_date=', 'prices.parquet', 'ingest-archive', 'sync-catalog',
   '--use-database-state --ingest', 'retention-days: 30'
@@ -228,6 +235,32 @@ for (const contract of [
 if (!/permissions:\s*\n\s+contents: read/.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must keep GitHub permissions contents-read-only.');
 if (/service_role|SUPABASE_SERVICE_ROLE/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must use the dedicated ingest credential, not a broad service-role secret.');
 if (/update\s+public\.product_feature_flags/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must not enable public forecasting.');
+if (/(^|\n)\s*schedule:/.test(universeWorkflow)) errors.push('TCGCSV market-universe acquisition must remain manual/static.');
+
+const cardbaseWorkflow = await readFile(resolve(root, '.github/workflows/cardbase-mtg-history.yml'), 'utf8');
+for (const contract of [
+  'CARDBASE_MTG_RESEARCH_ENABLED', 'schedule:', 'concurrency:',
+  'CARDBASE_API_KEY', 'CARDBASE_MTG_MANIFEST_S3_URI',
+  'CARDBASE_MTG_ARCHIVE_S3_URI', 'cardbase_history_cli',
+  'first-seen-ledger.json', '--state .cardbase-run/prior-state.json',
+  'persist-credentials: false', 'single-key-paced-retry-after',
+  'source.documentHash', 'redacted-receipt.json', 'retention-days: 30'
+]) {
+  if (!cardbaseWorkflow.includes(contract)) errors.push(`Cardbase MTG workflow lacks contract ${contract}.`);
+}
+if (!/permissions:\s*\n\s+contents: read/.test(cardbaseWorkflow)) errors.push('Cardbase MTG workflow must keep GitHub permissions contents-read-only.');
+if (/service_role|SUPABASE_|DATABASE_URL|update\s+public\.product_feature_flags/i.test(cardbaseWorkflow)) errors.push('Cardbase MTG workflow must have no database credential or feature-flag write path.');
+if (/apiKeys|keyRotation|rotateKeys/.test(cardbaseWorkflow)) errors.push('Cardbase MTG workflow must never pool or rotate API keys.');
+if (cardbaseWorkflow.includes('state_args')) errors.push('Cardbase MTG workflow must fail closed when canonical first-seen state cannot be restored.');
+if (!cardbaseWorkflow.includes('path: .cardbase-run/redacted-receipt.json') || cardbaseWorkflow.includes('path: .cardbase-run/import-packet.json')) errors.push('Cardbase CI artifacts must expose only the redacted receipt.');
+const cardbaseReview = await readFile(resolve(root, 'docs/source-reviews/CARDBASE_MTG_RESEARCH_CANDIDATE.md'), 'utf8');
+for (const contract of [
+  '**Decision:** `research_only`', 'Public raw display:** no',
+  'Public derived display / predictive use:** no', 'one server-side key',
+  'provider-aggregate', 'operator_first_seen', 'No Cardbase key is configured'
+]) {
+  if (!cardbaseReview.includes(contract)) errors.push(`Cardbase source review lacks contract ${contract}.`);
+}
 
 const pullRateIntegrityWorkflow = await readFile(resolve(root, '.github/workflows/pull-rate-integrity.yml'), 'utf8');
 for (const contract of [

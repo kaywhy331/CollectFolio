@@ -18,6 +18,7 @@
     "forecast:lab": "PYTHONPATH=analytics/src python3 -m collectfolio_analytics.forecast_lab_cli",
     "forecast:compile": "PYTHONPATH=analytics/src python3 -m collectfolio_analytics.forecast_dataset_cli",
     "history:import": "PYTHONPATH=analytics/src python3 -m collectfolio_analytics.historical_import_cli",
+    "cardbase:history": "PYTHONPATH=analytics/src python3 -m collectfolio_analytics.cardbase_history_cli",
     "tcgcsv:universe": "PYTHONPATH=analytics/src python3 -m collectfolio_analytics.tcgcsv_universe_cli",
     "tcgcsv:structural-gap": "PYTHONPATH=analytics/src python3 -m collectfolio_analytics.structural_gap_cli",
     "check": "node scripts/validate.mjs && npm test && node scripts/build.mjs"
