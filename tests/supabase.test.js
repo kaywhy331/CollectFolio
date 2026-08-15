@@ -12,6 +12,7 @@ import {
   portfolioSnapshotRow,
   request,
   requestAllPages,
+  requestWatchlistItems,
   remotePortfolioSnapshot,
   remoteWatchlistItem,
   upsertInBatches,
@@ -181,6 +182,65 @@ test('watchlist cloud rows preserve exact catalog identity and blank optional al
   assert.equal(row.catalog_variant_id, null);
   assert.equal(row.watch_key, local.watchKey);
   assert.equal(row.catalog_snapshot.targetCurrency, 'USD');
+
+  const conditioned = {
+    ...local,
+    marketCondition: 'near-mint',
+    catalogRef: { ...local.catalogRef, marketCondition: '' }
+  };
+  const exactRow = watchlistRow(conditioned, 'user-id', '123e4567-e89b-42d3-a456-426614174000');
+  assert.equal(exactRow.market_condition, 'near-mint');
+  assert.equal(exactRow.catalog_snapshot.marketCondition, 'near-mint');
+  const legacyRow = watchlistRow(conditioned, 'user-id', '123e4567-e89b-42d3-a456-426614174000', {
+    includeMarketCondition: false
+  });
+  assert.equal(Object.hasOwn(legacyRow, 'market_condition'), false);
+  assert.equal(legacyRow.catalog_snapshot.marketCondition, 'near-mint');
+});
+
+test('watchlist reads fall back safely when migration 0016 is pending', async () => {
+  const paths = [];
+  const result = await requestWatchlistItems('watchlist-id', {
+    session: { access_token: 'token' },
+    requester: async (path) => {
+      paths.push(path);
+      if (path.includes('market_condition')) {
+        throw Object.assign(new Error('column watchlist_items.market_condition does not exist'), {
+          code: '42703', status: 400
+        });
+      }
+      return [{ watch_key: 'legacy-watch' }];
+    }
+  });
+  assert.equal(result.supportsMarketCondition, false);
+  assert.deepEqual(result.rows, [{ watch_key: 'legacy-watch' }]);
+  assert.equal(paths.length, 2);
+  assert.match(paths[0], /market_condition/);
+  assert.doesNotMatch(paths[1], /market_condition/);
+
+  await assert.rejects(requestWatchlistItems('watchlist-id', {
+    requester: async () => {
+      throw Object.assign(new Error('permission denied'), { code: '42501', status: 403 });
+    }
+  }), /permission denied/);
+});
+
+test('cloud request errors retain PostgREST status and code', async () => {
+  const previousWindow = globalThis.window;
+  const previousFetch = globalThis.fetch;
+  globalThis.window = { COLLECTFOLIO_CONFIG: { SUPABASE_URL: 'https://cloud.example.test', SUPABASE_ANON_KEY: 'public-key' } };
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 400,
+    text: async () => JSON.stringify({ code: '42703', message: 'column is missing' })
+  });
+  try {
+    await assert.rejects(request('/rest/v1/watchlist_items'), (error) =>
+      error.status === 400 && error.code === '42703' && /column is missing/.test(error.message));
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test('cloud requests abort at their bounded deadline', async () => {
