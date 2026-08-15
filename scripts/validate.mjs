@@ -120,7 +120,8 @@ const required = [
   'tests/fixtures/redesign/indexeddb-v4-backup-v2.json',
   'tests/fixtures/redesign/cloud-sync.json',
   'tests/fixtures/redesign/legacy-routes.json',
-  'tests/e2e/protection-baseline.spec.js', 'tests/e2e/phase5.spec.js', 'tests/e2e/service-worker.spec.js',
+  'tests/e2e/catalog-pagination.spec.js', 'tests/e2e/protection-baseline.spec.js',
+  'tests/e2e/phase5.spec.js', 'tests/e2e/service-worker.spec.js',
   'tests/e2e/protection-baseline.spec.js-snapshots/legacy-overview-empty-chromium-linux.png',
   'tests/e2e/protection-baseline.spec.js-snapshots/core-slice-overview-empty-chromium-linux.png'
 ];
@@ -142,8 +143,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.2' || packageLock.version !== '0.8.2' || packageLock.packages?.['']?.version !== '0.8.2') {
-  errors.push('Application and lockfile versions must agree on 0.8.2.');
+if (packageJSON.version !== '0.8.3' || packageLock.version !== '0.8.3' || packageLock.packages?.['']?.version !== '0.8.3') {
+  errors.push('Application and lockfile versions must agree on 0.8.3.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -225,7 +226,8 @@ if (/(^|\n)\s*schedule:/.test(researchWorkflow)) errors.push('TCGCSV qualificati
 
 const universeWorkflow = await readFile(resolve(root, '.github/workflows/tcgcsv-market-universe.yml'), 'utf8');
 for (const contract of [
-  'TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED', 'workflow_dispatch:', 'concurrency:',
+  'TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED', 'workflow_dispatch:', 'schedule:',
+  "cron: '41 6 * * *'", 'concurrency:',
   "analytics[market-universe]", 'last-updated.txt', 'prepare-archive',
   'archive_date=', 'prices.parquet', 'ingest-archive', 'sync-catalog',
   '--use-database-state --ingest', 'retention-days: 30'
@@ -235,7 +237,16 @@ for (const contract of [
 if (!/permissions:\s*\n\s+contents: read/.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must keep GitHub permissions contents-read-only.');
 if (/service_role|SUPABASE_SERVICE_ROLE/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must use the dedicated ingest credential, not a broad service-role secret.');
 if (/update\s+public\.product_feature_flags/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must not enable public forecasting.');
-if (/(^|\n)\s*schedule:/.test(universeWorkflow)) errors.push('TCGCSV market-universe acquisition must remain manual/static.');
+if (!/(^|\n)\s*schedule:\s*\n\s*-\s*cron:\s*['"]41 6 \* \* \*['"]/.test(universeWorkflow)) errors.push('TCGCSV market-universe acquisition must retain its daily 06:41 UTC schedule.');
+const universeRunbook = await readFile(resolve(root, 'docs/TCGCSV_MARKET_UNIVERSE.md'), 'utf8');
+for (const contract of [
+  'TCGCSV is the authoritative', 'broad-market history baseline',
+  'Portfolio and search activity never determine ingestion coverage',
+  'Every daily\nrun processes every price series',
+  'Cardbase and other APIs may supplement selected series with targeted'
+]) {
+  if (!universeRunbook.includes(contract)) errors.push(`TCGCSV market-universe runbook lacks architecture contract ${contract}.`);
+}
 
 const cardbaseWorkflow = await readFile(resolve(root, '.github/workflows/cardbase-mtg-history.yml'), 'utf8');
 for (const contract of [
@@ -355,8 +366,8 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.2-dev'")) errors.push('Local runtime config must identify the 0.8.2 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.2'")) errors.push('Production builds must default APP_VERSION to 0.8.2.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.3-dev'")) errors.push('Local runtime config must identify the 0.8.3 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.3'")) errors.push('Production builds must default APP_VERSION to 0.8.3.');
 
 const ordinaryUiFiles = [
   resolve(app, 'index.html'), resolve(app, 'assets/js/app.js'),
@@ -462,7 +473,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.2'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.2.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.3'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.3.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;

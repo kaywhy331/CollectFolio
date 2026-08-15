@@ -68,6 +68,25 @@ test('Discover adapts filters and keeps provider choice under Data source', () =
   assert.match(sports, /Create custom item/);
 });
 
+test('Discover retains a complete result set while rendering large catalogs in bounded batches', () => {
+  const results = Array.from({ length: 205 }, (_, index) => ({
+    ...item,
+    externalId: `printing-${index}`,
+    id: `scryfall:printing-${index}`,
+    name: `Synthetic Lotus ${index}`
+  }));
+  const html = renderSearch(state({
+    search: {
+      query: 'Lotus', category: 'magic', provider: 'scryfall', filters: {}, view: 'gallery',
+      limit: 200, loading: false, warnings: [], results
+    }
+  }));
+  assert.match(html, /Showing 200 of 205 results/);
+  assert.match(html, /data-action="load-more-results">Show 5 more/);
+  assert.match(html, /data-action="show-all-results">Show all 205/);
+  assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
+});
+
 test('Discover shows approved 30-day trend and 1/3/6/12-month estimates on results', () => {
   const forecastItem = {
     ...item,

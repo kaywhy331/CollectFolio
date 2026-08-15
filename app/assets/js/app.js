@@ -40,7 +40,7 @@ import { PORTFOLIO_VIEWS, renderPortfolio } from './views/portfolio.js';
 import { renderPriceIntelligenceDetail } from './views/price-intelligence-detail.js';
 import { renderProfile } from './views/profile.js';
 import { renderQuickInspector } from './views/quick-inspector.js';
-import { DISCOVER_VIEWS, renderSearch } from './views/search.js';
+import { DISCOVER_RESULTS_PAGE_SIZE, DISCOVER_VIEWS, renderSearch } from './views/search.js';
 import { renderScanReview } from './views/scan.js';
 import { catalogReferenceForItem } from './core/catalog-identity.js';
 import { buildComparison, COMPARE_LIMIT, toggleCompareSelection } from './core/compare.js';
@@ -628,7 +628,7 @@ async function runCatalogSearch(form) {
   const data = Object.fromEntries(new FormData(form));
   const filters = Object.fromEntries(['setName', 'number', 'variant', 'player', 'year', 'grade']
     .map((key) => [key, String(data[key] || '').trim()]));
-  const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, loading: true, results: [], warnings: [], cached: false };
+  const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: true, results: [], warnings: [], cached: false };
   const recentSearches = [String(data.query || '').trim(), ...(getState().settings.recentSearches || [])]
     .filter(Boolean).filter((query, index, all) => all.findIndex((entry) => entry.toLowerCase() === query.toLowerCase()) === index).slice(0, 5);
   setState({ search });
@@ -1227,9 +1227,18 @@ root.addEventListener('click', async (event) => {
     } } : {});
   }
   if (action.dataset.action === 'clear-search') {
-    const search = { ...getState().search, query: '', results: [], warnings: [], cached: false };
+    const search = { ...getState().search, query: '', limit: DISCOVER_RESULTS_PAGE_SIZE, results: [], warnings: [], cached: false };
     setState({ search });
     navigate('search', { search });
+  }
+  if (action.dataset.action === 'load-more-results') {
+    const search = getState().search;
+    const limit = Math.min(search.results.length, (Number(search.limit) || DISCOVER_RESULTS_PAGE_SIZE) + DISCOVER_RESULTS_PAGE_SIZE);
+    setState({ search: { ...search, limit } });
+  }
+  if (action.dataset.action === 'show-all-results') {
+    const search = getState().search;
+    setState({ search: { ...search, limit: search.results.length } });
   }
   if (action.dataset.action === 'clear-search-filters') {
     setState({ search: { ...getState().search, filters: {}, provider: 'all' } });

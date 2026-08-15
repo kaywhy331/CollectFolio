@@ -6,6 +6,7 @@ import { selectPublicationForCatalogItem } from '../core/market-series.js';
 import { findWatchedItem } from '../services/watchlist.js';
 
 export const DISCOVER_VIEWS = Object.freeze(['gallery', 'list']);
+export const DISCOVER_RESULTS_PAGE_SIZE = 200;
 
 const MATCH_GROUPS = Object.freeze([
   ['exact', 'Exact matches', 'Verified exact identities'],
@@ -100,10 +101,22 @@ function recentSearches(state) {
   return `<div class="recent-searches" aria-label="Recent searches"><span>Recent</span>${recent.map((query) => `<button type="button" data-action="recent-search" data-query="${escapeAttribute(query)}">${escapeHTML(query)}</button>`).join('')}</div>`;
 }
 
+function resultPaging(search, visibleCount) {
+  const remaining = search.results.length - visibleCount;
+  if (remaining <= 0) return '';
+  const nextCount = Math.min(DISCOVER_RESULTS_PAGE_SIZE, remaining);
+  return `<div class="button-row centered catalog-result-paging" role="group" aria-label="More catalog results"><button class="button secondary" type="button" data-action="load-more-results">Show ${nextCount} more</button><button class="button ghost" type="button" data-action="show-all-results">Show all ${search.results.length}</button></div>`;
+}
+
 export function renderSearch(state) {
   const search = { filters: {}, results: [], warnings: [], ...state.search };
   const manualCategory = ['sports', 'comics', 'slab', 'other'].includes(search.category);
   const view = DISCOVER_VIEWS.includes(search.view || state.settings?.discoverView) ? (search.view || state.settings.discoverView) : 'gallery';
+  const resultLimit = Math.max(DISCOVER_RESULTS_PAGE_SIZE, Math.trunc(Number(search.limit) || DISCOVER_RESULTS_PAGE_SIZE));
+  const visibleResults = search.results.slice(0, resultLimit);
+  const resultCount = search.results.length > visibleResults.length
+    ? `Showing ${visibleResults.length} of ${search.results.length} results`
+    : `${search.results.length} result${search.results.length === 1 ? '' : 's'}`;
   return `${pageHeader('Catalog', 'Discover', 'Find the exact printing first; add ownership details only after you select it.')}
     <form id="catalog-search" class="discover-search">
       <div class="search-command"><button class="search-image-button" type="button" data-action="start-single-scan" aria-label="Search from an image">▣</button><label class="sr-only" for="catalog-query">Search catalog</label><input id="catalog-query" name="query" type="search" required minlength="2" value="${escapeAttribute(search.query)}" placeholder="Card, set, number, character, or player" autocomplete="off"><button class="search-clear" type="button" data-action="clear-search" aria-label="Clear search" ${search.query ? '' : 'hidden'}>×</button><button class="button" ${search.loading ? 'disabled' : ''}>${search.loading ? 'Searching…' : 'Search'}</button></div>
@@ -112,5 +125,5 @@ export function renderSearch(state) {
     </form>
     ${search.cached ? '<p class="fine-print search-status">Showing a recent result cached on this device.</p>' : ''}
     ${search.warnings.length ? `<div class="search-warning" role="status"><strong>Some sources were unavailable.</strong>${search.warnings.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<small>Your search and filters are unchanged.</small></div>` : ''}
-    ${manualCategory ? `${emptyState(`Create a precise ${search.category} record`, 'There is no universal rights-cleared catalog for this category. Add the identity and value you can verify.', `<button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create custom item</button>`)}` : `<div class="discover-results-head"><div><strong>${search.loading ? 'Searching sources…' : `${search.results.length} result${search.results.length === 1 ? '' : 's'}`}</strong><span>${search.query ? `for “${escapeHTML(search.query)}”` : 'ready to search'}</span></div><div class="view-toggle" role="group" aria-label="Result view"><button type="button" data-discover-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Gallery view">▦</button><button type="button" data-discover-view="list" aria-pressed="${view === 'list'}" aria-label="List view">☷</button></div></div>${search.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching catalog sources</span></div>' : resultGroups(search.results, { ...state, search }, view)}`}`;
+    ${manualCategory ? `${emptyState(`Create a precise ${search.category} record`, 'There is no universal rights-cleared catalog for this category. Add the identity and value you can verify.', `<button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create custom item</button>`)}` : `<div class="discover-results-head"><div><strong>${search.loading ? 'Searching sources…' : resultCount}</strong><span>${search.query ? `for “${escapeHTML(search.query)}”` : 'ready to search'}</span></div><div class="view-toggle" role="group" aria-label="Result view"><button type="button" data-discover-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Gallery view">▦</button><button type="button" data-discover-view="list" aria-pressed="${view === 'list'}" aria-label="List view">☷</button></div></div>${search.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching catalog sources</span></div>' : `${resultGroups(visibleResults, { ...state, search }, view)}${resultPaging(search, visibleResults.length)}`}`}`;
 }

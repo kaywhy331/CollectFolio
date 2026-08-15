@@ -31,7 +31,7 @@ from .observations import normalize_market_identity
 
 
 DEFAULT_BASE_URL = "https://api.cardbase.dev/v1"
-DEFAULT_USER_AGENT = "CollectFolio-PrivateResearch/0.8.2"
+DEFAULT_USER_AGENT = "CollectFolio-PrivateResearch/0.8.3"
 ANONYMOUS_HISTORY_DAYS = 30
 AUTHENTICATED_HISTORY_DAYS = 365
 MAX_RESPONSE_BYTES = 4_000_000

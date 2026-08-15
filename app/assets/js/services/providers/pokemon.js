@@ -11,7 +11,6 @@ const fallbackSetEndpoint = 'https://api.tcgdex.net/v2/en/sets';
 // metadata-only; licensed values arrive through rights-gated publications.
 const SELECT_FIELDS = 'id,name,number,rarity,set,images';
 const PAGE_SIZE = 250;
-const MAX_RESULTS = 500;
 const FETCH_OPTIONS = { retries: 3, retryDelay: 250 };
 const FETCH_TIMEOUT_MS = 8_000;
 const SET_FETCH_TIMEOUT_MS = 4_000;
@@ -262,15 +261,23 @@ async function searchPokemonPrimary(intent) {
   url.searchParams.set('select', SELECT_FIELDS);
   url.searchParams.set('pageSize', String(PAGE_SIZE));
   const cards = [];
-  for (let page = 1; cards.length < MAX_RESULTS; page++) {
+  const cardIds = new Set();
+  for (let page = 1; ; page++) {
     url.searchParams.set('page', String(page));
     const payload = await fetchJSON(url, FETCH_OPTIONS, FETCH_TIMEOUT_MS);
     const batch = payload.data || [];
-    cards.push(...batch);
-    const total = Number(payload.totalCount ?? cards.length);
-    if (!batch.length || cards.length >= total || batch.length < PAGE_SIZE) break;
+    let added = 0;
+    batch.forEach((card) => {
+      const id = String(card?.id || '');
+      if (id && cardIds.has(id)) return;
+      if (id) cardIds.add(id);
+      cards.push(card);
+      added++;
+    });
+    const total = payload.totalCount === null || payload.totalCount === undefined ? null : Number(payload.totalCount);
+    if (!batch.length || !added || (Number.isFinite(total) && cards.length >= total) || batch.length < PAGE_SIZE) break;
   }
-  return cards.slice(0, MAX_RESULTS).map(normalizePokemonCard);
+  return cards.map(normalizePokemonCard);
 }
 
 function fallbackCardMatches(card, intent) {
@@ -299,7 +306,6 @@ async function searchPokemonFallback(query) {
     const set = { name: payload?.name || intent.set.name, releaseDate: payload?.releaseDate || '' };
     const results = cards
       .filter((card) => fallbackCardMatches(card, intent))
-      .slice(0, MAX_RESULTS)
       .map((card) => normalizeTCGDexCard(card, set));
     return { results, authoritative: true };
   }
@@ -309,7 +315,6 @@ async function searchPokemonFallback(query) {
   const payload = await fetchJSON(url, { retries: 2, retryDelay: 250 }, FETCH_TIMEOUT_MS);
   const results = (Array.isArray(payload) ? payload : [])
     .filter((card) => fallbackCardMatches(card, intent))
-    .slice(0, MAX_RESULTS)
     .map((card) => normalizeTCGDexCard(card));
   return { results, authoritative: false };
 }

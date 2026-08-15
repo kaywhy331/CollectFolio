@@ -24,10 +24,10 @@ test('service worker refreshes runtime config, bounds caches, and reloads offlin
   await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
 
   const installed = await page.evaluate(() => caches.keys());
-  expect(installed).toContain('collectfolio-shell-v0.8.2');
+  expect(installed).toContain('collectfolio-shell-v0.8.3');
 
   const refreshedConfig = await page.evaluate(async () => {
-    const cache = await caches.open('collectfolio-shell-v0.8.2');
+    const cache = await caches.open('collectfolio-shell-v0.8.3');
     await cache.put('/runtime-config.js', new Response('window.STALE_RUNTIME_CONFIG = true;', {
       headers: { 'Content-Type': 'application/javascript' }
     }));
@@ -66,6 +66,6 @@ test('service worker refreshes runtime config, bounds caches, and reloads offlin
 
   await expect.poll(() => page.evaluate(() => caches.keys())).not.toContain('collectfolio-shell-v0.6.0');
   await expect.poll(() => page.evaluate(() => caches.keys())).not.toContain('collectfolio-provider-images-stale');
-  await expect.poll(() => page.evaluate(() => caches.keys())).toContain('collectfolio-shell-v0.8.2');
+  await expect.poll(() => page.evaluate(() => caches.keys())).toContain('collectfolio-shell-v0.8.3');
   await expect.poll(() => page.evaluate(async () => (await caches.open('collectfolio-provider-images-v1')).keys().then((keys) => keys.length))).toBeLessThanOrEqual(160);
 });

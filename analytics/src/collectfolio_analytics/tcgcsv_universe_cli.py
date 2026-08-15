@@ -41,7 +41,7 @@ from .tcgcsv_universe_io import (
 
 
 DEFAULT_BASE_URL = "https://tcgcsv.com/"
-DEFAULT_USER_AGENT = "CollectFolio/0.8.2 private-market-research"
+DEFAULT_USER_AGENT = "CollectFolio/0.8.3 private-market-research"
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_JSON_BYTES = 64 * 1024 * 1024
 MAX_EXPANDED_BYTES = 512 * 1024 * 1024

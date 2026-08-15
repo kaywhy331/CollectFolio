@@ -283,31 +283,58 @@ test('Pokémon and Scryfall searches follow provider pagination beyond the first
     if (parsed.hostname === 'api.pokemontcg.io') {
       const page = Number(parsed.searchParams.get('page'));
       pokemonPages.push(page);
-      const size = page === 1 ? 250 : 27;
+      const size = page < 3 ? 250 : 27;
       return {
         ok: true,
         json: async () => ({
           page,
           pageSize: 250,
           count: size,
-          totalCount: 277,
+          totalCount: 527,
           data: Array.from({ length: size }, (_, index) => ({ id: `p${page}-${index}`, name: 'Pikachu', images: {} }))
         })
       };
     }
     scryfallCalls++;
+    const size = scryfallCalls < 3 ? 250 : 27;
     return {
       ok: true,
-      json: async () => scryfallCalls === 1
-        ? { data: [{ id: 's1', name: 'Lightning Bolt', prices: {} }], has_more: true, next_page: 'https://api.scryfall.com/cards/search?page=2&q=bolt' }
-        : { data: [{ id: 's2', name: 'Lightning Bolt', prices: {} }], has_more: false }
+      json: async () => ({
+        data: Array.from({ length: size }, (_, index) => ({ id: `s${scryfallCalls}-${index}`, name: 'Lightning Bolt', prices: {} })),
+        has_more: scryfallCalls < 3,
+        next_page: scryfallCalls < 3 ? `https://api.scryfall.com/cards/search?page=${scryfallCalls + 1}&q=bolt` : undefined
+      })
     };
   };
   try {
-    assert.equal((await searchPokemon('Pikachu')).length, 277);
-    assert.deepEqual(pokemonPages, [1, 2]);
-    assert.deepEqual((await searchScryfall('Lightning Bolt')).map((item) => item.externalId), ['s1', 's2']);
-    assert.equal(scryfallCalls, 2);
+    assert.equal((await searchPokemon('Pikachu')).length, 527);
+    assert.deepEqual(pokemonPages, [1, 2, 3]);
+    const scryfall = await searchScryfall('Lightning Bolt');
+    assert.equal(scryfall.length, 527);
+    assert.equal(scryfall.at(-1).externalId, 's3-26');
+    assert.equal(scryfallCalls, 3);
+  } finally {
+    globalThis.fetch = previousFetch;
+    clearPokemonSetCache();
+  }
+});
+
+test('Pokémon pagination stops safely if an upstream page repeats without a total', async () => {
+  clearPokemonSetCache();
+  const previousFetch = globalThis.fetch;
+  let cardCalls = 0;
+  const repeated = Array.from({ length: 250 }, (_, index) => ({ id: `repeat-${index}`, name: 'Pikachu', images: {} }));
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.hostname === 'api.tcgdex.net' && parsed.pathname.endsWith('/sets')) {
+      return { ok: true, json: async () => [{ id: 'base1', name: 'Base Set' }] };
+    }
+    cardCalls++;
+    return { ok: true, json: async () => ({ data: repeated, count: repeated.length }) };
+  };
+  try {
+    assert.equal((await searchPokemon('Pikachu')).length, 250);
+    assert.equal(cardCalls, 2);
   } finally {
     globalThis.fetch = previousFetch;
     clearPokemonSetCache();

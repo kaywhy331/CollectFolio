@@ -141,7 +141,9 @@ future model-promotion threshold.
 4. Configure the gated workflow variables and secrets documented in
    `docs/CARDBASE_MTG_RESEARCH.md`, then enable
    `CARDBASE_MTG_RESEARCH_ENABLED=true`.
-5. Keep TCGCSV collection manual/static and keep `public_price_intelligence` disabled.
+5. Use the separately gated daily TCGCSV market-universe lane as the complete private
+   baseline and keep `public_price_intelligence` disabled. Cardbase remains a targeted
+   exact-series overlay rather than a full-catalog crawler.
 6. Before database import, complete the independent backup/recovery rehearsal and
    operator authorization for migrations 0015–0019. The workflow itself writes no
    database and cannot enable a feature flag.

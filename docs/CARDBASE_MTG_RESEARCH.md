@@ -2,10 +2,10 @@
 
 ## Boundary
 
-Cardbase is CollectFolio's preferred continuous **Magic-only private research** source.
-It does not replace JustTCG for the reviewed Pokémon path, and it does not activate
-public price intelligence. TCGCSV is retained as a manual/static research batch and
-corroboration source; its scheduled pulls are parked.
+Cardbase is a targeted continuous **Magic-only private research overlay**. It supplements
+the complete daily TCGCSV private-history backbone for reviewed Scryfall printings; it
+does not replace that full-universe baseline, does not replace JustTCG for the reviewed
+Pokémon path, and does not activate public price intelligence.
 
 The collector:
 

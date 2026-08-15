@@ -6,7 +6,7 @@
 
 **MTG addendum:** August 15, 2026
 
-**Outcome:** adopt JustTCG's paid API as the preferred Pokémon production path and Cardbase as the preferred continuous MTG private-research path, each subject to its own activation gates
+**Outcome:** retain daily TCGCSV as the complete private broad-market history backbone, adopt JustTCG's paid API as the preferred Pokémon production path, and use Cardbase as a targeted continuous MTG overlay, each subject to its own activation gates
 
 **Public status:** disabled
 
@@ -20,14 +20,19 @@ This is a licensing route, not an immediate go-live approval. CollectFolio has n
 
 ### Magic addendum: Cardbase
 
-For Magic: The Gathering, use Cardbase as the preferred continuous free private-research
-source. Its API is keyed by exact Scryfall printing UUID, exposes separate daily
+For the complete cross-game baseline, run the gated TCGCSV market-universe workflow
+daily. It appends every reviewed price series to immutable private history and refreshes
+the complete private current catalog independently of holdings and search activity. For
+Magic: The Gathering, use Cardbase as a targeted continuous free private-research
+overlay. Its API is keyed by exact Scryfall printing UUID, exposes separate daily
 vendor/finish/price-type/currency series, grants up to 365 history days with one free
 key, and permits research and commercial applications under its August 2026 Terms.
-TCGCSV is no longer a scheduled primary pull; it remains a manually dispatched/static
-research batch and corroboration source.
+Cardbase updates selected exact series; it is not the mechanism for crawling or
+rebuilding the full price catalog each day.
 
-This is not a public-data or prediction approval. Cardbase prohibits rate-limit
+This is not a public-data or prediction approval. TCGCSV remains private because its
+reviewed TCGplayer-derived rights do not permit public catalog, raw-price, or derived
+publication. Cardbase prohibits rate-limit
 circumvention and raw-data redistribution as a competing product, and its reviewed
 Terms do not expressly grant retained model training or public predictive derivatives.
 CollectFolio uses one server-side key, never rotates keys to pool quota, preserves every
@@ -59,7 +64,7 @@ bounded cohort, source-review hash, and exact mapping review exist. See
 | CollectFolio user records | Purchase price, manual value, and locally accumulated portfolio history | First-party and private by default; not an external market observation | Keep as the free fallback and user override |
 | Pokémon TCG API | Catalog plus embedded TCGplayer/Cardmarket price fields; no owned market-history license identified | Documentation says the fields are provided by those downstream marketplaces; no direct commercial redistribution/derivative grant was identified | Metadata only; embedded market fields are excluded |
 | TCGCSV | Strong current and historical TCGplayer-derived archive | TCGplayer terms prohibit third-party acquisition, combination, rebranding, commercial distribution, and derivatives absent approval | Research only under the existing bounded review |
-| Cardbase | MTG-only daily history by Scryfall printing and vendor, up to 365 days with a free key | Terms permit research/commercial apps but prohibit quota circumvention and competing raw redistribution; retained training/public predictive rights are not explicit | Preferred continuous MTG private-research source; public raw/derived use remains blocked |
+| Cardbase | MTG-only daily history by Scryfall printing and vendor, up to 365 days with a free key | Terms permit research/commercial apps but prohibit quota circumvention and competing raw redistribution; retained training/public predictive rights are not explicit | Targeted continuous MTG overlay; public raw/derived use remains blocked |
 | TCGplayer direct | Current marketplace pricing and exact product IDs | Access is discretionary and approved-purpose-specific; competitive, combined, derivative, and commercial distribution uses require prior written consent | Pursue only as a separately negotiated alternative |
 | PriceCharting | Paid current-price API and daily bulk CSV; Pokémon coverage | Terms allow internal use with subscription, but third-party software/public sharing needs express written permission | Viable only after a separate written redistribution/model agreement |
 | Cardmarket | European marketplace/price-guide data | Cardmarket states it is not accepting new API applications; current credentials may not be shared with third-party software | Not currently obtainable for CollectFolio |
@@ -77,7 +82,7 @@ operating entity the required commercial display, storage, and derived-model rig
 | Source | Defensible role now | Decision and unresolved evidence |
 |---|---|---|
 | **JustTCG paid** | Exact-condition Pokémon current observations and one-year history for a prospective English/raw/Near Mint pilot | Remains the preferred label-source candidate. Activation still requires a paid contract, immutable approval, exact mapping, and prospective validation. Its aggregate market value is not an executable offer or guaranteed sale. |
-| **Cardbase free** | Exact-printing MTG vendor/finish/type/currency histories and prospective daily capture | Preferred continuous MTG research source. Keep series and currencies separate; condition is provider-aggregate. One-key collector only. Public/raw/predictive use remains blocked pending written rights clarification and prospective qualification. |
+| **Cardbase free** | Exact-printing MTG vendor/finish/type/currency histories and prospective daily capture | Targeted continuous MTG overlay. Keep series and currencies separate; condition is provider-aggregate. One-key collector only. Public/raw/predictive use remains blocked pending written rights clarification and prospective qualification. |
 | **Pokémon TCG API / TCGdex / Scrydex** | Catalog identity, language, finish, rarity, artist, release/lifecycle, and image reconciliation | Catalog/lifecycle enrichment only. Exclude embedded TCGplayer/Cardmarket prices from labels and public derived outputs because the reviewed catalog surfaces do not establish CollectFolio's upstream marketplace rights. |
 | **`tcgapi.dev`** | Current per-condition listings/listing counts/shipping plus printing-level sales-price and sales-volume history | Strongest technical challenger, but exact-condition historical labels were not established. Active listings are asks, not completed sales. The reviewed terms describe publicly sourced TCGplayer/marketplace data and contain plan-language inconsistencies. Require prospective exact-condition snapshots and a signed contract establishing upstream provenance, retention, public display, and predictive-derivative rights before production or training. |
 | **PokéWallet** | Supplemental Pokémon/One Piece mapping and price-semantics research | Its terms permit personal or commercial API access, but the responses identify TCGplayer/Cardmarket as upstream sources and do not establish CollectFolio's upstream redistribution, retention, or model-derivative rights. Do not use as a production label source without written clarification. |

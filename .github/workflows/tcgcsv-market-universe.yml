@@ -1,6 +1,8 @@
 name: Private TCGCSV market universe
 
 on:
+  schedule:
+    - cron: '41 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +20,7 @@ jobs:
     env:
       TCGCSV_SOURCE_ID: ${{ vars.TCGCSV_SOURCE_ID }}
       TCGCSV_TERMS_REVIEW_ID: ${{ vars.TCGCSV_TERMS_REVIEW_ID }}
-      TCGCSV_USER_AGENT: ${{ vars.TCGCSV_USER_AGENT || 'CollectFolio/0.8.2 private-market-research' }}
+      TCGCSV_USER_AGENT: ${{ vars.TCGCSV_USER_AGENT || 'CollectFolio/0.8.3 private-market-research' }}
       TCGCSV_ARCHIVE_S3_URI: ${{ vars.TCGCSV_ARCHIVE_S3_URI }}
       TCGCSV_ARCHIVE_S3_ENDPOINT: ${{ vars.TCGCSV_ARCHIVE_S3_ENDPOINT }}
       TCGCSV_INGEST_DATABASE_URL: ${{ secrets.TCGCSV_INGEST_DATABASE_URL }}

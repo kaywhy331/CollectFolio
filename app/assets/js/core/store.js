@@ -13,7 +13,7 @@ let state = {
   alerts: [],
   settings: { ...SETTINGS_DEFAULTS },
   overview: { range: '3M' },
-  search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', loading: false, results: [], warnings: [] },
+  search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', limit: 200, loading: false, results: [], warnings: [] },
   portfolio: { section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', selected: [], limit: 100 },
   watchlist: { query: '', category: 'all', sort: 'forecast-desc' },
   insights: { view: 'forecasts', horizon: 90, alertFilter: 'all' },

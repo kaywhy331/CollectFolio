@@ -5,7 +5,7 @@ import { getScryfallCard, searchScryfall } from './providers/scryfall.js';
 import { getYGOCard, searchYGOPRODeck } from './providers/ygoprodeck.js';
 
 const CACHE_MS = 30 * 60 * 1000;
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 export const CATALOG_CACHE_MAX_ENTRIES = 250;
 let initialCacheMaintenance;
 const providers = {

@@ -20,6 +20,12 @@ The engineering path is implemented but activation is intentionally gated.
 
 ## Product contract
 
+Within CollectFolio's private research plane, TCGCSV is the authoritative
+broad-market history baseline. Its daily archive—not holdings-triggered refreshes
+or full-catalog overlay API crawls—supplies the across-the-board daily price
+append. Cardbase and other APIs may supplement selected series with targeted
+live/history overlays, but they do not replace that daily archive.
+
 Portfolio and search activity never determine ingestion coverage. Every daily
 run processes every price series in the reviewed card-category scope. Customer
 holdings, watchlists, and searches later personalize which approved results are
@@ -250,9 +256,11 @@ Before applying or enabling anything hosted:
 4. Give that identity read/write access only to the TCGCSV prefix.
 5. Record the expanded full-corpus source review and update the source's current
    immutable review row.
-6. Configure repository values below and manually dispatch only reviewed static
-   batches. The TCGCSV workflow has no schedule; Cardbase is the preferred
-   continuous MTG research pull.
+6. Configure the repository values below only after the preceding controls pass,
+   then enable the lane. The checked-in `06:41 UTC` daily schedule safely skips
+   while `TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED` is not `true`; manual dispatch
+   uses the same gate and contract. Cardbase remains a targeted exact-series MTG
+   overlay, not the full-catalog daily acquisition path.
 
 Repository variables:
 
