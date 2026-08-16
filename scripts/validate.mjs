@@ -159,8 +159,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.10' || packageLock.version !== '0.8.10' || packageLock.packages?.['']?.version !== '0.8.10') {
-  errors.push('Application and lockfile versions must agree on 0.8.10.');
+if (packageJSON.version !== '0.8.11' || packageLock.version !== '0.8.11' || packageLock.packages?.['']?.version !== '0.8.11') {
+  errors.push('Application and lockfile versions must agree on 0.8.11.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -450,8 +450,8 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.10-dev'")) errors.push('Local runtime config must identify the 0.8.10 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.10'")) errors.push('Production builds must default APP_VERSION to 0.8.10.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.11-dev'")) errors.push('Local runtime config must identify the 0.8.11 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.11'")) errors.push('Production builds must default APP_VERSION to 0.8.11.');
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
 }
@@ -563,7 +563,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.10'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.10.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.11'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.11.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
@@ -794,7 +794,7 @@ const netlify = await readFile(resolve(root, 'netlify.toml'), 'utf8');
 for (const text of ['command = "npm run build"', 'publish = "dist"', 'NODE_VERSION = "22"', 'to = "/index.html"', 'for = "/sw.js"']) if (!netlify.includes(text)) errors.push(`netlify.toml missing ${text}`);
 if (netlify.includes("'unsafe-eval'")) errors.push('Content Security Policy must not allow unsafe-eval.');
 if (!netlify.includes("'wasm-unsafe-eval'")) errors.push('Content Security Policy must allow WebAssembly compilation for configured OCR.');
-for (const host of ['https://images.pokemontcg.io', 'https://images.scrydex.com', 'https://assets.tcgdex.net', 'https://cards.scryfall.io', 'https://images.ygoprodeck.com', 'https://tcgplayer-cdn.tcgplayer.com']) {
+for (const host of ['https://images.pokemontcg.io', 'https://images.scrydex.com', 'https://assets.tcgdex.net', 'https://cards.scryfall.io', 'https://svgs.scryfall.io', 'https://images.ygoprodeck.com', 'https://tcgplayer-cdn.tcgplayer.com']) {
   if (netlify.split(host).length < 3) errors.push(`Content Security Policy must allow ${host} for both provider images and service-worker fetches.`);
 }
 if (!netlify.includes('https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev')) {

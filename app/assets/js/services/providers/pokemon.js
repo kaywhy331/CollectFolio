@@ -124,6 +124,7 @@ export function normalizePokemonSet(set) {
     year: String(set.releaseDate || '').slice(0, 4),
     productCount: cardCount,
     cardCount,
+    image: set.images?.logo || set.images?.symbol || '',
     setType: 'expansion',
     supplemental: false
   };
@@ -150,7 +151,7 @@ async function cachedSets(source, loader) {
 async function loadPokemonSets() {
   return cachedSets('pokemon', async () => {
     const url = new URL(setEndpoint);
-    url.searchParams.set('select', 'id,name,series,printedTotal,total,releaseDate,ptcgoCode');
+    url.searchParams.set('select', 'id,name,series,printedTotal,total,releaseDate,ptcgoCode,images');
     url.searchParams.set('pageSize', String(PAGE_SIZE));
     const sets = [];
     for (let page = 1; ; page++) {

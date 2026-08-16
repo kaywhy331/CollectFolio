@@ -62,8 +62,11 @@ test('browse catalog exposes provider-neutral games and normalized set identity'
   assert.deepEqual(normalizePokemonSet({ id: 'swsh12', name: 'Silver Tempest', series: 'Sword & Shield', printedTotal: 195, releaseDate: '2022-11-11', ptcgoCode: 'SIT' }), {
     id: 'pokemon:swsh12', pokemonId: 'swsh12', externalId: 'swsh12', provider: 'pokemon', gameId: 'pokemon', game: 'Pokémon',
     name: 'Silver Tempest', code: 'SIT', series: 'Sword & Shield', printedTotal: 195, releaseDate: '2022-11-11', ptcgoCode: 'SIT', releasedAt: '2022-11-11',
-    year: '2022', productCount: 195, cardCount: 195, setType: 'expansion', supplemental: false
+    year: '2022', productCount: 195, cardCount: 195, image: '', setType: 'expansion', supplemental: false
   });
+  assert.equal(normalizePokemonSet({ id: 'swsh12', name: 'Silver Tempest', images: { logo: 'https://images.pokemontcg.io/swsh12/logo.png' } }).image, 'https://images.pokemontcg.io/swsh12/logo.png');
+  assert.equal(normalizeScryfallSet({ code: 'mkm', name: 'Murders at Karlov Manor', icon_svg_uri: 'https://svgs.scryfall.io/sets/mkm.svg' }).image, 'https://svgs.scryfall.io/sets/mkm.svg');
+  assert.equal(normalizeYGOSet({ set_code: 'LOB', set_name: 'Legend of Blue Eyes', set_image: 'https://images.ygoprodeck.com/images/sets/LOB.jpg' }).image, 'https://images.ygoprodeck.com/images/sets/LOB.jpg');
   assert.equal(normalizeScryfallSet({ code: 'mkm', name: 'Murders at Karlov Manor', set_type: 'expansion', card_count: 286, released_at: '2024-02-09' }).id, 'magic:mkm');
   assert.equal(normalizeYGOSet({ set_code: 'LOB', set_name: 'Legend of Blue Eyes', num_of_cards: 126, tcg_date: '2002-03-08' }).cardCount, 126);
 });

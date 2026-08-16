@@ -125,6 +125,28 @@ test('Discover browse exposes all 90 source categories with free community acces
   assert.doesNotMatch(drilled, /All TCGCSV games and categories/);
   assert.equal((drilled.match(/data-game-search-text=/g) || []).length, 0);
   assert.match(drilled, /data-set-id="swsh12"/);
+
+  const priorLocation = globalThis.location;
+  globalThis.location = { href: 'https://collectfolio.example/' };
+  const grouped = renderSearch(state({
+    discover: {
+      mode: 'browse', game: 'magic', setId: '', query: '', sort: 'newest', scope: 'all', groupBy: 'family', loading: false, warnings: [], error: '',
+      setCovers: { 'magic:cmm': 'https://cards.scryfall.io/cmm-cover.jpg' },
+      sets: [
+        { id: 'magic:fdn', externalId: 'fdn', gameId: 'magic', game: 'Magic: The Gathering', name: 'Foundations', releasedAt: '2024-11-15', year: '2024', supplemental: false, image: 'https://svgs.scryfall.io/sets/fdn.svg' },
+        { id: 'magic:cmm', externalId: 'cmm', gameId: 'magic', game: 'Magic: The Gathering', name: 'Commander Masters', releasedAt: '2023-08-04', year: '2023', supplemental: true },
+        { id: 'magic:c21', externalId: 'c21', gameId: 'magic', game: 'Magic: The Gathering', name: 'Commander 2021', releasedAt: '2021-04-23', year: '2021', supplemental: true, image: 'https://svgs.scryfall.io/sets/c21.svg' }
+      ],
+      products: []
+    }
+  }));
+  assert.match(grouped, /class="browse-set-group"/);
+  // Commander group header uses the most recent Commander set's cover.
+  assert.match(grouped, /<summary><img class="browse-set-group-art" src="https:\/\/cards\.scryfall\.io\/cmm-cover\.jpg"[^>]*><strong>Commander<\/strong>/);
+  // Main expansions header falls back to the set's own provider image.
+  assert.match(grouped, /<summary><img class="browse-set-group-art" src="https:\/\/svgs\.scryfall\.io\/sets\/fdn\.svg"[^>]*><strong>Main expansions<\/strong>/);
+  if (priorLocation === undefined) delete globalThis.location;
+  else globalThis.location = priorLocation;
 });
 
 test('Discover maps TCGCSV categories to their source game titles in browse and search', () => {

@@ -180,7 +180,7 @@ function gameChooser(state, browse, catalogGames) {
 function setTile(set, games, covers = {}) {
   const count = Number.isFinite(Number(set.cardCount)) ? `${Number(set.cardCount).toLocaleString()} cards` : 'Card count pending';
   const identity = [set.code, set.year, count].filter(Boolean).join(' · ');
-  const cover = safeImageUrl(covers[set.id] || '');
+  const cover = safeImageUrl(covers[set.id] || set.image || '');
   const art = cover
     ? `<img class="browse-set-art" src="${escapeAttribute(cover)}" data-external-image alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">`
     : `<span class="browse-set-art placeholder" aria-hidden="true">◇</span>`;
@@ -220,12 +220,21 @@ function browseGameHeader(browse, games) {
     <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h2>${escapeHTML(name)}</h2></div><button class="button ghost small" type="button" data-action="browse-all-games">All games</button></div>`;
 }
 
+// The image representing a sub-group is the cover of its most recent set,
+// chosen by the same product-derived cover rules as individual tiles.
+function groupHeaderArt(group, covers) {
+  const recent = [...group.sets].sort((left, right) =>
+    String(right.releasedAt || right.year || '').localeCompare(String(left.releasedAt || left.year || '')))[0];
+  const art = safeImageUrl(recent ? covers[recent.id] || recent.image || '' : '');
+  return art ? `<img class="browse-set-group-art" src="${escapeAttribute(art)}" data-external-image alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : '';
+}
+
 function browseSetSections(visible, games, groupBy, covers = {}) {
   const grid = (sets) => `<div class="browse-set-grid">${sets.map((set) => setTile(set, games, covers)).join('')}</div>`;
   if (groupBy === 'none') return grid(visible);
   const groups = groupCatalogSets(visible, groupBy);
   if (groups.length <= 1) return grid(visible);
-  return groups.map((group) => `<details class="browse-set-group" open><summary><strong>${escapeHTML(group.name)}</strong><span>${group.sets.length.toLocaleString()} ${group.sets.length === 1 ? 'set' : 'sets'}</span></summary>${grid(group.sets)}</details>`).join('');
+  return groups.map((group) => `<details class="browse-set-group" open><summary>${groupHeaderArt(group, covers)}<strong>${escapeHTML(group.name)}</strong><span>${group.sets.length.toLocaleString()} ${group.sets.length === 1 ? 'set' : 'sets'}</span></summary>${grid(group.sets)}</details>`).join('');
 }
 
 function renderBrowseSets(state, browse) {

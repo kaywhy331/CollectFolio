@@ -59,6 +59,7 @@ export function normalizeScryfallSet(set) {
     series: '',
     releasedAt: set.released_at || '',
     year: String(set.released_at || '').slice(0, 4),
+    image: set.icon_svg_uri || '',
     productCount: Number.isFinite(cardCount) ? cardCount : null,
     cardCount: Number.isFinite(cardCount) ? cardCount : null,
     setType,
