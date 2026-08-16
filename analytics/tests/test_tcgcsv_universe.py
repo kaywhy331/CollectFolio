@@ -25,7 +25,11 @@ from collectfolio_analytics.tcgcsv_universe_io import (
     compile_market_feature_csvs,
     write_price_parquet,
 )
-from collectfolio_analytics.tcgcsv_universe_cli import _resolve_archive_date, _timestamp
+from collectfolio_analytics.tcgcsv_universe_cli import (
+    _resolve_archive_date,
+    _resolve_source_available,
+    _timestamp,
+)
 
 
 PRICE = {
@@ -41,6 +45,15 @@ SOURCE_AVAILABLE = datetime(2026, 8, 15, 6, 41, tzinfo=timezone.utc)
 
 
 class TCGCSVUniverseTests(unittest.TestCase):
+    def test_coordinator_can_pin_a_deterministic_source_availability_boundary(self):
+        source = _timestamp("2026-08-15T20:05:57+0000")
+        self.assertEqual(
+            _resolve_source_available(source, "2026-08-15T20:05:57.000Z"),
+            source,
+        )
+        with self.assertRaisesRegex(TCGCSVUniverseError, "cannot precede"):
+            _resolve_source_available(source, "2026-08-15T20:05:56.999Z")
+
     def test_category_policy_uses_provider_labels_and_reviewed_exceptions(self):
         self.assertTrue(is_card_category({
             "categoryId": 3, "name": "Pokemon", "nonSealedLabel": "Single Cards"

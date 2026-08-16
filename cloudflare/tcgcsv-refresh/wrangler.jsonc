@@ -1,0 +1,49 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "collectfolio-tcgcsv-refresh-dev",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "SOURCE_UPDATED_URL": "https://tcgcsv.com/last-updated.txt",
+    "TCGCSV_USER_AGENT": "CollectFolio/0.8.5 private-current-refresh",
+    "ALLOWED_ORIGIN": "http://localhost:4173",
+    "LEASE_MINUTES": "90"
+  },
+  "r2_buckets": [
+    {
+      "binding": "TCGCSV_CURRENT",
+      "bucket_name": "collectfolio-tcgcsv-current"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "env": {
+    "production": {
+      "name": "collectfolio-tcgcsv-refresh",
+      "workers_dev": true,
+      "vars": {
+        "SOURCE_UPDATED_URL": "https://tcgcsv.com/last-updated.txt",
+        "TCGCSV_USER_AGENT": "CollectFolio/0.8.5 private-current-refresh",
+        "ALLOWED_ORIGIN": "https://collectfolio-staging.netlify.app",
+        "LEASE_MINUTES": "90"
+      },
+      "r2_buckets": [
+        {
+          "binding": "TCGCSV_CURRENT",
+          "bucket_name": "collectfolio-tcgcsv-current"
+        }
+      ],
+      "triggers": {
+        "crons": ["0 * * * *"]
+      },
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      }
+    }
+  }
+}

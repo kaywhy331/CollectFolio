@@ -209,6 +209,16 @@ h3 { margin-bottom: .35rem; line-height: 1.2; }
 .metric-value, .item-price, .price-source, .projection-summary, .forecast-grid, .compact-metrics { font-variant-numeric: tabular-nums; }
 
 .overview-hero { display: grid; gap: var(--space-3); }
+.source-refresh-status { display: flex; align-items: center; gap: .65rem; margin: calc(var(--space-3) * -1) 0 var(--space-4); padding: .65rem .8rem; color: var(--muted); background: color-mix(in srgb, var(--surface) 86%, transparent); border: 1px solid var(--border); border-radius: 12px; }
+.source-refresh-status > span:last-child { display: grid; gap: .1rem; min-width: 0; }
+.source-refresh-status strong { color: var(--text); font-size: .76rem; }
+.source-refresh-status small { font-size: .68rem; line-height: 1.4; }
+.source-refresh-dot { flex: 0 0 auto; width: .55rem; height: .55rem; background: var(--faint); border-radius: 50%; }
+.source-refresh-status[data-source-refresh-status="current"] .source-refresh-dot { background: var(--positive); }
+.source-refresh-status[data-source-refresh-status="loading"] .source-refresh-dot,
+.source-refresh-status[data-source-refresh-status="in_progress"] .source-refresh-dot,
+.source-refresh-status[data-source-refresh-status="update_required"] .source-refresh-dot { background: var(--warning); }
+.source-refresh-status[data-source-refresh-status="unavailable"] .source-refresh-dot { background: var(--danger); }
 .overview-performance { min-width: 0; }
 .overview-performance-head { display: grid; gap: var(--space-4); margin-bottom: var(--space-4); }
 .overview-value { display: block; font-size: clamp(2.55rem, 11vw, 4rem); line-height: .98; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }

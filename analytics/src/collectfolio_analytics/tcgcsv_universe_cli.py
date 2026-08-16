@@ -235,6 +235,13 @@ def _resolve_archive_date(source_updated: datetime, requested: str | None) -> da
     return archive_date
 
 
+def _resolve_source_available(source_updated: datetime, requested: str | None) -> datetime:
+    source_available = _timestamp(requested) if requested else datetime.now(timezone.utc)
+    if source_available < source_updated:
+        raise TCGCSVUniverseError("source availability cannot precede the provider timestamp")
+    return source_available
+
+
 def _prepare_archive(args: argparse.Namespace) -> dict[str, object]:
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -277,12 +284,10 @@ def _prepare_archive(args: argparse.Namespace) -> dict[str, object]:
             accept="application/octet-stream",
         )
         _write_bytes_new(archive_path, payload)
-    # Availability is when CollectFolio actually finished acquiring this source
-    # object, not the provider's historical archive date. This keeps local
-    # backfills from fabricating earlier point-in-time evidence.
-    source_available = datetime.now(timezone.utc)
-    if source_available < source_updated:
-        raise TCGCSVUniverseError("source availability cannot precede the provider timestamp")
+    # Interactive runs retain the actual acquisition time. A coordinator may
+    # supply a stable, reviewed availability boundary so retries of one source
+    # build produce byte-identical normalized facts and receipts.
+    source_available = _resolve_source_available(source_updated, args.source_available_at)
     archive_hash = file_sha256(archive_path)
 
     normalized_csv = output / "prices.csv"
@@ -541,6 +546,7 @@ def _parser() -> argparse.ArgumentParser:
     archive.add_argument("--terms-review-id", required=True)
     archive.add_argument("--archive-date")
     archive.add_argument("--source-updated-at")
+    archive.add_argument("--source-available-at")
     archive.add_argument("--archive-file")
     archive.add_argument("--category-id", action="append", type=int)
     archive.add_argument("--history-parquet", action="append")

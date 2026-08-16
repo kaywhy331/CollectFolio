@@ -19,6 +19,7 @@ const required = [
   'app/assets/js/services/visual-index.js', 'app/assets/data/visual-index/pokemon-v1/manifest.json',
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
   'app/assets/js/services/justtcg-refresh.js',
+  'app/assets/js/services/tcgcsv-refresh-status.js',
   'app/assets/js/core/catalog-identity.js', 'app/assets/js/core/intelligence-contract.js',
   'app/assets/js/core/intelligence-alerts.js', 'app/assets/js/core/insights.js', 'app/assets/js/core/local-scenarios.js',
   'app/assets/js/views/insights.js', 'app/assets/js/views/onboarding.js', 'app/assets/js/views/profile.js',
@@ -69,9 +70,14 @@ const required = [
   'netlify/lib/justtcg-ondemand-repository.mjs',
   'netlify/lib/justtcg-ondemand-collector.mjs',
   'netlify/functions/justtcg-refresh.mjs',
+  'cloudflare/tcgcsv-refresh/src/index.js',
+  'cloudflare/tcgcsv-refresh/wrangler.jsonc',
+  'cloudflare/tcgcsv-refresh/worker-configuration.d.ts',
+  'scripts/tcgcsv-r2-refresh-client.mjs',
   '.github/workflows/analytics-check.yml',
   '.github/workflows/price-intelligence-research.yml',
   '.github/workflows/tcgcsv-market-universe.yml',
+  '.github/workflows/tcgcsv-r2-refresh.yml',
   '.github/workflows/cardbase-mtg-history.yml',
   '.github/workflows/pull-rate-integrity.yml',
   'analytics/manifests/tcgcsv-surging-sparks-research.json',
@@ -101,11 +107,15 @@ const required = [
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
   'docs/PULL_RATE_REGISTRY.md',
   'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md',
+  'docs/source-reviews/TCGCSV_FULL_COHORT_PRIVATE_RESEARCH.md',
+  'docs/source-reviews/TCGCSV_RECURRING_PRIVATE_ROLLING.md',
   'docs/source-reviews/CARDBASE_MTG_RESEARCH_CANDIDATE.md',
   'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
   'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md',
+  'docs/receipts/TCGCSV_FULL_COHORT_R2_2026_08_15.md',
+  'docs/receipts/TCGCSV_ROLLING_R2_2026_08_15.md',
   'tests/redesign-protection.test.js',
   'tests/local-scenarios.test.js',
   'tests/router.test.js', 'tests/view-models.test.js', 'tests/overview.test.js',
@@ -115,6 +125,7 @@ const required = [
   'tests/forecast-engine-migration.test.js',
   'tests/historical-price-import-migration.test.js',
   'tests/tcgcsv-market-universe-migration.test.js',
+  'tests/tcgcsv-r2-refresh-worker.test.js', 'tests/tcgcsv-refresh-status.test.js',
   'tests/postgres/run_forecast_runtime.py',
   'tests/postgres/run_tcgcsv_universe_runtime.py',
   'tests/postgres/forecast-runtime-fixture.sql',
@@ -155,14 +166,15 @@ if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@n
 const approvedDevDependencies = {
   '@axe-core/playwright': '4.12.1',
   '@fontsource-variable/inter': '5.3.0',
-  '@playwright/test': '1.62.1'
+  '@playwright/test': '1.62.1',
+  wrangler: '4.123.0'
 };
 const devDependencies = packageJSON.devDependencies || {};
 if (JSON.stringify(Object.keys(devDependencies).sort()) !== JSON.stringify(Object.keys(approvedDevDependencies).sort())
     || Object.entries(approvedDevDependencies).some(([name, version]) => devDependencies[name] !== version)) {
-  errors.push('Dev dependencies must be exactly the pinned Playwright, axe, and snapshot-font packages.');
+  errors.push('Dev dependencies must be exactly the pinned Playwright, axe, snapshot-font, and Wrangler packages.');
 }
-for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:forecast-db', 'test:tcgcsv-db', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'forecast:lab', 'history:import', 'cardbase:history', 'tcgcsv:universe', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
+for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:forecast-db', 'test:tcgcsv-db', 'test:tcgcsv-refresh', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'forecast:lab', 'history:import', 'cardbase:history', 'tcgcsv:universe', 'worker:tcgcsv:types', 'worker:tcgcsv:dry-run', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
 
 const researchManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-research.json'), 'utf8'));
 const researchReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md'));
@@ -240,6 +252,51 @@ if (!/permissions:\s*\n\s+contents: read/.test(universeWorkflow)) errors.push('T
 if (/service_role|SUPABASE_SERVICE_ROLE/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must use the dedicated ingest credential, not a broad service-role secret.');
 if (/update\s+public\.product_feature_flags/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must not enable public forecasting.');
 if (!/(^|\n)\s*schedule:\s*\n\s*-\s*cron:\s*['"]41 6 \* \* \*['"]/.test(universeWorkflow)) errors.push('TCGCSV market-universe acquisition must retain its daily 06:41 UTC schedule.');
+
+const rollingWorkflow = await readFile(resolve(root, '.github/workflows/tcgcsv-r2-refresh.yml'), 'utf8');
+for (const contract of [
+  "cron: '5 * * * *'", 'TCGCSV_R2_REFRESH_ENABLED', 'concurrency:',
+  "node-version: '22'",
+  'tcgcsv-r2-refresh-client.mjs claim', 'download-if-present',
+  '--source-available-at', 'sync-catalog', 'catalog.partial !== false',
+  'gzip -n -9', 'raw_archive', 'prices_parquet', 'market_features_gzip',
+  'set_features', 'archive_packet', 'catalog_packet_gzip',
+  'github_workflow_failed', 'retention-days: 30'
+]) {
+  if (!rollingWorkflow.includes(contract)) errors.push(`TCGCSV rolling R2 workflow lacks contract ${contract}.`);
+}
+if (!/permissions:\s*\n\s+contents: read/.test(rollingWorkflow)) errors.push('TCGCSV rolling R2 workflow must keep GitHub permissions contents-read-only.');
+if (/DATABASE_URL|SUPABASE_|--use-database-state|--ingest\b|structural[_ -]gap|price[_ -]intelligence/i.test(rollingWorkflow)) {
+  errors.push('TCGCSV rolling R2 workflow must not ingest a database, train, or publish price intelligence.');
+}
+if (!rollingWorkflow.includes('3775d954-f0ce-4abc-97fb-a7a6938c134a')) errors.push('TCGCSV rolling R2 workflow must bind the approved recurring review ID.');
+
+const rollingReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RECURRING_PRIVATE_ROLLING.md'), 'utf8');
+for (const contract of [
+  '3775d954-f0ce-4abc-97fb-a7a6938c134a', 'private_rolling_research',
+  'latest and previous successful cohorts', '90-minute lease',
+  'No LLM', 'Historical accumulation or backfill | No',
+  'PostgreSQL migration or ingestion | No', 'Commercial use | No'
+]) {
+  if (!rollingReview.includes(contract)) errors.push(`TCGCSV rolling source review lacks contract ${contract}.`);
+}
+
+const refreshWorker = await readFile(resolve(root, 'cloudflare/tcgcsv-refresh/src/index.js'), 'utf8');
+for (const contract of [
+  'tcgcsv-r2-refresh-v1', 'coordination/claim.json', 'DEFAULT_LEASE_MINUTES = 90',
+  "return `runs/${runId}/slot-${slot}/${artifact.path}`", 'onlyIf:',
+  'TCGCSV changed before completion', 'Published artifact does not match its marker',
+  'cleanupStaleRunArtifacts', 'crypto.subtle.timingSafeEqual',
+  'lastSuccessfulSourceBuild', "url.pathname === '/status'"
+]) {
+  if (!refreshWorker.includes(contract)) errors.push(`TCGCSV refresh Worker lacks contract ${contract}.`);
+}
+const publicStatusBody = refreshWorker.match(/function publicRefreshStatus\(state\) \{([\s\S]*?)\n\}/)?.[1] || '';
+if (/artifact|runId|key/i.test(publicStatusBody)) errors.push('Public TCGCSV refresh status must not expose artifacts, run IDs, or R2 keys.');
+const refreshConfig = await readFile(resolve(root, 'cloudflare/tcgcsv-refresh/wrangler.jsonc'), 'utf8');
+for (const contract of ['collectfolio-tcgcsv-current', 'collectfolio-staging.netlify.app', '"crons": ["0 * * * *"]', '"enabled": true']) {
+  if (!refreshConfig.includes(contract)) errors.push(`TCGCSV refresh Worker config lacks contract ${contract}.`);
+}
 const universeRunbook = await readFile(resolve(root, 'docs/TCGCSV_MARKET_UNIVERSE.md'), 'utf8');
 for (const contract of [
   'TCGCSV is the authoritative', 'broad-market history baseline',
@@ -370,6 +427,9 @@ const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
 if (!runtimeConfig.includes("APP_VERSION: '0.8.5-dev'")) errors.push('Local runtime config must identify the 0.8.5 development build.');
 if (!buildScript.includes("process.env.APP_VERSION || '0.8.5'")) errors.push('Production builds must default APP_VERSION to 0.8.5.');
+if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
+  errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
+}
 
 const ordinaryUiFiles = [
   resolve(app, 'index.html'), resolve(app, 'assets/js/app.js'),
@@ -709,9 +769,12 @@ if (!netlify.includes("'wasm-unsafe-eval'")) errors.push('Content Security Polic
 for (const host of ['https://images.pokemontcg.io', 'https://images.scrydex.com', 'https://assets.tcgdex.net', 'https://cards.scryfall.io', 'https://images.ygoprodeck.com']) {
   if (netlify.split(host).length < 3) errors.push(`Content Security Policy must allow ${host} for both provider images and service-worker fetches.`);
 }
+if (!netlify.includes('https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev')) {
+  errors.push('Content Security Policy must allow the public TCGCSV refresh-status Worker.');
+}
 
 if (errors.length) {
   console.error(`Validation failed:\n- ${errors.join('\n- ')}`);
   process.exit(1);
 }
-console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only package, and three pinned browser-test packages.`);
+console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only package, and four pinned development packages.`);

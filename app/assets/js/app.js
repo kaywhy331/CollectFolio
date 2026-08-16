@@ -27,6 +27,7 @@ import { clearBrowseCatalogCache, loadCatalogSetProducts, loadCatalogSets } from
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
+import { fetchTcgcsvRefreshStatus } from './services/tcgcsv-refresh-status.js';
 import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
 import { applyAcquisitionToAll, batchAddApproved, createScanDraft, deleteCrop, identifyCrop, identifyDraftCrops, maintainCompletedScans, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropAcquisition, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
@@ -132,6 +133,21 @@ function runtimeFlag(name, fallback = false) {
   const value = globalThis.window?.COLLECTFOLIO_CONFIG?.[name];
   if (value === undefined) return fallback;
   return /^(1|true|yes)$/i.test(String(value));
+}
+
+async function hydrateTcgcsvRefreshStatus() {
+  const endpoint = String(globalThis.window?.COLLECTFOLIO_CONFIG?.TCGCSV_REFRESH_STATUS_URL ?? '').trim();
+  if (!endpoint) return;
+  setState({ tcgcsvRefresh: { ...getState().tcgcsvRefresh, status: 'loading', error: '' } });
+  try {
+    setState({ tcgcsvRefresh: await fetchTcgcsvRefreshStatus(endpoint) });
+  } catch (error) {
+    setState({ tcgcsvRefresh: {
+      ...getState().tcgcsvRefresh,
+      status: 'unavailable',
+      error: error instanceof Error ? error.message : 'Refresh status is unavailable'
+    } });
+  }
 }
 
 async function loadLocal() {
@@ -1743,6 +1759,7 @@ initializeAuth();
 applyAppRoute(activeRoute, { historyMode: 'replace', focus: false, scroll: false });
 subscribe(render);
 render();
+hydrateTcgcsvRefreshStatus();
 addEventListener('popstate', () => {
   applyAppRoute(parseAppRoute(location), { historyMode: 'none', focus: true, scroll: false });
 });

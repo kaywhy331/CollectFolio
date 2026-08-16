@@ -24,6 +24,10 @@ let state = {
   compare: [],
   featureFlags: { watchlists: true, setBrowsing: true, publicPriceIntelligence: false, loaded: false },
   intelligence: { byVariant: {}, history: [], loading: false, error: '', lastRefresh: '' },
+  tcgcsvRefresh: {
+    status: 'disabled', sourceUpdatedAt: '', lastSuccessfulSourceBuild: null,
+    lastSuccessfulAt: null, error: ''
+  },
   auth: {
     session: null,
     syncing: false,

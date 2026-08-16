@@ -18,6 +18,7 @@ await writeFile(resolve(output, 'runtime-config.js'), `window.COLLECTFOLIO_CONFI
   SUPABASE_URL: ${string(process.env.SUPABASE_URL || 'https://agmjgyyvhfcivbwdlvzk.supabase.co')},
   SUPABASE_ANON_KEY: ${string(process.env.SUPABASE_ANON_KEY || '')},
   APP_VERSION: ${string(process.env.APP_VERSION || '0.8.5')},
+  TCGCSV_REFRESH_STATUS_URL: ${string(process.env.TCGCSV_REFRESH_STATUS_URL || '')},
   ENABLE_TESSERACT: ${enabled},
   ENABLE_WATCHLISTS: ${watchlistsEnabled},
   ENABLE_SET_BROWSING: ${setBrowsingEnabled},
