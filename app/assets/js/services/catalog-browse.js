@@ -2,6 +2,7 @@ import { normalizeQuery, textSimilarity } from '../core/utils.js';
 import { getPokemonSetCards, listPokemonSets } from './providers/pokemon.js';
 import { getScryfallSetCards, listScryfallSets } from './providers/scryfall.js';
 import { getYGOSetCards, listYGOSets } from './providers/ygoprodeck.js';
+import { TCGCSV_CATEGORY_DIRECTORY } from './providers/tcgcsv-categories.js';
 import {
   getTCGCSVGroupProducts,
   listTCGCSVCategories,
@@ -51,17 +52,21 @@ export function catalogGamesFromTCGCSVCategories(categories = []) {
       shortName: name,
       provider: 'tcgcsv',
       categoryId,
-      description: `Authenticated private test · TCGCSV category ${categoryId}`
+      isCardCategory: category?.isCardCategory !== false,
+      description: `Authenticated personal catalog · TCGCSV category ${categoryId}`
     });
   }).filter(Boolean).sort((left, right) => left.categoryId - right.categoryId);
 }
 
+export const TCGCSV_CATALOG_GAMES = Object.freeze(catalogGamesFromTCGCSVCategories(TCGCSV_CATEGORY_DIRECTORY));
+
 export function mergeCatalogGames(...collections) {
-  const games = new Map(CATALOG_GAMES.map((game) => [game.id, game]));
-  collections.flat().forEach((game) => {
-    if (game?.id && !games.has(game.id)) games.set(game.id, game);
-  });
+  const games = new Map([...CATALOG_GAMES, ...TCGCSV_CATALOG_GAMES].map((game) => [game.id, game]));
   const fixedIds = new Set(CATALOG_GAMES.map((game) => game.id));
+  collections.flat().forEach((game) => {
+    if (!game?.id || fixedIds.has(game.id)) return;
+    games.set(game.id, { ...games.get(game.id), ...game });
+  });
   return [
     ...CATALOG_GAMES,
     ...[...games.values()].filter((game) => !fixedIds.has(game.id)).sort((left, right) =>
@@ -83,6 +88,10 @@ export function catalogGame(gameId, games = []) {
     categoryId,
     description: 'Authenticated private test'
   };
+}
+
+export function catalogGameRequiresSession(gameId, games = [], session = null) {
+  return catalogGame(gameId, games)?.provider === 'tcgcsv' && !session;
 }
 
 export function scopedTCGCSVGroups(groups = [], gameId) {

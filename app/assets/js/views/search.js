@@ -22,7 +22,7 @@ function categoryOption(value, label, selected) {
   return `<option value="${escapeAttribute(value)}" ${selected === value ? 'selected' : ''}>${escapeHTML(label)}</option>`;
 }
 
-function categoryOptions(selected, games = []) {
+function categoryOptions(selected, games = [], authenticated = false) {
   const mergedGames = mergeCatalogGames(games);
   const tcgcsvGames = mergedGames.filter((game) => game.provider === 'tcgcsv');
   const selectedGame = catalogGame(selected, mergedGames);
@@ -34,7 +34,7 @@ function categoryOptions(selected, games = []) {
     ...CATALOG_GAMES.map((game) => [game.id, game.name])
   ].map(([value, label]) => categoryOption(value, label, selected)).join('');
   const tcgcsv = tcgcsvGames.length
-    ? `<optgroup label="TCGCSV games">${tcgcsvGames.map((game) => categoryOption(game.id, game.name, selected)).join('')}</optgroup>`
+    ? `<optgroup label="TCGCSV games and categories (${tcgcsvGames.length})${authenticated ? '' : ' — sign in'}">${tcgcsvGames.map((game) => categoryOption(game.id, `${game.name}${authenticated ? '' : ' — sign in'}`, selected)).join('')}</optgroup>`
     : '';
   const custom = [['sports', 'Sports — custom'], ['comics', 'Comics — custom'], ['slab', 'Graded slab — custom'], ['other', 'Other — custom']]
     .map(([value, label]) => categoryOption(value, label, selected)).join('');
@@ -153,9 +153,31 @@ function browseWarnings(browse) {
   return `<div class="search-warning" role="status"><strong>${browse.error ? 'Catalog browsing is temporarily unavailable.' : 'Some catalogs were unavailable.'}</strong>${messages.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<button class="button ghost small" type="button" data-action="retry-browse">Retry</button></div>`;
 }
 
-function gameChips(browse, catalogGames) {
-  const games = [{ id: 'all', shortName: 'All games' }, ...catalogGames];
-  return `<div class="browse-game-chips" role="list" aria-label="Card games">${games.map((game) => `<button type="button" role="listitem" data-action="select-browse-game" data-game="${escapeAttribute(game.id)}" aria-pressed="${browse.game === game.id}">${escapeHTML(game.shortName)}</button>`).join('')}</div>`;
+function browseGameButton(game, browse, { locked = false, directory = false } = {}) {
+  const name = game.shortName || game.name;
+  const searchText = `${game.name || name} ${game.categoryId || ''}`.trim().toLowerCase();
+  return `<button type="button" data-action="select-browse-game" data-game="${escapeAttribute(game.id)}"${directory ? ` data-game-search-text="${escapeAttribute(searchText)}"` : ''}${locked ? ' data-catalog-locked="true"' : ''} aria-pressed="${browse.game === game.id}"${locked ? ` aria-label="${escapeAttribute(`${name} — sign in to browse imported sets, cards, and prices`)}"` : ''}><span>${escapeHTML(name)}</span>${directory ? `<small>${locked ? 'Sign in' : 'Active'}</small>` : ''}</button>`;
+}
+
+function gameChooser(state, browse, catalogGames) {
+  const authenticated = Boolean(state.auth?.session);
+  const tcgcsvGames = catalogGames.filter((game) => game.provider === 'tcgcsv');
+  const publicGames = catalogGames.filter((game) => game.provider !== 'tcgcsv');
+  const selected = catalogGame(browse.game, catalogGames);
+  const quickGames = [{ id: 'all', name: 'All games', shortName: 'All games' }, ...publicGames];
+  if (selected?.provider === 'tcgcsv') quickGames.push(selected);
+  const status = authenticated
+    ? `${tcgcsvGames.length} TCGCSV categories mapped · catalog access active`
+    : `${tcgcsvGames.length} TCGCSV categories mapped · sign in to browse imported contents`;
+  return `<section class="browse-game-chooser" aria-labelledby="browse-game-heading">
+    <div class="browse-game-chips" role="group" aria-label="Primary card games">${quickGames.map((game) => browseGameButton(game, browse, { locked: game.provider === 'tcgcsv' && !authenticated })).join('')}</div>
+    <div class="browse-game-directory">
+      <div class="browse-game-directory-head"><div><strong id="browse-game-heading">All TCGCSV games and categories</strong><span>${escapeHTML(status)}</span></div><span class="browse-game-count">${tcgcsvGames.length}</span></div>
+      <label class="browse-game-search"><span class="sr-only">Filter TCGCSV games and categories</span><input type="search" data-browse-game-query aria-controls="browse-game-options" placeholder="Find Dragon Ball, One Piece, Digimon…" autocomplete="off"></label>
+      <div id="browse-game-options" class="browse-game-options" role="group" aria-label="All TCGCSV games and categories">${tcgcsvGames.map((game) => browseGameButton(game, browse, { locked: !authenticated, directory: true })).join('')}</div>
+      <p class="browse-game-empty" data-browse-game-empty hidden>No matching TCGCSV category.</p>
+    </div>
+  </section>`;
 }
 
 function setTile(set, games) {
@@ -180,13 +202,10 @@ function renderBrowseSets(state, browse) {
     : remaining > 0
       ? `Showing ${visible.length.toLocaleString()} of ${sets.length.toLocaleString()} sets`
       : `${sets.length.toLocaleString()} ${sets.length === 1 ? 'set' : 'sets'}`;
-  const selectedGame = catalogGame(browse.game, games);
-  const includesTCGCSV = selectedGame?.provider === 'tcgcsv'
-    || (browse.game === 'all' && games.some((game) => game.provider === 'tcgcsv'));
-  const rightsNote = includesTCGCSV
-    ? 'TCGCSV category coverage is available only after sign-in for authenticated personal integration testing. It is not an anonymous redistribution feed.'
-    : 'Browse includes every set available from the currently approved public catalogs. More games will appear as coverage expands.';
-  return `${gameChips(browse, games)}
+  const rightsNote = state.auth?.session
+    ? 'All 90 imported TCGCSV categories are active for this signed-in personal integration test. Groups, products, finishes, and prices stay category-scoped.'
+    : 'All 90 TCGCSV category titles are mapped. Sign in to activate their imported sets, cards, finishes, and prices; catalog contents are not served anonymously.';
+  return `${gameChooser(state, browse, games)}
     <div class="browse-controls">
       <label class="browse-query"><span class="sr-only">Search sets</span><input type="search" data-browse-set-query value="${escapeAttribute(browse.query || '')}" placeholder="Search sets or codes…" autocomplete="off"></label>
       <label><span class="sr-only">Set type</span><select data-browse-set-scope><option value="all" ${browse.scope === 'all' ? 'selected' : ''}>All sets</option><option value="main" ${browse.scope === 'main' ? 'selected' : ''}>Main sets</option><option value="supplemental" ${browse.scope === 'supplemental' ? 'selected' : ''}>Supplemental</option></select></label>
@@ -233,12 +252,17 @@ export function renderSearch(state) {
   const resultCount = search.results.length > visibleResults.length
     ? `Showing ${visibleResults.length} of ${search.results.length} results`
     : `${search.results.length} result${search.results.length === 1 ? '' : 's'}`;
+  const selectedGame = catalogGame(search.category, state.discover?.games);
+  const catalogGate = selectedGame?.provider === 'tcgcsv' && !state.auth?.session
+    ? `<p class="catalog-auth-gate"><span>${escapeHTML(selectedGame.name)} is mapped and ready.</span><button class="button ghost small" type="button" data-action="open-auth">Sign in to search its imported cards and prices</button></p>`
+    : '';
   return `${discoverHeader(state, 'search')}
     <form id="catalog-search" class="discover-search">
       <div class="search-command"><button class="search-image-button" type="button" data-action="start-single-scan" aria-label="Search from an image">▣</button><label class="sr-only" for="catalog-query">Search catalog</label><input id="catalog-query" name="query" type="search" required minlength="2" value="${escapeAttribute(search.query)}" placeholder="Card, set, number, character, or player" autocomplete="off"><button class="search-clear" type="button" data-action="clear-search" aria-label="Clear search" ${search.query ? '' : 'hidden'}>×</button><button class="button" ${search.loading ? 'disabled' : ''}>${search.loading ? 'Searching…' : 'Search'}</button></div>
       ${recentSearches({ ...state, search })}
-      <details class="discover-filters" ${Object.values(search.filters || {}).some(Boolean) ? 'open' : ''}><summary><span>Filters</span><span>${escapeHTML(categoryLabel(search.category, state.discover?.games))}</span></summary><div class="discover-filter-grid"><label>Category<select name="category">${categoryOptions(search.category, state.discover?.games)}</select></label>${contextualFilters(search.category, search.filters)}<details class="data-source-control"><summary>Data source</summary><label>Market source<select name="provider">${providerOptions(search.provider)}</select></label><p>Automatic selection searches every enabled source and keeps partial results if one is unavailable.</p></details></div></details>
+      <details class="discover-filters" ${Object.values(search.filters || {}).some(Boolean) ? 'open' : ''}><summary><span>Filters</span><span>${escapeHTML(categoryLabel(search.category, state.discover?.games))}</span></summary><div class="discover-filter-grid"><label>Category<select name="category">${categoryOptions(search.category, state.discover?.games, Boolean(state.auth?.session))}</select></label>${contextualFilters(search.category, search.filters)}<details class="data-source-control"><summary>Data source</summary><label>Market source<select name="provider">${providerOptions(search.provider)}</select></label><p>Automatic selection searches every enabled source and keeps partial results if one is unavailable.</p></details></div></details>
     </form>
+    ${catalogGate}
     ${search.cached ? '<p class="fine-print search-status">Showing a recent result cached on this device.</p>' : ''}
     ${search.warnings.length ? `<div class="search-warning" role="status"><strong>Some sources were unavailable.</strong>${search.warnings.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<small>Your search and filters are unchanged.</small></div>` : ''}
     ${manualCategory ? `${emptyState(`Create a precise ${search.category} record`, 'There is no universal rights-cleared catalog for this category. Add the identity and value you can verify.', `<button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create custom item</button>`)}` : `<div class="discover-results-head"><div><strong>${search.loading ? 'Searching sources…' : resultCount}</strong><span>${search.query ? `for “${escapeHTML(search.query)}”` : 'ready to search'}</span></div><div class="view-toggle" role="group" aria-label="Result view"><button type="button" data-discover-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Gallery view">▦</button><button type="button" data-discover-view="list" aria-pressed="${view === 'list'}" aria-label="List view">☷</button></div></div>${search.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching catalog sources</span></div>' : `${resultGroups(visibleResults, { ...state, search }, view)}${resultPaging(search, visibleResults.length)}`}`}`;

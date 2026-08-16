@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.7';
+const CACHE = 'collectfolio-shell-v0.8.8';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
@@ -17,7 +17,7 @@ const SHELL = [
   './assets/js/views/price-intelligence-detail.js', './assets/js/views/quick-inspector.js', './assets/js/views/holding-form.js',
   './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js', './assets/js/services/catalog-browse.js',
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
-  './assets/js/services/providers/ygoprodeck.js', './assets/js/services/providers/tcgcsv.js', './assets/js/services/image-algorithms.js',
+  './assets/js/services/providers/ygoprodeck.js', './assets/js/services/providers/tcgcsv.js', './assets/js/services/providers/tcgcsv-categories.js', './assets/js/services/image-algorithms.js',
   './assets/js/services/image.js', './assets/js/services/scan-workbench.js',
   './assets/js/services/scan-review.js', './assets/js/services/visual-index.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
   './assets/js/services/price-intelligence.js',
