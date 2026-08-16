@@ -1,15 +1,16 @@
 import { externalImage, pageHeader } from '../core/components.js';
-import { watchKeyForItem } from '../core/catalog-identity.js';
 import { matchBucketFor } from '../core/view-models.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { CURRENCIES } from '../core/settings.js';
+import { RAW_MARKET_CONDITIONS } from '../core/market-series.js';
 import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from '../core/utils.js';
 import { normalizeAcquisition, scanReviewSummary, scanReviewTotals, selectedCropItem } from '../services/scan-review.js';
+import { findWatchedItem } from '../services/watchlist.js';
 
 const CONDITIONS = ['Mint', 'Near Mint', 'Excellent', 'Good', 'Played', 'Poor', 'Graded'];
 
-function option(value, selected) {
-  return `<option value="${escapeAttribute(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(value)}</option>`;
+function option(value, selected, label = value) {
+  return `<option value="${escapeAttribute(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(label)}</option>`;
 }
 
 function acquisitionFields(acquisition, { bulk = false } = {}) {
@@ -17,7 +18,8 @@ function acquisitionFields(acquisition, { bulk = false } = {}) {
   const marker = (field) => bulk ? '' : `data-crop-acquisition="${field}"`;
   return `<div class="acquisition-grid">
     <label>Quantity<input ${marker('quantity')} name="quantity" type="number" min="1" step="1" value="${escapeAttribute(value.quantity)}"></label>
-    <label>Condition<select ${marker('condition')} name="condition">${CONDITIONS.map((condition) => option(condition, value.condition)).join('')}</select></label>
+    <label>Collection condition<select ${marker('condition')} name="condition">${CONDITIONS.map((condition) => option(condition, value.condition)).join('')}</select></label>
+    <label>Marketplace condition<select ${marker('marketCondition')} name="marketCondition"><option value="">Not confirmed</option>${RAW_MARKET_CONDITIONS.map((entry) => option(entry.value, value.marketCondition, entry.label)).join('')}</select><span class="fine-print">Required for an exact-condition market forecast; never inferred from collection condition.</span></label>
     <label>Purchase price / item<input ${marker('purchasePrice')} name="purchasePrice" type="number" min="0" step="0.01" value="${escapeAttribute(value.purchasePrice)}" placeholder="Optional"></label>
     <label>Purchase currency<select ${marker('purchaseCurrency')} name="purchaseCurrency">${CURRENCIES.map((entry) => option(entry, value.purchaseCurrency)).join('')}</select></label>
     <label>Fees (total, same currency)<input ${marker('fees')} name="fees" type="number" min="0" step="0.01" value="${escapeAttribute(value.fees)}" placeholder="Optional"></label>
@@ -52,6 +54,7 @@ function bulkAcquisition(draft) {
 }
 
 function matchStatus(crop, selected) {
+  if (!selected && ['queued', 'identifying'].includes(crop.status)) return ['possible', crop.status === 'queued' ? 'Queued' : 'Identifying'];
   if (!selected) return ['unmatched', 'Unmatched'];
   if (crop.customItem) return ['possible', 'Custom identity'];
   const bucket = matchBucketFor(selected);
@@ -60,7 +63,7 @@ function matchStatus(crop, selected) {
 
 function selectedMatch(crop, selected, state) {
   if (!selected) return '';
-  const watching = state.watchlistItems?.some((entry) => entry.watchKey === watchKeyForItem(selected));
+  const watching = Boolean(findWatchedItem(state.watchlistItems, selected));
   const [bucket, label] = matchStatus(crop, selected);
   return `<section class="selected-match">
     <div><p class="eyebrow">Selected catalog candidate</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>
@@ -81,12 +84,12 @@ function cropCard(crop, index, state) {
   const selected = selectedCropItem(crop);
   const [bucket, label] = matchStatus(crop, selected);
   return `<article class="review-card ${crop.approved ? 'approved' : ''}" data-crop-id="${escapeAttribute(crop.id)}">
-    <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Crop ${index + 1}" referrerpolicy="no-referrer"><div><div class="review-item-kicker"><span>Item ${index + 1}</span><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span>${crop.approved ? '<span class="approval-state">Approved</span>' : ''}</div><h2>${escapeHTML(selected?.name || 'Identify this crop')}</h2><p class="muted">${crop.approved ? 'This item will be included with the acquisition details below.' : selected ? 'Confirm the identity, fill acquisition details, then approve it.' : 'Search with OCR or a typed query, or create a custom identity.'}</p></div></div>
+    <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Straightened card ${index + 1}" referrerpolicy="no-referrer"><div><div class="review-item-kicker"><span>Item ${index + 1}</span><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span>${crop.approved ? '<span class="approval-state">Approved</span>' : ''}</div><h2>${escapeHTML(selected?.name || (['queued', 'identifying'].includes(crop.status) ? 'Identifying this card' : 'Identify this card'))}</h2><p class="muted">${crop.approved ? 'This item will be included with the acquisition details below.' : selected ? 'Confirm the identity, fill acquisition details, then approve it.' : ['queued', 'identifying'].includes(crop.status) ? 'Reading the straightened card and searching catalog printings automatically.' : 'Retry automatic OCR, enter a query, or create a custom identity.'}</p></div></div>
     <div class="match-workspace"><label>OCR or catalog query<input data-crop-query value="${escapeAttribute(crop.query)}" placeholder="Type a name, set, or number"></label>
       ${crop.ocrEngine ? `<p class="fine-print">OCR: ${escapeHTML(crop.ocrEngine)}${crop.query ? ' · reliable card text selected locally' : ''}</p>` : ''}
-      ${crop.status === 'identifying' ? '<p class="fine-print" role="status">Identifying locally. First-use OCR may take a few seconds.</p>' : ''}
+      ${['queued', 'identifying'].includes(crop.status) ? '<p class="fine-print" role="status">Identifying automatically on this device. First-use OCR may take a few seconds.</p>' : ''}
       ${crop.error ? `<p class="fine-print negative" role="status">${escapeHTML(crop.error)}</p>` : ''}
-      <div class="button-row"><button class="button secondary small" type="button" data-action="identify-crop" data-id="${escapeAttribute(crop.id)}" ${crop.status === 'identifying' ? 'disabled' : ''}>${crop.status === 'identifying' ? 'Identifying…' : crop.query ? 'Search / retry' : 'Run OCR'}</button><button class="button ghost small" type="button" data-action="custom-crop" data-id="${escapeAttribute(crop.id)}">Create custom</button><button class="button ghost small" type="button" data-action="delete-crop" data-id="${escapeAttribute(crop.id)}">Exclude item</button></div>
+      <div class="button-row"><button class="button secondary small" type="button" data-action="identify-crop" data-id="${escapeAttribute(crop.id)}" ${['queued', 'identifying'].includes(crop.status) ? 'disabled' : ''}>${['queued', 'identifying'].includes(crop.status) ? 'Identifying…' : crop.query ? 'Search / retry' : 'Retry automatic OCR'}</button><button class="button ghost small" type="button" data-action="custom-crop" data-id="${escapeAttribute(crop.id)}">Create custom</button><button class="button ghost small" type="button" data-action="delete-crop" data-id="${escapeAttribute(crop.id)}">Exclude item</button></div>
     </div>
     ${candidateList(crop)}
     ${selectedMatch(crop, selected, state)}

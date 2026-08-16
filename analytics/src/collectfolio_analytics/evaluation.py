@@ -121,6 +121,7 @@ class RealizedPrice:
     trailing_seven_day_median: float
     exact_date_price: float | None
     observation_count: int
+    observation_ids: tuple[str, ...]
 
 
 def realized_price_at_maturity(
@@ -138,15 +139,23 @@ def realized_price_at_maturity(
         raise ValueError("realized price cannot be evaluated before maturity")
     known = point_in_time_series(observations, evaluated_utc, key=key)
     window_start = maturity_utc - timedelta(days=6)
-    window = [item for item in known if window_start <= item.observed_at <= maturity_utc]
+    window = [
+        item for item in known
+        if window_start <= item.observed_at <= maturity_utc
+        and item.available_at <= maturity_utc
+    ]
     if not window:
         raise ValueError("no realized-price observations exist in the maturity window")
+    observation_ids = tuple(str(item.source_observation_id or "").strip() for item in window)
+    if any(not value for value in observation_ids) or len(set(observation_ids)) != len(observation_ids):
+        raise ValueError("realized-price observations require unique immutable IDs")
     exact = [item for item in window if item.observed_at.date() == maturity_utc.date()]
     return RealizedPrice(
         maturity=maturity_utc,
         trailing_seven_day_median=float(median(item.price for item in window)),
         exact_date_price=exact[-1].price if exact else None,
         observation_count=len(window),
+        observation_ids=observation_ids,
     )
 
 

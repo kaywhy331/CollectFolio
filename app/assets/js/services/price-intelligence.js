@@ -1,12 +1,26 @@
 import { getAll, getRecord, putRecord } from '../core/db.js';
 import { isUUID } from '../core/catalog-identity.js';
+import { marketSeriesIdentity } from '../core/market-series.js';
 import { fetchPublishedIntelligence } from './supabase.js';
 
 const CACHE_PREFIX = 'intelligence:v1:';
 const HISTORY_PREFIX = 'intelligence-history:v1:';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
-const cacheKey = (variantId) => `${CACHE_PREFIX}${String(variantId).toLowerCase()}`;
+const seriesKey = (publication = {}) => {
+  const identity = marketSeriesIdentity(publication.seriesIdentity || publication.payload?.seriesIdentity || {});
+  return [
+  publication.variantId,
+  identity.sourceId,
+  identity.currency,
+  identity.language,
+  identity.finish,
+  identity.conditionClass,
+  identity.marketCondition,
+  identity.priceSemantics
+].map((value) => encodeURIComponent(String(value || '').toLowerCase())).join(':');
+};
+const cacheKey = (publication) => `${CACHE_PREFIX}${seriesKey(publication)}`;
 
 function hashText(value) {
   let hash = 0x811c9dc5;
@@ -26,7 +40,7 @@ export function publicationHistoryRecord(publication, archivedAt = new Date().to
     publishedAt: publication.publishedAt
   }));
   return {
-    key: `${HISTORY_PREFIX}${publication.variantId.toLowerCase()}:${encodeURIComponent(publication.publishedAt)}:${signature}`,
+    key: `${HISTORY_PREFIX}${seriesKey(publication)}:${encodeURIComponent(publication.publishedAt)}:${signature}`,
     variantId: publication.variantId.toLowerCase(),
     value: publication,
     archivedAt,
@@ -52,17 +66,18 @@ async function archivePublication(publication) {
   return record;
 }
 
-export function intelligenceVariantIds(holdings = [], watchlistItems = []) {
+export function intelligenceVariantIds(holdings = [], watchlistItems = [], catalogItems = []) {
   return [...new Set([
     ...holdings.map((entry) => entry.canonicalVariantId),
-    ...watchlistItems.map((entry) => entry.canonicalVariantId)
+    ...watchlistItems.map((entry) => entry.canonicalVariantId),
+    ...catalogItems.map((entry) => entry.canonicalVariantId)
   ].filter(isUUID).map((id) => id.toLowerCase()))];
 }
 
 export function publicationCacheRecord(publication, now = Date.now()) {
   const sourceExpiry = publication.expiresAt ? new Date(publication.expiresAt).valueOf() : Infinity;
   return {
-    key: cacheKey(publication.variantId),
+    key: cacheKey(publication),
     variantId: publication.variantId,
     value: publication,
     cachedAt: now,
@@ -71,12 +86,22 @@ export function publicationCacheRecord(publication, now = Date.now()) {
 }
 
 export function indexPublications(publications = []) {
-  return Object.fromEntries(publications.filter((entry) => isUUID(entry?.variantId)).map((entry) => [entry.variantId.toLowerCase(), entry]));
+  const grouped = {};
+  for (const entry of publications.filter((value) => isUUID(value?.variantId))) {
+    const key = entry.variantId.toLowerCase();
+    (grouped[key] ||= []).push(entry);
+  }
+  return Object.fromEntries(Object.entries(grouped).map(([key, values]) => [
+    key,
+    values.length === 1 ? values[0] : values.sort((left, right) => seriesKey(left).localeCompare(seriesKey(right)))
+  ]));
 }
 
 export async function loadCachedIntelligence(variantIds = [], now = Date.now()) {
-  const records = await Promise.all(variantIds.filter(isUUID).map((id) => getRecord('intelligenceCache', cacheKey(id)).catch(() => null)));
-  return indexPublications(records.filter((record) => record?.expiresAt > now).map((record) => record.value));
+  const requested = new Set(variantIds.filter(isUUID).map((id) => id.toLowerCase()));
+  const records = await getAll('intelligenceCache').catch(() => []);
+  return indexPublications(records.filter((record) => record?.expiresAt > now
+    && requested.has(String(record.variantId || '').toLowerCase())).map((record) => record.value));
 }
 
 export async function loadIntelligenceHistory(variantIds = []) {

@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import isfinite
+import re
 from typing import Iterable
+import unicodedata
 from uuid import UUID
 
 
@@ -22,6 +24,13 @@ def _required_text(value: str, field_name: str, *, lower: bool = False) -> str:
     return normalized.lower() if lower else normalized
 
 
+def normalize_market_identity(value: str) -> str:
+    """Canonicalize market-series fields without changing catalog UUID rules."""
+
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+    return re.sub(r"[\W_]+", "-", normalized, flags=re.UNICODE).strip("-")
+
+
 @dataclass(frozen=True, slots=True)
 class PriceSeriesKey:
     """Exact market series identity; series with different semantics never mix."""
@@ -32,6 +41,8 @@ class PriceSeriesKey:
     finish: str
     condition_class: str
     price_semantics: str
+    language: str = "en"
+    market_condition: str = "unspecified"
 
     def __post_init__(self) -> None:
         try:
@@ -44,9 +55,30 @@ class PriceSeriesKey:
         if len(currency) != 3 or not currency.isalpha():
             raise ValueError("currency must be a three-letter code")
         object.__setattr__(self, "currency", currency)
-        object.__setattr__(self, "finish", _required_text(self.finish, "finish", lower=True))
-        object.__setattr__(self, "condition_class", _required_text(self.condition_class, "condition_class", lower=True))
-        object.__setattr__(self, "price_semantics", _required_text(self.price_semantics, "price_semantics", lower=True))
+        object.__setattr__(self, "finish", normalize_market_identity(_required_text(self.finish, "finish")))
+        object.__setattr__(self, "condition_class", normalize_market_identity(_required_text(self.condition_class, "condition_class")))
+        object.__setattr__(self, "price_semantics", normalize_market_identity(_required_text(self.price_semantics, "price_semantics")))
+        object.__setattr__(self, "language", normalize_market_identity(_required_text(self.language, "language")))
+        object.__setattr__(
+            self,
+            "market_condition",
+            normalize_market_identity(_required_text(self.market_condition, "market_condition")),
+        )
+
+    @property
+    def exact_identity(self) -> tuple[str, str, str, str, str, str, str, str]:
+        """Stable identity used by storage, training, evaluation, and publication."""
+
+        return (
+            self.canonical_variant_id,
+            self.source_id,
+            self.currency,
+            self.language,
+            self.finish,
+            self.condition_class,
+            self.market_condition,
+            self.price_semantics,
+        )
 
 
 @dataclass(frozen=True, slots=True)

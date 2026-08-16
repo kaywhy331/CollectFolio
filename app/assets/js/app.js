@@ -23,11 +23,13 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
-import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage } from './services/image.js';
+import { clearBrowseCatalogCache, loadCatalogSetProducts, loadCatalogSets } from './services/catalog-browse.js';
+import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
+import { fetchTcgcsvRefreshStatus } from './services/tcgcsv-refresh-status.js';
 import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
-import { applyAcquisitionToAll, batchAddApproved, createScanDraft, deleteCrop, identifyCrop, maintainCompletedScans, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropAcquisition, setCropApproval, setCropCustomItem } from './services/scan-review.js';
+import { applyAcquisitionToAll, batchAddApproved, createScanDraft, deleteCrop, identifyCrop, identifyDraftCrops, maintainCompletedScans, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropAcquisition, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
 import { consumeAuthCallback, fetchDemandAnalyticsOptOut, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, pushDemandAnalyticsOptOut, removeCloudData, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
 import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js';
@@ -36,11 +38,11 @@ import { OVERVIEW_RANGES, renderHome } from './views/home.js';
 import { renderHoldingForm } from './views/holding-form.js';
 import { renderInsights } from './views/insights.js';
 import { renderOnboarding } from './views/onboarding.js';
-import { PORTFOLIO_VIEWS, renderPortfolio } from './views/portfolio.js';
+import { PORTFOLIO_SET_PAGE_SIZE, PORTFOLIO_VIEWS, renderPortfolio } from './views/portfolio.js';
 import { renderPriceIntelligenceDetail } from './views/price-intelligence-detail.js';
 import { renderProfile } from './views/profile.js';
 import { renderQuickInspector } from './views/quick-inspector.js';
-import { DISCOVER_VIEWS, renderSearch } from './views/search.js';
+import { BROWSE_PRODUCTS_PAGE_SIZE, BROWSE_SETS_PAGE_SIZE, DISCOVER_RESULTS_PAGE_SIZE, DISCOVER_VIEWS, renderSearch } from './views/search.js';
 import { renderScanReview } from './views/scan.js';
 import { catalogReferenceForItem } from './core/catalog-identity.js';
 import { buildComparison, COMPARE_LIMIT, toggleCompareSelection } from './core/compare.js';
@@ -52,7 +54,22 @@ let activeRoute = parseAppRoute(location);
 let inspectorReturnTarget = null;
 let inspectorWasOpen = false;
 let searchGeneration = 0;
+let browseGeneration = 0;
+let browseFilterTimer = null;
 let routeHydrationId = 0;
+let identificationRun = 0;
+
+function startDraftIdentification(draft) {
+  if (!draft?.id || !(draft.crops || []).some((crop) => crop.status === 'queued')) return;
+  const run = ++identificationRun;
+  identifyDraftCrops(draft, { concurrency: 1 }).catch(async (error) => {
+    if (activeDraft?.id === draft.id) showToast(error?.message || 'Automatic identification stopped. Retry the unresolved card.', 'error');
+  }).finally(async () => {
+    if (run !== identificationRun || activeDraft?.id !== draft.id) return;
+    await loadLocal();
+    render();
+  });
+}
 
 setState(routeStatePatch(activeRoute, getState()));
 
@@ -104,7 +121,7 @@ function render(state = getState()) {
     const target = inspectorReturnTarget;
     queueMicrotask(() => {
       const origin = [...root.querySelectorAll('[data-action="open-detail"]')].find((element) =>
-        ['index', 'holdingId', 'watchKey'].every((key) => target[key] === undefined || element.dataset[key] === target[key]));
+        ['index', 'holdingId', 'watchKey', 'catalogScope'].every((key) => target[key] === undefined || element.dataset[key] === target[key]));
       origin?.focus({ preventScroll: true });
       inspectorReturnTarget = null;
     });
@@ -116,6 +133,21 @@ function runtimeFlag(name, fallback = false) {
   const value = globalThis.window?.COLLECTFOLIO_CONFIG?.[name];
   if (value === undefined) return fallback;
   return /^(1|true|yes)$/i.test(String(value));
+}
+
+async function hydrateTcgcsvRefreshStatus() {
+  const endpoint = String(globalThis.window?.COLLECTFOLIO_CONFIG?.TCGCSV_REFRESH_STATUS_URL ?? '').trim();
+  if (!endpoint) return;
+  setState({ tcgcsvRefresh: { ...getState().tcgcsvRefresh, status: 'loading', error: '' } });
+  try {
+    setState({ tcgcsvRefresh: await fetchTcgcsvRefreshStatus(endpoint) });
+  } catch (error) {
+    setState({ tcgcsvRefresh: {
+      ...getState().tcgcsvRefresh,
+      status: 'unavailable',
+      error: error instanceof Error ? error.message : 'Refresh status is unavailable'
+    } });
+  }
 }
 
 async function loadLocal() {
@@ -182,7 +214,7 @@ async function loadLocal() {
     },
     featureFlags: getState().featureFlags.loaded
       ? getState().featureFlags
-      : { ...getState().featureFlags, watchlists: runtimeFlag('ENABLE_WATCHLISTS', true), publicPriceIntelligence: false },
+      : { ...getState().featureFlags, watchlists: runtimeFlag('ENABLE_WATCHLISTS', true), setBrowsing: runtimeFlag('ENABLE_SET_BROWSING', true), publicPriceIntelligence: false },
     scanDraftCount: scanDrafts.length,
     ready: true
   };
@@ -233,6 +265,7 @@ function initializeAuth() {
 
 async function loadFeatureFlags() {
   const watchlistsEnabled = runtimeFlag('ENABLE_WATCHLISTS', true);
+  const setBrowsingEnabled = runtimeFlag('ENABLE_SET_BROWSING', true);
   const publicIntelligenceEnabled = runtimeFlag('ENABLE_PRICE_INTELLIGENCE', false);
   let remote = {};
   if (watchlistsEnabled || publicIntelligenceEnabled) {
@@ -240,6 +273,7 @@ async function loadFeatureFlags() {
   }
   setState({ featureFlags: {
     watchlists: watchlistsEnabled && (remote.watchlists ?? true),
+    setBrowsing: setBrowsingEnabled,
     publicPriceIntelligence: publicIntelligenceEnabled && Boolean(remote.public_price_intelligence),
     loaded: true
   } });
@@ -250,7 +284,11 @@ let intelligenceHydrationId = 0;
 async function hydrateIntelligence() {
   const hydrationId = ++intelligenceHydrationId;
   const state = getState();
-  const variantIds = intelligenceVariantIds(state.holdings, state.watchlistItems);
+  const variantIds = intelligenceVariantIds(
+    state.holdings,
+    state.watchlistItems,
+    [...(state.search?.results || []), ...(state.discover?.products || [])]
+  );
   if (!variantIds.length || !state.featureFlags.publicPriceIntelligence) {
     setState({ intelligence: { ...state.intelligence, byVariant: {}, history: [], loading: false, error: '' } });
     return;
@@ -263,7 +301,7 @@ async function hydrateIntelligence() {
   setState({ intelligence: {
     ...getState().intelligence,
     byVariant: cached,
-    history: mergePublicationHistory(archived, Object.values(cached)),
+    history: mergePublicationHistory(archived, Object.values(cached).flat()),
     loading: true,
     error: ''
   } });
@@ -283,7 +321,7 @@ async function hydrateIntelligence() {
       .sort((left, right) => String(right.triggeredAt).localeCompare(String(left.triggeredAt)));
     setState({ intelligence: {
       byVariant,
-      history: mergePublicationHistory(current.intelligence?.history || archived, Object.values(fresh), now),
+      history: mergePublicationHistory(current.intelligence?.history || archived, Object.values(fresh).flat(), now),
       loading: false,
       error: '',
       lastRefresh: now
@@ -304,6 +342,18 @@ function routeItemIdentifiers(item = {}, options = {}) {
   return new Set([catalogRouteId(item), reference.canonicalVariantId, reference.watchKey, reference.externalId, item.id].filter(Boolean));
 }
 
+function watchedItemForRoute(items = [], entityId = '') {
+  const exact = items.filter((entry) => entry.watchKey === entityId || entry.id === entityId);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+  const matches = items.filter((entry) => routeItemIdentifiers(entry.catalogRef, {
+    canonicalVariantId: entry.canonicalVariantId,
+    conditionClass: entry.catalogRef?.conditionClass,
+    marketCondition: entry.marketCondition || entry.catalogRef?.marketCondition || ''
+  }).has(entityId));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 async function hydrateCardRoute(route) {
   const hydrationId = ++routeHydrationId;
   if (route.key !== 'card-detail') return;
@@ -314,17 +364,15 @@ async function hydrateCardRoute(route) {
   try {
     const item = await getCatalogRouteItem(route.entityId);
     if (hydrationId !== routeHydrationId || activeRoute.canonicalPath !== route.canonicalPath) return;
-    const watched = getState().watchlistItems.find((entry) => routeItemIdentifiers(entry.catalogRef, {
-      canonicalVariantId: entry.canonicalVariantId,
-      conditionClass: entry.catalogRef?.conditionClass
-    }).has(route.entityId));
+    const watched = watchedItemForRoute(getState().watchlistItems, route.entityId);
     activeDetail = {
       origin: route.origin || 'search',
       item,
       watched: watched || undefined,
       catalogRef: catalogReferenceForItem(item, {
         canonicalVariantId: watched?.canonicalVariantId,
-        conditionClass: watched?.catalogRef?.conditionClass
+        conditionClass: watched?.catalogRef?.conditionClass,
+        marketCondition: watched?.marketCondition
       })
     };
     render();
@@ -340,14 +388,12 @@ function resolveRouteContext(route, state = getState()) {
     const holding = state.holdings.find((entry) => entry.id === route.entityId);
     activeDetail = holding ? { origin: route.origin || 'portfolio', item: holding.item, holding, catalogRef: catalogReferenceForItem(holding.item, {
       canonicalVariantId: holding.canonicalVariantId,
-      conditionClass: holding.grade ? 'graded' : 'raw'
+      conditionClass: holding.grade ? 'graded' : 'raw',
+      marketCondition: watchMarketConditionForHolding(holding)
     }) } : null;
   } else if (route.key === 'card-detail') {
     const item = state.search.results.find((entry) => routeItemIdentifiers(entry).has(route.entityId));
-    const watched = state.watchlistItems.find((entry) => routeItemIdentifiers(entry.catalogRef, {
-      canonicalVariantId: entry.canonicalVariantId,
-      conditionClass: entry.catalogRef?.conditionClass
-    }).has(route.entityId));
+    const watched = watchedItemForRoute(state.watchlistItems, route.entityId);
     const selected = item || (watched ? { ...watched.catalogRef, variant: watched.catalogRef.finish } : null);
     activeDetail = selected ? {
       origin: route.origin || 'search',
@@ -355,13 +401,54 @@ function resolveRouteContext(route, state = getState()) {
       watched: watched || undefined,
       catalogRef: catalogReferenceForItem(selected, {
         canonicalVariantId: watched?.canonicalVariantId,
-        conditionClass: watched?.catalogRef?.conditionClass
+        conditionClass: watched?.catalogRef?.conditionClass,
+        marketCondition: watched?.marketCondition
       })
     } : null;
   } else {
     activeDetail = null;
   }
   if (route.key === 'add-review') activeDraft = state.scanDrafts?.[0] || activeDraft;
+}
+
+async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
+  if (route.key !== 'discover' || route.mode !== 'browse' || getState().featureFlags?.setBrowsing === false) return;
+  const generation = ++browseGeneration;
+  const requested = route.browse;
+  setState({ discover: { ...getState().discover, loading: true, error: '', warnings: [] } });
+  try {
+    const response = await loadCatalogSets({ gameId: requested.game, bypassCache });
+    if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
+    const selectedSet = requested.setId
+      ? response.sets.find((set) => set.gameId === requested.game && set.externalId === requested.setId)
+      : null;
+    if (requested.setId && !selectedSet) throw new Error('This set is not present in the current public catalog.');
+    let products = [];
+    if (selectedSet) {
+      products = await loadCatalogSetProducts({ gameId: requested.game, setId: requested.setId, bypassCache });
+      if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
+    }
+    setState({ discover: {
+      ...getState().discover,
+      loading: false,
+      sets: response.sets,
+      products,
+      selectedSet,
+      warnings: response.warnings || [],
+      error: '',
+      loadedGame: requested.game,
+      loadedSetId: requested.setId || ''
+    } });
+    if (products.length) await hydrateIntelligence();
+  } catch (error) {
+    if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
+    setState({ discover: {
+      ...getState().discover,
+      loading: false,
+      error: error.message || 'The set catalog could not be loaded.',
+      warnings: []
+    } });
+  }
 }
 
 function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = true } = {}) {
@@ -385,10 +472,22 @@ function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = tru
   if (focus) root.focus({ preventScroll: true });
   if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
   if (state.ready && route.key === 'card-detail' && !activeDetail) hydrateCardRoute(route);
+  if (state.ready && route.key === 'discover' && route.mode === 'browse') hydrateBrowseRoute(route);
 }
 
 function navigate(view, context = {}) {
   applyAppRoute(appRouteForLegacyView(view, getState(), { ...context, detail: context.detail || activeDetail }));
+}
+
+function navigateBrowse(patch = {}) {
+  navigate('search', { discover: { ...getState().discover, ...patch, mode: 'browse' } });
+}
+
+function catalogActionItem(action) {
+  const source = action.dataset.catalogScope === 'browse'
+    ? getState().discover?.products || []
+    : getState().search.results;
+  return source[Number(action.dataset.index)];
 }
 
 function holdingForm(holding = null, { title = '', image = '', item: proposedItem = null } = {}) {
@@ -416,7 +515,8 @@ function holdingForm(holding = null, { title = '', image = '', item: proposedIte
         const saved = await saveHolding({
           ...holding,
           item: { ...providerItem, id: providerItem.id || createId(), externalId: providerItem.externalId || '', provider: providerItem.provider || 'custom', category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: finish?.finish || data.variant, rarity: providerItem.rarity || '', year: data.year, language: data.language || providerItem.language || getState().settings.defaultLanguage, image: providerItem.image || '', imageSmall: providerItem.imageSmall || '', price: finish?.price ?? providerItem.price ?? null, priceOptions: providerItem.priceOptions || [], currency: providerItem.currency || 'USD', priceSource: providerItem.priceSource || '', priceUrl: providerItem.priceUrl || '', priceUpdatedAt: providerItem.priceUpdatedAt || '' },
-          quantity: data.quantity, condition: data.condition, gradeCompany: data.gradeCompany, grade: data.grade,
+          quantity: data.quantity, condition: data.condition, marketCondition: data.marketCondition,
+          gradeCompany: data.gradeCompany, grade: data.grade,
           purchasePrice: data.purchasePrice, purchaseCurrency: data.purchaseCurrency, purchaseDate: data.purchaseDate, fees: data.fees, seller: data.seller,
           manualMarketPrice: data.manualMarketPrice, manualMarketCurrency: data.manualMarketCurrency, folder: data.folder, tags: data.tags, notes: data.notes, userImage
         });
@@ -601,7 +701,7 @@ async function runCatalogSearch(form) {
   const data = Object.fromEntries(new FormData(form));
   const filters = Object.fromEntries(['setName', 'number', 'variant', 'player', 'year', 'grade']
     .map((key) => [key, String(data[key] || '').trim()]));
-  const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, loading: true, results: [], warnings: [], cached: false };
+  const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: true, results: [], warnings: [], cached: false };
   const recentSearches = [String(data.query || '').trim(), ...(getState().settings.recentSearches || [])]
     .filter(Boolean).filter((query, index, all) => all.findIndex((entry) => entry.toLowerCase() === query.toLowerCase()) === index).slice(0, 5);
   setState({ search });
@@ -613,6 +713,7 @@ async function runCatalogSearch(form) {
     if (generation !== searchGeneration) return;
     const results = filterCatalogResults(response.results || [], filters);
     setState({ search: { ...getState().search, loading: false, ...response, results } });
+    await hydrateIntelligence();
     if (response.manual) showToast('This category uses custom entry so coverage is not overstated', 'warning');
     else if (!results.length) showToast('No catalog candidates found', 'warning');
   } catch (error) {
@@ -648,6 +749,7 @@ function confirmClear() {
     button.addEventListener('click', async () => {
       button.disabled = true;
       clearCatalogProviderCaches();
+      clearBrowseCatalogCache();
       await Promise.all([clearLocalData(), clearApplicationCacheStorage()]);
       closeModal();
       await loadLocal();
@@ -823,6 +925,13 @@ async function requestPriceRefreshAction() {
   }
 }
 
+function watchMarketConditionForHolding(holding) {
+  if (!holding) return '';
+  return holding.grade
+    ? `${holding.gradeCompany || 'unknown'}-${holding.grade || 'ungraded'}`
+    : holding.marketCondition || '';
+}
+
 async function toggleWatchedItem(item, options = {}) {
   if (!item || getState().featureFlags.watchlists === false) return;
   const existing = findWatchedItem(getState().watchlistItems, item, options);
@@ -888,7 +997,10 @@ async function chooseWatchVariant(item) {
 
 function watchlistPreferencesForm(entry) {
   const targetCurrency = entry.targetCurrency || entry.catalogRef?.currency || getState().settings.currency || 'USD';
+  const rawMarket = (entry.catalogRef?.conditionClass || 'raw') === 'raw';
+  const marketConditions = [['', 'Select condition'], ['near-mint', 'Near Mint'], ['lightly-played', 'Lightly Played'], ['moderately-played', 'Moderately Played'], ['heavily-played', 'Heavily Played'], ['damaged', 'Damaged']];
   const content = `<form id="watch-preferences-form"><div class="field-grid">
+    ${rawMarket ? `<label>Market condition<select name="marketCondition">${marketConditions.map(([value, label]) => `<option value="${value}" ${value === (entry.marketCondition || '') ? 'selected' : ''}>${label}</option>`).join('')}</select></label>` : ''}
     <label>Target price<input name="targetPrice" type="number" min="0" step="0.01" value="${escapeAttribute(entry.targetPrice ?? '')}"></label>
     <label>Target currency<select name="targetCurrency">${CURRENCIES.map((value) => `<option value="${value}" ${value === targetCurrency ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
     <label>Percent-change alert<input name="alertPercentChange" type="number" min="0" step="0.1" value="${escapeAttribute(entry.alertPercentChange ?? '')}"></label>
@@ -912,6 +1024,8 @@ function watchlistPreferencesForm(entry) {
         await watchItem({ ...entry.catalogRef, variant: entry.catalogRef.finish }, {
           canonicalVariantId: entry.canonicalVariantId,
           conditionClass: entry.catalogRef.conditionClass,
+          marketCondition: data.marketCondition || entry.marketCondition || '',
+          replacesWatchKey: entry.watchKey,
           targetPrice: data.targetPrice,
           targetCurrency: data.targetCurrency,
           alertPercentChange: data.alertPercentChange,
@@ -932,15 +1046,23 @@ function watchlistPreferencesForm(entry) {
 // Opens the price-intelligence detail view for an item resolved from search,
 // a holding, or a watchlist entry. card_view (and search_view when arriving
 // from search) demand events are recorded here — both are no-ops for
-// unmapped items, opted-out users, and signed-out sessions.
+// unmapped items, opted-out users, signed-out sessions, and model-mediated
+// Insights opens that would create a recommendation feedback loop.
 function openDetail(detail) {
   const catalogRef = catalogReferenceForItem(detail.item, {
     canonicalVariantId: detail.holding?.canonicalVariantId || detail.watched?.canonicalVariantId,
-    conditionClass: detail.holding?.grade ? 'graded' : detail.watched?.catalogRef?.conditionClass
+    conditionClass: detail.holding?.grade ? 'graded' : detail.watched?.catalogRef?.conditionClass,
+    marketCondition: detail.holding
+      ? watchMarketConditionForHolding(detail.holding)
+      : detail.watched?.marketCondition
   });
   activeDetail = { ...detail, catalogRef };
-  recordDemandEvent(catalogRef.canonicalVariantId, 'card_view').catch(() => {});
-  if (detail.origin === 'search') recordDemandEvent(catalogRef.canonicalVariantId, 'search_view').catch(() => {});
+  recordDemandEvent(
+    catalogRef.canonicalVariantId, 'card_view', { origin: detail.origin }
+  ).catch(() => {});
+  if (detail.origin === 'search') recordDemandEvent(
+    catalogRef.canonicalVariantId, 'search_view', { origin: detail.origin }
+  ).catch(() => {});
   applyAppRoute(appRouteForLegacyView('detail', getState(), { detail: activeDetail }), { focus: false, scroll: false });
 }
 
@@ -983,7 +1105,7 @@ function openCompareModal() {
     ['Trend', (column) => column.trendStatus],
     ['Volatility', (column) => column.volatility],
     ['Fair-value position', (column) => column.fairValuePosition],
-    ['1Y probability of gain', (column) => column.probabilityUp],
+    ['30/90-day probability of gain', (column) => column.forecastHorizon ? `${column.forecastHorizon}D · ${column.probabilityUp}` : column.probabilityUp],
     ['Evidence confidence', (column) => column.confidenceLabel]
   ];
   const content = `<div class="compare-scroll"><table class="compare-table"><thead><tr><th scope="col"></th>${comparison.columns.map((column) => `<th scope="col">${escapeHTML(column.name)}<span class="fine-print">${escapeHTML(column.meta)}</span><span class="support-badge ${column.supportTier >= 4 ? 'supported' : column.supportTier >= 2 ? 'partial' : 'unsupported'}">Evidence level ${column.supportTier}</span></th>`).join('')}</tr></thead><tbody>${rows.map(([label, cell]) => `<tr><th scope="row">${escapeHTML(label)}</th>${comparison.columns.map((column) => `<td>${escapeHTML(cell(column))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
@@ -994,7 +1116,7 @@ function openCompareModal() {
 
 function chooseScanImage({ single = false } = {}) {
   const description = single
-    ? 'Use the camera or choose one card image. The whole image starts as one editable card boundary.'
+    ? 'Use the camera or choose one card image. CollectFolio detects its four corners, straightens it, and starts identification automatically.'
     : 'Use the camera or choose an existing image. CollectFolio detects one or several card boundaries.';
   openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelectorAll('[data-scan-source]').forEach((input) => input.addEventListener('change', async (event) => {
@@ -1015,11 +1137,17 @@ function chooseScanImage({ single = false } = {}) {
 function openWorkbench(image, { single = false } = {}) {
   let editor;
   const tools = single
-    ? '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Reset full-card boundary</button></div>'
+    ? '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Retry corner detection</button></div>'
     : '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="add">Draw new</button><button class="button secondary small" type="button" data-workbench="delete">Delete selected</button><button class="button secondary small" type="button" data-workbench="retry">Retry detection</button></div><div class="grid-controls"><label>Rows<input id="grid-rows" type="number" min="1" max="12" value="3"></label><label>Columns<input id="grid-columns" type="number" min="1" max="12" value="3"></label><button class="button secondary" type="button" data-workbench="grid">Apply grid</button></div>';
-  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag inside the box to move it, or drag its lower-right handle to tighten the crop around the card.' : 'Tap a box to select it, drag inside to move, or drag its lower-right handle to resize.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Create review crops</button>', onOpen(layer) {
+  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag the four corner handles to the card edges, or drag inside to move the outline. The saved crop is straightened automatically.' : 'Tap a card to select it. Drag its four corner handles to align perspective, or drag inside to move it.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Straighten and identify</button>', onOpen(layer) {
     const count = layer.querySelector('#boundary-count');
-    const updateCount = (boxes) => { count.textContent = `${boxes.length} editable ${boxes.length === 1 ? 'boundary' : 'boundaries'}`; };
+    const updateCount = (boxes) => {
+      const fallback = boxes.some((box) => box.fallback);
+      count.textContent = fallback
+        ? 'Automatic corners were not reliable. Adjust the four handles before continuing.'
+        : `${boxes.length} detected ${boxes.length === 1 ? 'card outline' : 'card outlines'} · drag any corner to refine`;
+      count.classList.toggle('negative', fallback);
+    };
     editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, { single, onChange: updateCount });
     editor.detect();
     updateCount(editor.boxes);
@@ -1034,22 +1162,29 @@ function openWorkbench(image, { single = false } = {}) {
       if (action === 'continue') {
         if (!editor.boxes.length) { showToast('Add at least one crop boundary', 'warning'); return; }
         button.disabled = true;
-        const draft = createScanDraft(
-          cropsFromBoxes(image, editor.boxes),
-          single ? 'single' : 'multi',
-          {
-            condition: getState().settings.defaultCondition,
-            purchaseCurrency: getState().settings.currency,
-            manualMarketCurrency: getState().settings.currency
-          }
-        );
-        await saveScanDraft(draft);
-        activeDraft = draft;
-        editor.destroy();
-        closeModal();
-        await loadLocal();
-        navigate('scan');
-        showToast('Review crops created on this device');
+        try {
+          const draft = createScanDraft(
+            cropsFromBoxes(image, editor.boxes),
+            single ? 'single' : 'multi',
+            {
+              condition: getState().settings.defaultCondition,
+              purchaseCurrency: getState().settings.currency,
+              manualMarketCurrency: getState().settings.currency
+            }
+          );
+          await saveScanDraft(draft);
+          activeDraft = draft;
+          editor.destroy();
+          closeModal();
+          await loadLocal();
+          navigate('scan');
+          render();
+          showToast('Cards straightened; identification started locally');
+          startDraftIdentification(draft);
+        } catch (error) {
+          button.disabled = false;
+          showToast(error?.message || 'This outline could not be straightened. Adjust its four corners and retry.', 'error');
+        }
       }
     });
   }});
@@ -1062,6 +1197,7 @@ async function resumeScan() {
   const recovered = recoverInterruptedIdentifications(activeDraft);
   if (recovered) await saveScanDraft(activeDraft);
   navigate('scan');
+  startDraftIdentification(activeDraft);
   if (recovered) showToast('Interrupted identification was reset for retry', 'warning');
 }
 
@@ -1129,6 +1265,35 @@ root.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]');
   if (!action) return;
   const id = action.dataset.id;
+  if (action.dataset.action === 'set-discover-mode') {
+    if (action.dataset.mode === 'browse' && getState().featureFlags?.setBrowsing !== false) navigateBrowse();
+    else navigate('search', { search: getState().search, discover: { ...getState().discover, mode: 'search' } });
+  }
+  if (action.dataset.action === 'select-browse-game') navigateBrowse({ game: action.dataset.game || 'all', setId: '' });
+  if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '' });
+  if (action.dataset.action === 'open-browse-set') navigateBrowse({ game: action.dataset.game, setId: action.dataset.setId });
+  if (action.dataset.action === 'browse-back-sets') navigateBrowse({ setId: '' });
+  if (action.dataset.action === 'retry-browse') hydrateBrowseRoute(activeRoute, { bypassCache: true });
+  if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (action.dataset.action === 'load-more-browse-sets') setState({ discover: { ...getState().discover, setLimit: (Number(getState().discover.setLimit) || BROWSE_SETS_PAGE_SIZE) + BROWSE_SETS_PAGE_SIZE } });
+  if (action.dataset.action === 'show-all-browse-sets') setState({ discover: { ...getState().discover, setLimit: getState().discover.sets.length } });
+  if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
+  if (action.dataset.action === 'load-more-browse-products') setState({ discover: { ...getState().discover, limit: (Number(getState().discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE } });
+  if (action.dataset.action === 'show-all-browse-products') setState({ discover: { ...getState().discover, limit: getState().discover.products.length } });
+  if (action.dataset.action === 'view-set-holdings') {
+    setState({ portfolio: {
+      ...getState().portfolio,
+      query: '',
+      category: action.dataset.setCategory || 'all',
+      filters: { setName: action.dataset.setName || '', setNameExact: true },
+      limit: 100,
+      selected: []
+    } });
+    navigate('portfolio', { portfolioSection: 'holdings' });
+    return;
+  }
+  if (action.dataset.action === 'clear-portfolio-set-filters') setState({ portfolio: { ...getState().portfolio, setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: PORTFOLIO_SET_PAGE_SIZE } });
+  if (action.dataset.action === 'load-more-portfolio-sets') setState({ portfolio: { ...getState().portfolio, setLimit: (Number(getState().portfolio.setLimit) || PORTFOLIO_SET_PAGE_SIZE) + PORTFOLIO_SET_PAGE_SIZE } });
   if (action.dataset.action === 'onboarding-storage') {
     await persistSettings({
       onboardingStorage: action.dataset.storage === 'cloud' ? 'cloud' : 'local',
@@ -1165,9 +1330,18 @@ root.addEventListener('click', async (event) => {
     } } : {});
   }
   if (action.dataset.action === 'clear-search') {
-    const search = { ...getState().search, query: '', results: [], warnings: [], cached: false };
+    const search = { ...getState().search, query: '', limit: DISCOVER_RESULTS_PAGE_SIZE, results: [], warnings: [], cached: false };
     setState({ search });
     navigate('search', { search });
+  }
+  if (action.dataset.action === 'load-more-results') {
+    const search = getState().search;
+    const limit = Math.min(search.results.length, (Number(search.limit) || DISCOVER_RESULTS_PAGE_SIZE) + DISCOVER_RESULTS_PAGE_SIZE);
+    setState({ search: { ...search, limit } });
+  }
+  if (action.dataset.action === 'show-all-results') {
+    const search = getState().search;
+    setState({ search: { ...search, limit: search.results.length } });
   }
   if (action.dataset.action === 'clear-search-filters') {
     setState({ search: { ...getState().search, filters: {}, provider: 'all' } });
@@ -1181,7 +1355,7 @@ root.addEventListener('click', async (event) => {
     }
   }
   if (action.dataset.action === 'add-catalog') {
-    const item = getState().search.results[Number(action.dataset.index)];
+    const item = catalogActionItem(action);
     if (item) holdingForm(null, { item });
   }
   if (action.dataset.action === 'toggle-compare') {
@@ -1196,10 +1370,10 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'clear-compare') setState({ compare: [] });
   if (action.dataset.action === 'open-compare') openCompareModal();
   if (action.dataset.action === 'open-detail') {
-    inspectorReturnTarget = Object.fromEntries(['index', 'holdingId', 'watchKey']
+    inspectorReturnTarget = Object.fromEntries(['index', 'holdingId', 'watchKey', 'catalogScope']
       .filter((key) => action.dataset[key] !== undefined).map((key) => [key, action.dataset[key]]));
     if (action.dataset.index !== undefined) {
-      const item = getState().search.results[Number(action.dataset.index)];
+      const item = catalogActionItem(action);
       if (item) openDetail({ origin: 'search', item });
     } else if (action.dataset.holdingId) {
       const holding = getState().holdings.find((entry) => entry.id === action.dataset.holdingId);
@@ -1243,20 +1417,25 @@ root.addEventListener('click', async (event) => {
     let options = {};
     let chooseFinish = false;
     if (action.dataset.index !== undefined) {
-      item = getState().search.results[Number(action.dataset.index)];
+      item = catalogActionItem(action);
       chooseFinish = catalogPriceOptionsForDisplay(item).length > 1;
     }
     if (action.dataset.detailWatch && activeDetail) {
       item = activeDetail.item;
       options = {
         canonicalVariantId: activeDetail.catalogRef.canonicalVariantId,
-        conditionClass: activeDetail.catalogRef.conditionClass
+        conditionClass: activeDetail.catalogRef.conditionClass,
+        marketCondition: activeDetail.catalogRef.marketCondition
       };
     }
     if (action.dataset.holdingId) {
       const holding = getState().holdings.find((entry) => entry.id === action.dataset.holdingId);
       item = holding?.item;
-      options = { canonicalVariantId: holding?.canonicalVariantId, conditionClass: holding?.grade ? 'graded' : 'raw' };
+      options = {
+        canonicalVariantId: holding?.canonicalVariantId,
+        conditionClass: holding?.grade ? 'graded' : 'raw',
+        marketCondition: watchMarketConditionForHolding(holding)
+      };
     }
     if (action.dataset.cropWatch && activeDraft) {
       const crop = activeDraft.crops.find((entry) => entry.id === action.dataset.cropWatch);
@@ -1301,7 +1480,7 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'bulk-export-holdings') exportCSV(getState().portfolio.selected || []);
   if (action.dataset.action === 'bulk-delete-holdings') confirmBulkDelete(getState().portfolio.selected || []);
   if (action.dataset.action === 'load-more-holdings') setState({ portfolio: { ...getState().portfolio, limit: (getState().portfolio.limit || 100) + 100 } });
-  if (action.dataset.action === 'clear-watchlist-filters') setState({ watchlist: { query: '', category: 'all', sort: getState().watchlist?.sort || 'opportunity-desc' } });
+  if (action.dataset.action === 'clear-watchlist-filters') setState({ watchlist: { query: '', category: 'all', sort: getState().watchlist?.sort || 'forecast-desc' } });
   if (action.dataset.action === 'clear-portfolio-filters') setState({ portfolio: { ...getState().portfolio, query: '', category: 'all', filters: {}, limit: 100 } });
   if (action.dataset.action === 'remove-portfolio-filter') {
     const filter = action.dataset.filter;
@@ -1311,6 +1490,7 @@ root.addEventListener('click', async (event) => {
     else {
       portfolio.filters = { ...portfolio.filters };
       delete portfolio.filters[filter];
+      if (filter === 'setName') delete portfolio.filters.setNameExact;
     }
     setState({ portfolio });
   }
@@ -1399,6 +1579,38 @@ root.addEventListener('input', (event) => {
     const crop = activeDraft.crops.find((entry) => entry.id === cropId);
     if (crop) crop.query = event.target.value;
   }
+  const browseField = event.target.matches('[data-browse-set-query]')
+    ? ['query', '[data-browse-set-query]']
+    : event.target.matches('[data-browse-product-query]')
+      ? ['productQuery', '[data-browse-product-query]']
+      : null;
+  if (browseField) {
+    const [key, selector] = browseField;
+    const value = event.target.value;
+    const caret = event.target.selectionStart;
+    clearTimeout(browseFilterTimer);
+    browseFilterTimer = setTimeout(() => {
+      setState({ discover: { ...getState().discover, [key]: value, ...(key === 'query' ? { setLimit: BROWSE_SETS_PAGE_SIZE } : { limit: BROWSE_PRODUCTS_PAGE_SIZE }) } });
+      queueMicrotask(() => {
+        const input = root.querySelector(selector);
+        input?.focus({ preventScroll: true });
+        if (Number.isInteger(caret)) input?.setSelectionRange(caret, caret);
+      });
+    }, 120);
+  }
+  if (event.target.matches('[data-portfolio-set-query]')) {
+    const value = event.target.value;
+    const caret = event.target.selectionStart;
+    clearTimeout(browseFilterTimer);
+    browseFilterTimer = setTimeout(() => {
+      setState({ portfolio: { ...getState().portfolio, setQuery: value, setLimit: PORTFOLIO_SET_PAGE_SIZE } });
+      queueMicrotask(() => {
+        const input = root.querySelector('[data-portfolio-set-query]');
+        input?.focus({ preventScroll: true });
+        if (Number.isInteger(caret)) input?.setSelectionRange(caret, caret);
+      });
+    }, 120);
+  }
 });
 
 root.addEventListener('keydown', (event) => {
@@ -1441,13 +1653,20 @@ root.addEventListener('change', async (event) => {
     const data = Object.fromEntries(new FormData(form));
     setState({ search: { ...getState().search, query: data.query || '', category: data.category || 'all', provider: data.provider || 'all', filters: {} } });
   }
+  if (event.target.matches('[data-browse-set-sort]')) setState({ discover: { ...getState().discover, sort: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-set-scope]')) setState({ discover: { ...getState().discover, scope: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-product-sort]')) setState({ discover: { ...getState().discover, productSort: event.target.value, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (event.target.matches('[data-portfolio-query]')) setState({ portfolio: { ...getState().portfolio, query: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-category]')) setState({ portfolio: { ...getState().portfolio, category: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-sort]')) setState({ portfolio: { ...getState().portfolio, sort: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-filter]')) {
     const key = event.target.dataset.portfolioFilter;
-    setState({ portfolio: { ...getState().portfolio, filters: { ...getState().portfolio.filters, [key]: event.target.value }, limit: 100 } });
+    const filters = { ...getState().portfolio.filters, [key]: event.target.value };
+    if (key === 'setName') delete filters.setNameExact;
+    setState({ portfolio: { ...getState().portfolio, filters, limit: 100 } });
   }
+  if (event.target.matches('[data-portfolio-set-category]')) setState({ portfolio: { ...getState().portfolio, setCategory: event.target.value, setLimit: PORTFOLIO_SET_PAGE_SIZE } });
+  if (event.target.matches('[data-portfolio-set-sort]')) setState({ portfolio: { ...getState().portfolio, setSort: event.target.value, setLimit: PORTFOLIO_SET_PAGE_SIZE } });
   if (event.target.matches('[data-watchlist-query]')) setState({ watchlist: { ...getState().watchlist, query: event.target.value } });
   if (event.target.matches('[data-watchlist-category]')) setState({ watchlist: { ...getState().watchlist, category: event.target.value } });
   if (event.target.matches('[data-watchlist-sort]')) setState({ watchlist: { ...getState().watchlist, sort: event.target.value } });
@@ -1534,14 +1753,20 @@ addEventListener('online', () => {
   if (state.auth.session && (state.auth.pendingChanges || state.auth.error)) syncNow();
 });
 
+addEventListener('pagehide', () => { releaseOCRWorker().catch(() => {}); });
+
 initializeAuth();
 applyAppRoute(activeRoute, { historyMode: 'replace', focus: false, scroll: false });
 subscribe(render);
 render();
+hydrateTcgcsvRefreshStatus();
 addEventListener('popstate', () => {
   applyAppRoute(parseAppRoute(location), { historyMode: 'none', focus: true, scroll: false });
 });
-loadLocal().then(() => hydrateCardRoute(activeRoute)).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
+loadLocal().then(() => {
+  if (activeRoute.key === 'add-review') startDraftIdentification(activeDraft);
+  return Promise.all([hydrateCardRoute(activeRoute), hydrateBrowseRoute(activeRoute)]);
+}).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
   setState({ ready: true });
   showToast(error.message || 'Could not open local portfolio', 'error', 8000);
 });

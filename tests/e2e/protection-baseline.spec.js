@@ -130,6 +130,11 @@ async function configureApprovedPhase4Publication(page) {
         publication_status: 'published',
         reason_codes: [],
         payload: {
+          seriesIdentity: {
+            sourceId: 'approved-synthetic-market', currency: 'USD', language: 'en',
+            finish: 'regular', conditionClass: 'raw', marketCondition: 'near-mint',
+            priceSemantics: 'market'
+          },
           observed: { price: 14, currency: 'USD', source: 'Approved synthetic market', observedAt: '2026-08-09T00:00:00.000Z', quality: 0.94 },
           history: [
             { price: 11, currency: 'USD', source: 'Approved synthetic market', observedAt: '2026-06-09T00:00:00.000Z' },
@@ -357,7 +362,7 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   await expect(page.getByRole('region', { name: 'Review queue summary' })).toContainText('Unmatched1');
   await expect(page.getByText('Apply acquisition details to all')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add 1 approved' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Identify this crop' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Identify this card' })).toBeVisible();
   await expectNoBlockingAccessibilityViolations(page);
   await page.getByRole('button', { name: 'Add 1 approved' }).click();
   await expect(page.getByRole('heading', { name: 'Items added' })).toBeVisible();
@@ -443,6 +448,7 @@ test('local scenarios work while published forecast presentation remains fail cl
 });
 
 test('Phase 4 Insights separates actuals and forecasts, persists alert state, and gates track-record metrics', async ({ page }) => {
+  test.slow();
   await configureApprovedPhase4Publication(page);
   await seedLegacyIndexedDB(page);
   await seedPhase4Alert(page);
@@ -477,7 +483,6 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await page.reload();
   await expect(page).toHaveURL(/\/insights\?view=alerts$/);
   await expect(page.locator('.alert-history-card')).toContainText('Muted');
-  await expectNoBlockingAccessibilityViolations(page);
 
   await page.getByRole('tab', { name: 'Track Record' }).click();
   await expect(page).toHaveURL(/\/insights\?view=track-record$/);
@@ -486,6 +491,16 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await expect(page.getByText('71.0%')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Forecast history' })).toBeVisible();
   await expect(page.getByText(/Open · not included in metrics/)).toBeVisible();
+});
+
+test('Insights alerts has no serious or critical accessibility violations', async ({ page }) => {
+  await configureApprovedPhase4Publication(page);
+  await seedLegacyIndexedDB(page);
+  await seedPhase4Alert(page);
+  await page.goto('/insights?view=alerts');
+  await expect(page.getByRole('tab', { name: /Alerts/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.alert-history-card')).toBeVisible();
+  await expectNoBlockingAccessibilityViolations(page);
 });
 
 test('first-use Overview has no serious or critical accessibility violations', async ({ page }) => {

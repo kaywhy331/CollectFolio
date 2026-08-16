@@ -8,7 +8,8 @@ const second = '223e4567-e89b-42d3-a456-426614174000';
 test('intelligence hydration targets only unique approved canonical UUIDs', () => {
   assert.deepEqual(intelligenceVariantIds(
     [{ canonicalVariantId: first }, { canonicalVariantId: '' }],
-    [{ canonicalVariantId: first }, { canonicalVariantId: second }]
+    [{ canonicalVariantId: first }],
+    [{ canonicalVariantId: second }, { canonicalVariantId: first }]
   ), [first, second]);
 });
 
@@ -22,6 +23,12 @@ test('publication index ignores malformed variant identities', () => {
   assert.deepEqual(indexPublications([{ variantId: 'bad' }, { variantId: first, supportTier: 2 }]), {
     [first]: { variantId: first, supportTier: 2 }
   });
+});
+
+test('publication index retains multiple exact market series for one variant', () => {
+  const nearMint = { variantId: first, seriesIdentity: { language: 'en', finish: 'foil', conditionClass: 'raw', marketCondition: 'near-mint' } };
+  const lightlyPlayed = { variantId: first, seriesIdentity: { language: 'en', finish: 'foil', conditionClass: 'raw', marketCondition: 'lightly-played' } };
+  assert.deepEqual(indexPublications([nearMint, lightlyPlayed])[first], [lightlyPlayed, nearMint]);
 });
 
 test('publication history uses immutable content-addressed keys and deduplicates refreshes', () => {

@@ -20,7 +20,13 @@ test('demand event id is deterministic for the same user/variant/type/bucket', (
 test('every supported PRD event type is eligible for a signed-in, opted-in, mapped variant', () => {
   for (const eventType of DEMAND_EVENT_TYPES) {
     assert.equal(
-      demandEventEligible({ eventType, canonicalVariantId, optedOut: false, signedIn: true }),
+      demandEventEligible({
+        eventType,
+        canonicalVariantId,
+        optedOut: false,
+        signedIn: true,
+        origin: ['search_view', 'card_view'].includes(eventType) ? 'search' : ''
+      }),
       true
     );
   }
@@ -55,6 +61,33 @@ test('signed-out usage is never eligible, matching the local-only architecture b
   assert.equal(
     demandEventEligible({ eventType: 'watch_add', canonicalVariantId, optedOut: false, signedIn: false }),
     false
+  );
+});
+
+test('model-mediated Insights views are suppressed until exposure lineage exists', () => {
+  assert.equal(
+    demandEventEligible({
+      eventType: 'card_view', canonicalVariantId, optedOut: false, signedIn: true, origin: 'insights'
+    }),
+    false
+  );
+  assert.equal(
+    demandEventEligible({
+      eventType: 'card_view', canonicalVariantId, optedOut: false, signedIn: true, origin: 'search'
+    }),
+    true
+  );
+  assert.equal(
+    demandEventEligible({
+      eventType: 'card_view', canonicalVariantId, optedOut: false, signedIn: true
+    }),
+    false
+  );
+  assert.equal(
+    demandEventEligible({
+      eventType: 'watch_add', canonicalVariantId, optedOut: false, signedIn: true, origin: 'insights'
+    }),
+    true
   );
 });
 

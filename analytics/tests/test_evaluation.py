@@ -82,6 +82,7 @@ class EvaluationTests(unittest.TestCase):
                 maturity - timedelta(days=offset),
                 maturity - timedelta(days=offset),
                 price,
+                source_observation_id=f"00000000-0000-4000-8000-{offset + 1:012d}",
             )
             for offset, price in enumerate([110, 109, 108, 107, 106, 105, 104])
         ]
@@ -89,6 +90,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(realized.trailing_seven_day_median, 107)
         self.assertEqual(realized.exact_date_price, 110)
         self.assertEqual(realized.observation_count, 7)
+        self.assertEqual(len(realized.observation_ids), 7)
 
     def test_summary_scores_baseline_probability_and_intervals(self):
         quantiles_up = {0.10: 80, 0.25: 90, 0.50: 105, 0.75: 115, 0.90: 130}

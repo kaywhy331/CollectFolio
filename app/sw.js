@@ -1,27 +1,31 @@
-const CACHE = 'collectfolio-shell-v0.8.1';
+const CACHE = 'collectfolio-shell-v0.8.5';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
+const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
+const MAX_VISUAL_INDEX_ENTRIES = 20;
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './runtime-config.js',
   './assets/css/app.css', './assets/icons/icon.svg', './assets/icons/icon-192.png',
   './assets/icons/icon-512.png', './assets/js/app.js',
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
   './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js',
-  './assets/js/core/pricing-policy.js', './assets/js/core/compare.js', './assets/js/core/router.js',
-  './assets/js/core/view-models.js', './assets/js/core/settings.js',
+  './assets/js/core/pricing-policy.js', './assets/js/core/market-series.js', './assets/js/core/compare.js', './assets/js/core/router.js',
+  './assets/js/core/view-models.js', './assets/js/core/settings.js', './assets/js/core/portfolio-sets.js',
   './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/local-scenarios.js', './assets/js/core/db.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
   './assets/js/views/insights.js', './assets/js/views/onboarding.js',
   './assets/js/views/price-intelligence-detail.js', './assets/js/views/quick-inspector.js', './assets/js/views/holding-form.js',
-  './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js',
+  './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js', './assets/js/services/catalog-browse.js',
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/image-algorithms.js',
   './assets/js/services/image.js', './assets/js/services/scan-workbench.js',
-  './assets/js/services/scan-review.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
+  './assets/js/services/scan-review.js', './assets/js/services/visual-index.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
   './assets/js/services/price-intelligence.js',
   './assets/js/services/justtcg-refresh.js',
+  './assets/js/services/tcgcsv-refresh-status.js',
   './assets/js/services/demand-events.js',
-  './assets/js/views/scan.js'
+  './assets/js/views/scan.js',
+  './assets/data/visual-index/pokemon-v1/manifest.json'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
   'images.pokemontcg.io', 'images.scrydex.com', 'assets.tcgdex.net', 'cards.scryfall.io', 'images.ygoprodeck.com'
@@ -37,8 +41,9 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((key) => ![CACHE, IMAGE_CACHE].includes(key)).map((key) => caches.delete(key)));
+    await Promise.all(keys.filter((key) => ![CACHE, IMAGE_CACHE, VISUAL_INDEX_CACHE].includes(key)).map((key) => caches.delete(key)));
     await trimCache(IMAGE_CACHE, MAX_PROVIDER_IMAGE_ENTRIES);
+    await trimCache(VISUAL_INDEX_CACHE, MAX_VISUAL_INDEX_ENTRIES);
     await self.clients.claim();
   })());
 });
@@ -52,7 +57,8 @@ async function trimCache(cacheName, maximumEntries) {
 
 async function cacheFirst(request, cacheName, maximumEntries = 0) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
+  const cached = await cache.match(request)
+    || (cacheName === VISUAL_INDEX_CACHE ? await caches.open(CACHE).then((shell) => shell.match(request)) : null);
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok || response.type === 'opaque') {
@@ -88,6 +94,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/assets/data/visual-index/')) {
+    event.respondWith(cacheFirst(event.request, VISUAL_INDEX_CACHE, MAX_VISUAL_INDEX_ENTRIES));
+    return;
+  }
   if (url.pathname === '/runtime-config.js') {
     event.respondWith(networkFirst(event.request, CACHE));
     return;

@@ -199,6 +199,77 @@ Only `accepted` observations enter trend features. Late-arriving records are fil
 
 For JustTCG, hash the complete bounded response for the ingestion run, retain only normalized private observations, and label the semantics `justtcg_volume_weighted_market`. The provider value is an aggregated market observation, not an itemized completed sale or a seller's executable offer. Voluntary display attribution should read “Market data provided by JustTCG.”
 
+### Centralized bulk-history import
+
+CollectFolio operates the canonical database of normalized historical prices. The coverage
+target is every supported catalog variant as an exact provider/currency/language/finish/
+condition/price-semantics series. It is acceptable to populate this history later in bulk;
+do not weaken exact mapping or provenance merely to claim complete coverage. Card
+authenticity is unrelated to this workflow—the stored rows are market-price observations,
+not assertions that a physical item is genuine.
+
+Prepare an operator-owned manifest with `mode=operator_centralized_history`, one current
+source/terms review, the declared mapping/parser/code versions, one of the four availability
+semantics below, approved exact mappings, and bounded series data. A packet supports at
+most 2,000 exact series and 100,000 observations. Then run:
+
+```sh
+npm run history:import -- /secure/history-manifest.json \
+  --output /secure/history-packet.json --pretty
+npm run history:import -- /secure/history-manifest.json --sql \
+  --output /secure/history-rehearsal.sql
+npx --yes supabase@latest db query --linked --file /secure/history-rehearsal.sql
+
+npm run history:import -- /secure/history-manifest.json --sql --commit \
+  --output /secure/history-commit.sql
+diff -u /secure/history-rehearsal.sql /secure/history-commit.sql
+npx --yes supabase@latest db query --linked --file /secure/history-commit.sql
+```
+
+All outputs are new mode-0600 files; the writer refuses existing paths. The first SQL file
+ends in `ROLLBACK`. Confirm the exact import, ingestion-run, membership, and observation
+IDs leave zero new rows after rehearsal. Generate the commit file from the unchanged
+manifest, inspect that only the transaction terminator differs, and execute it once.
+Replaying the identical committed import is a no-op, including a concurrent identical
+execution; deterministic inserts are conflict-safe and the final sealed-content check still
+rejects a non-identical collision. Final manifest metadata (including the quality policy)
+must be strict finite JSON with string object keys and fit the PostgreSQL-rendered 16 KiB
+JSONB limit. A later rolling archive may overlap:
+an exact immutable observation is reused through another import-membership row, while any
+same-ID or same-record conflict aborts the transaction.
+
+Availability meanings are part of the sealed manifest:
+
+- `source_supplied`: the provider supplies when each value became available.
+- `archive_release`: the archive's release time is used conservatively.
+- `operator_first_seen`: every source availability equals this import's ingestion instant.
+- `observed_at_proxy`: observation time is only a proxy; rows are retained but the entire
+  import is permanently ineligible for point-in-time evaluation.
+
+For every newly inserted centralized observation, PostgreSQL preserves the caller value in
+`source_available_at`, authors `collectfolio_first_seen_at` with database time, and sets the
+effective legacy `available_at` to the later of the two. Consequently any licensed backfill
+can support current features only after CollectFolio actually receives it; it cannot be
+used at an earlier simulated origin. The sealed import manifest and exact observation
+membership are append-only and private. Importing history neither creates a forecast or
+publication candidate nor changes `public_price_intelligence`.
+
+A descriptive publication may optionally include at most 180 ascending price points. Feed
+the builder only rows exported from the database-owned, service-role-only
+`centralized_history_publication_evidence` view. It selects the earliest sealed eligible
+import per observation, so a later overlapping archive cannot rewrite eligibility at an
+older retrospective cutoff. It excludes `observed_at_proxy`-only membership and exposes
+provider availability, CollectFolio first sight, effective availability, and import seal
+time. Bound the query to one exact `market_series_id` and the intended cutoff; do not
+convert a pre-seal packet into a hosted row.
+
+The candidate builder recomputes the complete trend snapshot from those rows and requires
+an exact match before it can emit a trend or observed value. Optional chart history also
+requires current raw-price display rights, ranks all revisions/statuses before filtering to
+the final accepted revision, and excludes anything unavailable or unsealed at the cutoff,
+so a later quarantine cannot resurrect an older accepted value. No public output should be
+emitted when those conditions fail.
+
 ## 7. Historical research and private forecast flow
 
 The checked-in historical TCGCSV v1 manifest is a single-card research cohort, not a provider-wide production approval. Its archive contract permits exactly 53 weekly samples at most, caps compressed artifacts at 8 MiB and selected members at 2 MiB, stamps each archive-day value as available the following UTC day, and uses a seven-day endpoint-reference tolerance. It intentionally retains the superseded `sv08` mapping so every historical export below continues to resolve against the immutable v1 ledger.
@@ -251,6 +322,215 @@ Persist an unfavorable scorecard unchanged. Never tune after inspecting the same
 
 Scheduled current-snapshot monitoring is separate from those historical exports. It uses `analytics/manifests/tcgcsv-surging-sparks-current-v2.json` with `--skip-history`, successor mapping `649be0ee-0893-459a-bad6-331a218e069b`, and canonical variant `af796afb-d8d3-5b4b-a95a-417e39e77b0a`. It produces a non-publishing review packet only and never rewrites v1 observations, snapshots, predictions, or scorecards.
 
+### Forecast Lab quality and demand contract
+
+`npm run forecast:lab -- INPUT.json OUTPUT.json --pretty` consumes bounded point-in-time
+feature rows and writes a new mode-0600 private packet. It does not fetch provider data,
+write Supabase, create a publication candidate, or authorize a model. The 30/90-day engine
+uses disjoint origin blocks for selection and residual calibration. Target evidence quality
+changes the estimate itself: support is scaled from zero at the admissibility floor to one
+at quality one, so the center reaches no change at the floor and the log interval widens
+monotonically under a multiplier restricted to `[1, 2]`. `maximumSigma` is the
+pre-adjustment cap and does not erase evidence widening. Degenerate empirical calibration
+quarantines with an explicit normal fallback; crossed, nonfinite, overflowed, or nonpositive
+quantiles fail closed. Below-threshold quality also quarantines the row.
+
+For real observation evidence, never type the feature rows by hand. Export a bounded
+service-private panel by joining each declared `market_series` to its immutable ledger:
+
+```sql
+select
+  observation.id,
+  observation.variant_id,
+  observation.source_id,
+  observation.market_series_id,
+  series.identity_hash,
+  series.mapping_version,
+  series.currency,
+  series.language,
+  series.finish,
+  series.condition_class,
+  series.market_condition,
+  series.price_semantics,
+  card.set_id,
+  catalog_set.game,
+  observation.observation_status,
+  observation.observed_at,
+  observation.available_at,
+  observation.market_price,
+  observation.quality_score,
+  observation.external_record_id,
+  observation.reason_codes
+from public.price_observations observation
+join public.market_series series on series.id = observation.market_series_id
+join public.catalog_variants variant on variant.id = series.catalog_variant_id
+join public.catalog_cards card on card.id = variant.card_id
+join public.catalog_sets catalog_set on catalog_set.id = card.set_id
+where observation.market_series_id = any(:reviewed_market_series_ids)
+  and observation.observed_at <= :bounded_end
+  and observation.available_at <= :generated_at
+order by observation.market_series_id, observation.observed_at,
+         observation.available_at, observation.id
+limit 100000;
+```
+
+The operator manifest remains `mode=research_only`, includes the current immutable
+`source` review, and declares `forecastDataset.mappingVersion`, `codeVersion`, explicit
+30/90-day `origins`, policies, and one exact `series` entry per market-series ID. Each
+entry includes `variantId`, `marketSeriesId`, `identityHash`, canonical `setId`, `game`,
+plus source, currency, language, finish, condition class, market condition, and price
+semantics. The compiler derives the cohort key from canonical game and exact-series
+fields. Every joined row's `mapping_version`, `identity_hash`, `set_id`, and `game` must
+match that declaration.
+
+Compile and run with the same honest generation instant:
+
+```sh
+npm run forecast:compile -- \
+  /secure/forecast-panel.json /secure/hosted-observations.json \
+  /secure/compiled-forecast-manifest.json \
+  --generated-at 2026-08-14T12:00:00Z --pretty
+npm run forecast:lab -- \
+  /secure/compiled-forecast-manifest.json /secure/forecast-lab-packet.json \
+  --generated-at 2026-08-14T12:00:00Z --pretty
+```
+
+Both outputs are new mode-0600 files and refuse overwrite. The compiler derives only
+current price, 90-day robust daily slope, daily volatility, evidence quality, true
+elapsed history, and source availability timestamps. It never invents market,
+lifecycle, structural, reprint, demand, or acquisition-cost inputs. Future-available
+revisions cannot enter earlier origins. Excluded observations remain in the dataset
+hash; a hosted row unavailable at generation fails the compile; missing trend fields and
+incomplete expected-cadence maturity windows become hashed abstentions. The compiler
+records every declared member × origin × horizon once as `feature_abstained`, `open`,
+`scored`, or `unscorable`. Forecast Lab validates the exact Cartesian reconciliation and
+can emit coverage-only insufficient reports even when no example is scorable.
+
+This local retrospective export does not prove that the caller declared an exhaustive,
+outcome-blind inventory. Its audit therefore says `universeCompleteness=declared_only`,
+`evidenceTiming=retrospective`, `prospectiveEvidenceEligible=false`, and
+`catalogMetadataAuthority=caller_declared_export`. It never emits a
+`candidateUniverseId`; the missing independent input seal and retrospective timing are
+permanent promotion blockers bound inside every report hash. The current one-series
+TCGCSV evidence must report
+`insufficient_variant_breadth`; widening the private operator-reviewed research cohort
+is the next measurement step, not permission to publish TCGCSV derivatives.
+The compiler emits feature lineage
+`forecast-features-v2-observation-compiled-v1` and binds the canonical feature-dataset
+hash inside its audit. Forecast Lab rejects that lineage if the audit is removed and
+rejects a row whose feature hash no longer matches the bound audit.
+
+Forecast Ensemble v2 hard-rejects `useDemandAcceleration=true`; a caller-authored version
+string cannot opt demand in. The interim diagnostic uses signed watch flow plus portfolio
+adds and divides exact, gap-free periods by
+`sum(period_distinct_variant_users * period_days)`. This is an event-intensity proxy per
+period-distinct engaged user per calendar day—not observed active-user-days or platform
+prevalence. Search and card views remain recommendation-contaminated diagnostics. Current
+mutable rows lack immutable availability/input hashes, daily population denominators, and
+exposure IDs; they cannot support causal demand claims. Insights and unknown-origin view
+events are suppressed, while immutable daily aggregates, a private exposure ledger, fitted
+channel weights, and independent holdout/propensity evaluation remain prerequisites for a
+future model version.
+
+### Prospective execution and scorecard receipts
+
+Migrations 0017 and 0018 are checked in but not applied by this repository. Rehearse
+both against a restored PostgreSQL/Supabase backup and run real role/RLS/transaction
+tests before collecting evidence. Migration 0018 intentionally has no executor-key
+bootstrap RPC: a database owner must provision `forecast_executor_keys` from a secret
+manager in a controlled session. Never put the HMAC secret in source control, a shell
+argument, an operator packet, a `service_role` session, or a migration. The normal
+service role has no read privilege on that table.
+
+Before any restored-backup rehearsal, run the narrow PostgreSQL contract test in a fresh
+database on an isolated local PostgreSQL 15-or-newer cluster. Never point this harness at
+a shared, hosted, or otherwise valuable cluster: it creates Supabase role/auth stubs and
+applies migrations. The database must have zero public tables, and the explicit opt-in is
+required:
+
+```sh
+createdb collectfolio_forecast_runtime
+COLLECTFOLIO_FORECAST_DB_TEST=collectfolio_forecast_runtime \
+  PGDATABASE=collectfolio_forecast_runtime \
+  npm run test:forecast-db
+```
+
+Set `PGHOST`, `PGPORT`, `PGUSER`, and `COLLECTFOLIO_PSQL` when the disposable cluster is
+not on the local defaults. A portable PostgreSQL build whose extension control files are
+unavailable may also set `COLLECTFOLIO_PGCRYPTO_LIBRARY` to the absolute `pgcrypto`
+library path. The runner deliberately excludes migration 0008 because that migration is
+only the unrelated `pg_cron` demand-aggregation schedule; every other checked-in
+migration is applied in filename order.
+
+`COLLECTFOLIO_FORECAST_DB_TEST` must exactly equal `PGDATABASE`; a reusable boolean opt-in
+is intentionally rejected. Existing login-capable browser roles or a `service_role` that
+would need alteration are also rejected rather than mutated.
+
+This local test proves executable migration compatibility for its PostgreSQL version,
+browser and forecast-key ACL denials, terminal trend-run and challenged-run row-lock
+guards, malformed candidate and HMAC tamper/replay rejection, late-failure rollback,
+expired-challenge rejection, complete provider-cost reconstruction, stored receipt-hash
+reconstruction, and the database-derived six-origin scorecard lifecycle. It also proves
+that receipt tampering aborts scorecard creation and that a late evaluation waits for a
+concurrent scorecard transaction before the frozen-run guard rejects it.
+
+The six origins in `tests/postgres/forecast-scorecard-fixture.sql` are explicitly synthetic
+historical rows. They exist only to make months-long maturity and origin-spacing branches
+executable in a fresh disposable database. They prove scorecard membership, metric, hash,
+gate, recommendation, replay, rollback, and locking behavior; they do **not** prove that
+prospective timing occurred, that the external executor or model artifact actually ran,
+or that the model predicts card prices accurately. The test also does not replace a
+restored Supabase backup rehearsal, real hosted roles/RLS checks, `pg_cron` validation,
+independent executor isolation, secret provisioning, provider-rights approval, or human
+review. Public forecasts therefore remain disabled.
+
+The governed sequence is fixed:
+
+1. Record the provider rights and exact mappings, then create a future-dated
+   `prospective_scorecard_plan` through `create_prospective_scorecard_plan`. The first
+   origin must still be in the future. Preregister 6–18 exact origin slots with anchors
+   at least 22 days apart; each slot has one 24-hour execution window, leaving 21 full
+   days between possible origins, and the full schedule must fit
+   inside 105–365 days. Missing or replacing a slot invalidates that plan's scorecard;
+   the same model version cannot register a replacement plan for that horizon and purpose.
+2. Start a `trend_build`, call `seal_trend_expected_input_manifest` before writing any
+   trend snapshot, finish the exact manifest-complete run, and create a still-running,
+   output-free `forecast_build` with the same immutable policy/model/code lineage.
+3. During the next unused scheduled slot, call `begin_prospective_forecast_execution`.
+   Deliver its nonce and hashes to the
+   isolated executor holding the matching key. Do not compute forecasts before this
+   challenge; it expires after five minutes and cannot be replayed or replaced for the
+   same forecast run.
+4. Use `prepare_prospective_candidate`, `canonical_candidate_output_hash`, and
+   `sign_execution_receipt` from `collectfolio_analytics.prospective`. Submit the signed
+   result to `record_challenged_prospective_forecast_run`. That one transaction verifies
+   the HMAC, independently rehashes exact-series outputs and costs, changes the run to
+   `succeeded`, uses challenge issuance as origin, and records the universe, costs,
+   predictions, five baselines, pocket inputs, and immutable receipt. It then rebuilds
+   the signed canonical hash from the stored typed rows; any numeric, reason-code, cost,
+   or timestamp mismatch rolls the transaction back. A prediction-insert guard takes the
+   forecast analytics-run row lock before checking for a challenge, so an outside writer
+   cannot race receipt finalization or add a prediction that is absent from the signed
+   prospective run. The recorder also requires zero pre-existing predictions immediately
+   before finalizing the run; only its challenge-scoped transaction setting admits the
+   predictions reconstructed from the signed packet.
+5. After the plan's final origin plus the horizon has matured, create one dedicated
+   succeeded `forecast_evaluation` run whose immutable config contains
+   `prospectiveScorecardPlanId`. It must contain exactly one scored or Unscorable outcome
+   for every planned prediction and no unrelated evaluation.
+6. Call `create_prospective_model_scorecard` with only the plan and evaluation-run IDs.
+   The database refuses missing/failed challenges and derives complete membership,
+   five-baseline and origin-clustered lift, error/direction/probability/quantile metrics,
+   interval coverage, after-cost calibration, selected-pocket outcomes, hashes, reasons,
+   and recommendation atomically.
+
+The receipt level is `hmac_executor_principal_v1`: it proves that the independently
+provisioned key holder signed the challenged packet and binds configured model,
+executor-build, and runtime hashes. It deliberately stores
+`artifact_execution_verified=false`; operational isolation and independent runner audit
+remain mandatory. Neither RPC publishes forecasts, mutates the public feature flag, or
+bypasses the unconditional Forecast Engine v1 promotion block.
+
 ## 8. Candidate review and promotion
 
 Before promotion, independently verify:
@@ -300,3 +580,43 @@ Do not directly re-enable that publication row. Recovery requires a new descript
 For a source-wide incident, set the source inactive or insert a new non-approved terms review and point the source at it. Terms-review rows are append-only after 0006; never edit the old evidence. RLS will deny every dependent publication without deleting provenance.
 
 Use `ENABLE_PRICE_INTELLIGENCE=false` for the browser-surface rollback. Do not delete observation, review, analytics-run, candidate, or promotion ledgers; append corrective events instead.
+
+## 10. Private all-series TCGCSV collection
+
+Migration `0020_tcgcsv_market_universe.sql` and the gated
+`tcgcsv-market-universe.yml` workflow implement daily provider-wide raw archive
+retention, normalized Parquet history, relational current catalog/prices, full
+market card/set features, immutable daily feature evidence, database-timestamped
+catalog snapshots, and limited private 30/90/180/365-day estimates.
+Portfolio ownership never restricts collection coverage.
+
+The daily lane binds the archive date to the exact upstream `last-updated.txt`
+timestamp and fails if any requested card category disappears. Archive and
+catalog replays are content-bound, staged duplicates fail closed, and PostgreSQL
+recomputes price-tuple hashes before changing current state. These are ingestion
+integrity checks; they do not attempt to authenticate a physical card.
+Provider-wide `sourceAvailableAt` is the real post-acquisition UTC timestamp,
+not archive date plus one day. The older single-card v1 cohort's documented
+next-day proxy remains historical lineage and cannot establish provider-wide
+point-in-time catalog availability.
+
+The same gated workflow exports a repeatable-read current catalog snapshot with
+database-authored availability and price/product reconciliation. A second
+repository variable, `TCGCSV_STRUCTURAL_GAP_LAB_ENABLED`, remains false by
+default. If separately approved, it produces Sunday-only, private,
+provider-native held-out structural-band telemetry. Partial snapshots,
+unresolved priced products, insufficient group breadth, or undersized
+train/calibration folds produce an immutable abstention. Nothing is wired to the
+browser or public publication path. V1 fits Pokémon category 3 only; other game
+categories remain exclusion-hashed and require their own future models. The
+compiler also reproduces the complete database-sealed feature count/hash and
+series-membership hash, so a locally truncated universe abstains. Because this
+repository is public, full packets and snapshots stay only in private object
+storage; Actions artifacts contain sanitized receipts only.
+
+Do not enable the workflow from the existing bounded review. First record a new
+immutable full-corpus private-retention/ML scope review, apply the migration
+through the backed-up hosted process, provision the NOLOGIN-derived limited
+database credential and immutable private object prefix, and complete a manual
+observed run. The complete activation, replay, backfill, and failure runbook is
+[TCGCSV_MARKET_UNIVERSE.md](TCGCSV_MARKET_UNIVERSE.md).

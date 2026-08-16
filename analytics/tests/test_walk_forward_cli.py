@@ -30,10 +30,11 @@ class WalkForwardCLITests(unittest.TestCase):
             and row["promotion_policy"]["version"] == "research-promotion-v1"
             and row["cohort_key"] == "tcgcsv_30d_origins_accepted_research_only_v2"
             and row["promotion_recommendation"] == "insufficient"
-            and row["metrics"]["missingRequiredBaselines"] == [
+            and row["evidence_mode"] == "retrospective"
+            and {
                 "damped_momentum", "market_index", "lifecycle_cohort",
                 "structural_convergence",
-            ]
+            }.issubset(row["metrics"]["missingRequiredBaselines"])
             for row in packet["scorecardRows"]
         ))
         self.assertEqual(packet["publicCandidateRows"], [])

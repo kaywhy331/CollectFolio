@@ -1,9 +1,13 @@
 import { INSIGHTS_HORIZONS, INSIGHTS_VIEWS } from './insights.js';
 
 const APP_ORIGIN = 'https://collectfolio.local';
-const PORTFOLIO_SECTIONS = new Set(['holdings', 'watchlist']);
+const PORTFOLIO_SECTIONS = new Set(['holdings', 'sets', 'watchlist']);
 const DISCOVER_CATEGORIES = new Set(['all', 'pokemon', 'magic', 'yugioh', 'sports', 'comics', 'slab', 'other']);
 const DISCOVER_PROVIDERS = new Set(['all', 'pokemon', 'scryfall', 'ygoprodeck']);
+const DISCOVER_MODES = new Set(['search', 'browse']);
+const BROWSE_SET_SORTS = new Set(['newest', 'alpha', 'largest']);
+const BROWSE_SET_SCOPES = new Set(['all', 'main', 'supplemental']);
+const BROWSE_PRODUCT_SORTS = new Set(['number', 'name', 'price-desc']);
 
 function asURL(input = '/') {
   if (input instanceof URL) return input;
@@ -29,8 +33,53 @@ function route(key, legacyView, canonicalPath, details = {}) {
   return { key, legacyView, canonicalPath, ...details };
 }
 
-function discoverRoute(url) {
+function browseSegment(value, max = 120) {
+  if (value === null || value === undefined || value === '') return '';
+  const decoded = entityId(value);
+  return decoded && !decoded.includes('/') ? bounded(decoded, max) : '';
+}
+
+function browsePath(browse = {}) {
+  const game = browse.game && browse.game !== 'all' ? browseSegment(browse.game, 50) : '';
+  const setId = game ? browseSegment(browse.setId, 120) : '';
+  const base = setId
+    ? `/discover/${encodeURIComponent(game)}/${encodeURIComponent(setId)}`
+    : game
+      ? `/discover/${encodeURIComponent(game)}`
+      : '/discover/browse';
+  const params = new URLSearchParams();
+  const setSort = BROWSE_SET_SORTS.has(browse.sort) ? browse.sort : 'newest';
+  const setScope = BROWSE_SET_SCOPES.has(browse.scope) ? browse.scope : 'all';
+  const productSort = BROWSE_PRODUCT_SORTS.has(browse.productSort) ? browse.productSort : 'number';
+  if (!setId && setSort !== 'newest') params.set('sort', setSort);
+  if (!setId && setScope !== 'all') params.set('scope', setScope);
+  if (setId && productSort !== 'number') params.set('sort', productSort);
+  return `${base}${params.size ? `?${params}` : ''}`;
+}
+
+function discoverRoute(url, pathname = '/discover') {
   const requestedMode = bounded(url.searchParams.get('mode'), 30) || 'search';
+  const suffix = pathname.slice('/discover'.length).split('/').filter(Boolean);
+  const pathRequestsBrowse = suffix.length > 0;
+  const mode = pathRequestsBrowse || requestedMode === 'browse' ? 'browse' : 'search';
+  if (mode === 'browse') {
+    const pathGame = suffix[0] && suffix[0] !== 'browse' ? browseSegment(suffix[0], 50) : '';
+    const pathSet = pathGame && suffix[1] ? browseSegment(suffix[1]) : '';
+    const game = pathGame || browseSegment(url.searchParams.get('game'), 50) || 'all';
+    const setId = game === 'all' ? '' : pathSet || browseSegment(url.searchParams.get('set'));
+    const requestedSort = bounded(url.searchParams.get('sort'), 30);
+    const requestedScope = bounded(url.searchParams.get('scope'), 30);
+    const sort = setId
+      ? (BROWSE_PRODUCT_SORTS.has(requestedSort) ? requestedSort : 'number')
+      : (BROWSE_SET_SORTS.has(requestedSort) ? requestedSort : 'newest');
+    const scope = BROWSE_SET_SCOPES.has(requestedScope) ? requestedScope : 'all';
+    const browse = { game, setId, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'number' };
+    return route('discover', 'search', browsePath(browse), {
+      mode: 'browse',
+      browse,
+      unsupported: suffix.length > 2 || (requestedMode && !DISCOVER_MODES.has(requestedMode)) ? 'discover-browse-path' : ''
+    });
+  }
   const query = bounded(url.searchParams.get('q'));
   const requestedCategory = bounded(url.searchParams.get('category'), 30) || 'all';
   const requestedProvider = bounded(url.searchParams.get('provider'), 30) || 'all';
@@ -43,7 +92,7 @@ function discoverRoute(url) {
   return route('discover', 'search', `/discover?${params}`, {
     mode: 'search',
     search: { query, category, provider },
-    unsupported: requestedMode === 'search' ? '' : `discover-${requestedMode}`
+    unsupported: DISCOVER_MODES.has(requestedMode) ? '' : `discover-${requestedMode}`
   });
 }
 
@@ -74,7 +123,7 @@ export function parseAppRoute(input = '/') {
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   if (pathname === '/') return route('overview', 'home', '/');
   if (pathname === '/portfolio') return portfolioRoute(url);
-  if (pathname === '/discover') return discoverRoute(url);
+  if (pathname === '/discover' || pathname.startsWith('/discover/')) return discoverRoute(url, pathname);
   if (pathname === '/insights') return insightsRoute(url);
   if (pathname === '/settings') return route('settings', 'profile', '/settings');
   if (pathname === '/add') {
@@ -95,7 +144,8 @@ export function parseAppRoute(input = '/') {
   return route('overview', 'home', '/', { notFound: pathname });
 }
 
-function discoverPath(search = {}) {
+function discoverPath(search = {}, discover = {}) {
+  if (discover.mode === 'browse') return browsePath(discover);
   const params = new URLSearchParams({ mode: 'search' });
   const query = bounded(search.query);
   const category = DISCOVER_CATEGORIES.has(search.category) ? search.category : 'all';
@@ -112,7 +162,8 @@ function detailPath(detail = {}) {
   const provider = bounded(selected.item?.provider || selected.catalogRef?.provider, 50).toLowerCase();
   const externalId = bounded(selected.item?.externalId || selected.catalogRef?.externalId, 400);
   const providerId = provider && externalId ? `${provider}:${externalId}` : '';
-  const id = providerId
+  const id = selected.watched?.watchKey
+    || providerId
     || selected.catalogRef?.canonicalVariantId
     || selected.catalogRef?.watchKey
     || selected.item?.id;
@@ -131,7 +182,7 @@ export function appRouteForLegacyView(view, state = {}, context = {}) {
   const portfolioSection = context.portfolioSection || state.portfolio?.section || 'holdings';
   const paths = {
     home: '/',
-    search: discoverPath(context.search || state.search),
+    search: discoverPath(context.search || state.search, context.discover || { mode: 'search' }),
     add: '/add',
     scan: '/add?step=review',
     portfolio: portfolioSection === 'forecasts'
@@ -163,6 +214,26 @@ export function routeStatePatch(appRoute, state = {}) {
       ...state.search,
       ...appRoute.search,
       ...(changed ? { loading: false, results: [], warnings: [], cached: false } : {})
+    };
+    patch.discover = { ...state.discover, mode: 'search' };
+  }
+  if (appRoute.browse) {
+    const current = state.discover || {};
+    const gameChanged = current.game !== appRoute.browse.game;
+    const setChanged = gameChanged || current.setId !== appRoute.browse.setId;
+    patch.discover = {
+      ...current,
+      ...appRoute.browse,
+      mode: 'browse',
+      query: gameChanged ? '' : current.query || '',
+      setLimit: gameChanged ? 120 : current.setLimit || 120,
+      productQuery: setChanged ? '' : current.productQuery || '',
+      limit: setChanged ? 120 : current.limit || 120,
+      loading: false,
+      error: '',
+      warnings: [],
+      ...(gameChanged ? { sets: [], loadedGame: '' } : {}),
+      ...(setChanged ? { products: [], selectedSet: null, loadedSetId: '' } : {})
     };
   }
   return patch;

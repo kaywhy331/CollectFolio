@@ -1,6 +1,7 @@
 import { normalizeIntelligencePayload, trendLabel } from './intelligence-contract.js';
 import { catalogPriceForValuation } from './pricing-policy.js';
 import { formatCurrency, formatPercent } from './utils.js';
+import { selectPublicationForWatchlist } from './market-series.js';
 
 export const COMPARE_LIMIT = 4;
 
@@ -43,15 +44,16 @@ export function buildComparison(selection = [], watchlistItems = [], byVariant =
     .filter(Boolean)
     .map((entry) => {
       const ref = entry.catalogRef || {};
-      const publication = entry.canonicalVariantId ? byVariant[entry.canonicalVariantId] : null;
+      const rawPublication = entry.canonicalVariantId ? byVariant[entry.canonicalVariantId] : null;
+      const publication = selectPublicationForWatchlist(rawPublication, entry, currency);
       const intelligence = publication ? normalizeIntelligencePayload(publication) : null;
       const observed = intelligence?.observed || null;
       const catalogPrice = catalogPriceForValuation(ref);
-      const yearForecast = intelligence?.forecasts?.[365] || null;
+      const pilotForecast = intelligence?.forecasts?.[30] || intelligence?.forecasts?.[90] || null;
       const confidences = [
         intelligence?.trend?.confidence,
         intelligence?.fairValue?.confidence,
-        yearForecast?.confidence
+        pilotForecast?.confidence
       ].filter((value) => value !== null && value !== undefined);
       const confidence = confidences.length ? Math.min(...confidences) : null;
       const percentOrNone = (value) => value === null || value === undefined ? '—' : formatPercent(value * 100);
@@ -69,9 +71,10 @@ export function buildComparison(selection = [], watchlistItems = [], byVariant =
         trendStatus: intelligence ? trendLabel(intelligence.trend.status) : 'Insufficient data',
         volatility: percentOrNone(intelligence?.trend?.volatility),
         fairValuePosition: intelligence?.fairValue ? (POSITION_LABELS[intelligence.fairValue.position] || 'Insufficient evidence') : '—',
-        probabilityUp: yearForecast?.probabilityUp === null || yearForecast?.probabilityUp === undefined
+        forecastHorizon: pilotForecast?.horizon || null,
+        probabilityUp: pilotForecast?.probabilityUp === null || pilotForecast?.probabilityUp === undefined
           ? '—'
-          : `${Math.round(yearForecast.probabilityUp * 100)}%`,
+          : `${Math.round(pilotForecast.probabilityUp * 100)}%`,
         confidence,
         confidenceLabel: confidenceLabel(confidence)
       };

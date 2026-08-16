@@ -5,7 +5,10 @@ from collectfolio_analytics.walk_forward import (
     build_retrospective_walk_forward,
     parse_hosted_observation_rows,
 )
-from collectfolio_analytics.walk_forward_sql import build_walk_forward_evidence_sql
+from collectfolio_analytics.walk_forward_sql import (
+    _evaluation_rpc_statements,
+    build_walk_forward_evidence_sql,
+)
 from collectfolio_analytics.walk_forward_cli import _code_artifact_hash
 
 from analytics.tests.test_walk_forward import KEY, config, hosted_rows, source_terms
@@ -34,15 +37,29 @@ class WalkForwardSQLTests(unittest.TestCase):
             "analytics_run_sources",
             "trend_feature_snapshots",
             "card_forecast_predictions",
-            "forecast_evaluations",
             "model_scorecards",
             "model_scorecard_evaluations",
         ):
             self.assertIn(f"insert into public.{table}", rehearsal)
+        self.assertNotIn("insert into public.forecast_evaluations", rehearsal)
+        self.assertNotIn("insert into public.forecast_evaluation_observations", rehearsal)
+        self.assertIn("public.record_scored_forecast_evaluation", rehearsal)
+        self.assertIn("database-derived target-observation membership differs", rehearsal)
         self.assertNotIn("insert into public.model_promotion_reviews", rehearsal)
         self.assertNotIn("insert into public.intelligence_publication", rehearsal)
         self.assertIn("review.expires_at > greatest", rehearsal)
         self.assertIn("public_price_intelligence must remain disabled", rehearsal)
+
+    def test_unscorable_targets_use_the_normalized_database_rpc(self):
+        statement = _evaluation_rpc_statements(({
+            "id": "11111111-1111-4111-8111-111111111111",
+            "analytics_run_id": "22222222-2222-4222-8222-222222222222",
+            "prediction_id": "33333333-3333-4333-8333-333333333333",
+            "evaluated_at": "2026-08-05T23:30:00+00:00",
+            "evaluation_status": "unscorable",
+        },))
+        self.assertIn("public.record_unscorable_forecast_evaluation", statement)
+        self.assertNotIn("unscorable_reason", statement)
 
     def test_refuses_public_or_automatically_promoted_evidence(self):
         public = deepcopy(packet())

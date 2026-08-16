@@ -60,6 +60,8 @@ def mapping() -> ObservationMapping:
         mapping_version="tcgcsv-research-mapping-v1",
         finish="holofoil",
         condition_class="raw",
+        language="en",
+        market_condition="provider-aggregate",
     )
 
 

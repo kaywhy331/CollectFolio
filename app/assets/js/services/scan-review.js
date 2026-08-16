@@ -1,13 +1,15 @@
 import { createId } from '../core/utils.js';
+import { canonicalRawMarketCondition } from '../core/market-series.js';
 import { deleteRecords, getAll, putRecord, saveHolding } from '../core/db.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { matchBucketFor } from '../core/view-models.js';
 import { searchCatalog } from './catalog.js';
 import { candidateEvidenceScore, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
 import { recordDemandEvent } from './demand-events.js';
+import { discoverVisualCandidates } from './visual-index.js';
 
 export const ACQUISITION_FIELDS = Object.freeze([
-  'quantity', 'condition', 'gradeCompany', 'grade', 'purchasePrice', 'purchaseCurrency', 'fees',
+  'quantity', 'condition', 'marketCondition', 'gradeCompany', 'grade', 'purchasePrice', 'purchaseCurrency', 'fees',
   'purchaseDate', 'seller', 'folder', 'manualMarketPrice', 'manualMarketCurrency', 'notes'
 ]);
 export const COMPLETED_SCAN_RETENTION_DAYS = 30;
@@ -26,7 +28,7 @@ export async function searchCatalogCandidates(queries = [], evidence = {}, searc
   const candidates = new Map();
   const warnings = new Set();
   let allAttemptsFailed = true;
-  for (const query of queries.slice(0, 3)) {
+  for (const query of queries.slice(0, 6)) {
     const response = await search({ query });
     (response.warnings || []).forEach((warning) => warnings.add(warning));
     if ((response.fulfilledProviders ?? 1) > 0 || response.manual) allAttemptsFailed = false;
@@ -38,10 +40,32 @@ export async function searchCatalogCandidates(queries = [], evidence = {}, searc
   return { candidates: [...candidates.values()], warnings: [...warnings], allAttemptsFailed };
 }
 
+export async function identifyDraftCrops(draft, { concurrency = 1, identify = identifyCrop } = {}) {
+  const crops = (draft?.crops || []).filter((crop) => crop.status === 'queued');
+  if (!crops.length) return draft;
+  const maximum = Math.max(1, Math.min(2, Math.trunc(Number(concurrency)) || 1));
+  let index = 0;
+  const worker = async () => {
+    while (index < crops.length) {
+      const crop = crops[index++];
+      try {
+        await identify(draft, crop.id, '');
+      } catch (error) {
+        crop.status = 'error';
+        crop.error = error?.message || 'Identification failed. Enter a query or retry automatic OCR.';
+        await saveScanDraft(draft).catch(() => {});
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(maximum, crops.length) }, () => worker()));
+  return draft;
+}
+
 export function normalizeAcquisition(value = {}) {
   return {
     quantity: Math.max(1, Math.trunc(Number(value.quantity) || 1)),
     condition: text(value.condition || 'Near Mint', 80),
+    marketCondition: canonicalRawMarketCondition(value.marketCondition),
     gradeCompany: text(value.gradeCompany, 40),
     grade: text(value.grade, 20),
     purchasePrice: moneyOrBlank(value.purchasePrice),
@@ -67,7 +91,7 @@ export function createScanDraft(crops, mode = 'multi', acquisitionDefaults = {})
     id: createId(), mode, status: 'review', createdAt: now, updatedAt: now,
     bulkAcquisition: acquisition,
     crops: crops.map((crop, index) => ({
-      id: createId(), index, box: crop.box, image: crop.image, status: 'unmatched',
+      id: createId(), index, box: crop.box, image: crop.image, status: 'queued',
       query: '', ocrText: '', ocrEngine: '', candidates: [], selectedId: '',
       customItem: null, approved: false, error: '', acquisition: { ...acquisition }
     }))
@@ -143,8 +167,8 @@ export function recoverInterruptedIdentifications(draft) {
   }
   for (const crop of draft?.crops || []) {
     if (crop.status !== 'identifying') continue;
-    crop.status = 'error';
-    crop.error = 'The previous identification was interrupted. Search again or enter a query manually.';
+    crop.status = 'queued';
+    crop.error = 'The previous identification was interrupted and will retry automatically.';
     recovered++;
   }
   return recovered;
@@ -202,7 +226,7 @@ export async function applyAcquisitionToAll(draft, patch = {}) {
   return count;
 }
 
-export async function identifyCrop(draft, cropId, editedQuery = '') {
+export async function identifyCrop(draft, cropId, editedQuery = '', { visualSearch = discoverVisualCandidates } = {}) {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
   crop.status = 'identifying'; crop.error = ''; crop.approved = false;
@@ -224,17 +248,27 @@ export async function identifyCrop(draft, cropId, editedQuery = '') {
     }
     const queries = evidence?.queries?.length ? evidence.queries : crop.query ? [crop.query] : [];
     if (!queries.length) {
-      crop.status = 'unmatched';
-      crop.error = 'Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.';
+      try {
+        crop.candidates = await visualSearch(crop.image);
+      } catch { crop.candidates = []; }
+      crop.status = crop.candidates.length ? 'matched' : 'unmatched';
+      crop.error = crop.candidates.length
+        ? 'Text was unclear, so these Pokémon candidates were recovered by image similarity. Confirm the exact printing.'
+        : 'Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.';
       await saveScanDraft(draft);
       return crop;
     }
     const recovered = await searchCatalogCandidates(queries, evidence);
     if (recovered.allAttemptsFailed && recovered.warnings.length) throw new Error('Card catalogs are temporarily unavailable. Check your connection and retry.');
     crop.candidates = await rerankCandidates(crop.image, recovered.candidates.slice(0, 24), evidence);
+    if (!crop.candidates.length) {
+      try { crop.candidates = await visualSearch(crop.image); } catch { /* Manual query remains available. */ }
+    }
     crop.status = crop.candidates.length ? 'matched' : 'unmatched';
     crop.error = crop.candidates.length
-      ? recovered.warnings.join(' ')
+      ? (recovered.candidates.length
+        ? recovered.warnings.join(' ')
+        : 'No reliable text match was found, so these Pokémon candidates were recovered by image similarity. Confirm the exact printing.')
       : ['No catalog match found. Try the card name or collector number, or create a custom item.', ...recovered.warnings].join(' ');
   } catch (error) {
     crop.status = 'error';

@@ -29,8 +29,10 @@ In Supabase, open **Project Settings → API Keys** and copy the publishable key
 ```text
 SUPABASE_URL=https://agmjgyyvhfcivbwdlvzk.supabase.co
 SUPABASE_ANON_KEY=<your Supabase publishable/anon key>
-APP_VERSION=0.8.1
+APP_VERSION=0.8.5
 ENABLE_TESSERACT=true
+ENABLE_WATCHLISTS=true
+ENABLE_SET_BROWSING=true
 JUSTTCG_API_KEY=<server-only JustTCG key>
 ```
 
@@ -67,7 +69,7 @@ After Netlify assigns a URL:
 When any file under `app/` changes, update the cache name in `app/sw.js` before a production release, for example:
 
 ```js
-const CACHE = 'collectfolio-shell-v0.8.1';
+const CACHE = 'collectfolio-shell-v0.8.5';
 ```
 
 This ensures installed PWAs replace the prior shell reliably.

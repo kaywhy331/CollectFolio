@@ -257,6 +257,8 @@ class TCGCSVTests(unittest.TestCase):
             mapping_version="tcgcsv-mapping-v1",
             finish="holofoil",
             condition_class="raw",
+            language="en",
+            market_condition="provider-aggregate",
         )
         packet = build_tcgcsv_research_packet(
             snapshot,
@@ -273,7 +275,7 @@ class TCGCSVTests(unittest.TestCase):
 
         self.assertEqual(packet.observations.status_counts["accepted"], 1)
         self.assertEqual(packet.observations.database_rows[0]["market_price"], 310.79)
-        self.assertEqual(packet.observations.database_rows[0]["price_semantics"], "tcgplayer_market")
+        self.assertEqual(packet.observations.database_rows[0]["price_semantics"], "tcgplayer-market")
         self.assertEqual(packet.gate_status["sourceRights"], "research_only")
         self.assertEqual(packet.gate_status["publicPublication"], "blocked")
 

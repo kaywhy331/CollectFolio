@@ -1,0 +1,222 @@
+name: Private rolling TCGCSV refresh
+
+on:
+  schedule:
+    - cron: '5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcgcsv-private-r2-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: ${{ vars.TCGCSV_R2_REFRESH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    env:
+      TCGCSV_COORDINATOR_URL: ${{ vars.TCGCSV_COORDINATOR_URL }}
+      TCGCSV_COORDINATOR_TOKEN: ${{ secrets.TCGCSV_COORDINATOR_TOKEN }}
+      TCGCSV_SOURCE_ID: ${{ vars.TCGCSV_SOURCE_ID }}
+      TCGCSV_TERMS_REVIEW_ID: ${{ vars.TCGCSV_TERMS_REVIEW_ID }}
+      TCGCSV_USER_AGENT: ${{ vars.TCGCSV_USER_AGENT || 'CollectFolio/0.8.5 private-current-refresh' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate the private rolling boundary
+        run: |
+          set -euo pipefail
+          : "${TCGCSV_COORDINATOR_URL:?TCGCSV_COORDINATOR_URL repository variable is required}"
+          : "${TCGCSV_COORDINATOR_TOKEN:?TCGCSV_COORDINATOR_TOKEN repository secret is required}"
+          : "${TCGCSV_SOURCE_ID:?TCGCSV_SOURCE_ID repository variable is required}"
+          : "${TCGCSV_TERMS_REVIEW_ID:?TCGCSV_TERMS_REVIEW_ID repository variable is required}"
+          [[ "$TCGCSV_TERMS_REVIEW_ID" == "3775d954-f0ce-4abc-97fb-a7a6938c134a" ]]
+
+      - name: Claim the exact TCGCSV source build
+        id: claim
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .tcgcsv-control/receipts
+          node scripts/tcgcsv-r2-refresh-client.mjs claim .tcgcsv-control/claim.json
+          started=$(jq -r '.started // false' .tcgcsv-control/claim.json)
+          action=$(jq -r '.action' .tcgcsv-control/claim.json)
+          {
+            echo "started=$started"
+            echo "action=$action"
+            if [[ "$started" == "true" ]]; then
+              echo "archive_date=$(jq -r '.archiveDate' .tcgcsv-control/claim.json)"
+              echo "source_updated_at=$(jq -r '.sourceUpdatedAt' .tcgcsv-control/claim.json)"
+              echo "slot=$(jq -r '.slot' .tcgcsv-control/claim.json)"
+              echo "run_id=$(jq -r '.runId' .tcgcsv-control/claim.json)"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: analytics/pyproject.toml
+
+      - name: Install deterministic market-universe dependencies
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+          python -m pip install -e 'analytics[market-universe]'
+          python -c 'import numpy; assert numpy.__version__ == "2.4.2", numpy.__version__'
+
+      - name: Restore the two published Parquet cohorts
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .tcgcsv-history
+          for slot in 0 1; do
+            node scripts/tcgcsv-r2-refresh-client.mjs download-if-present \
+              prices_parquet "$slot" '${{ steps.claim.outputs.source_updated_at }}' \
+              '${{ steps.claim.outputs.run_id }}' ".tcgcsv-history/slot-${slot}/prices.parquet"
+          done
+
+      - name: Prepare the complete archive and deterministic features
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          archive_date='${{ steps.claim.outputs.archive_date }}'
+          slot='${{ steps.claim.outputs.slot }}'
+          history_args=()
+          while IFS= read -r -d '' history_file; do
+            history_args+=(--history-parquet "$history_file")
+          done < <(find .tcgcsv-history -type f -name prices.parquet -print0 2>/dev/null | sort -z)
+          python -m collectfolio_analytics.tcgcsv_universe_cli prepare-archive \
+            --source-id "$TCGCSV_SOURCE_ID" \
+            --terms-review-id "$TCGCSV_TERMS_REVIEW_ID" \
+            --archive-date "$archive_date" \
+            --source-updated-at '${{ steps.claim.outputs.source_updated_at }}' \
+            --source-available-at '${{ steps.claim.outputs.source_updated_at }}' \
+            --user-agent "$TCGCSV_USER_AGENT" \
+            --output-dir .tcgcsv-run \
+            --archive-object-uri "r2://collectfolio-tcgcsv-current/slots/${slot}/raw/prices.ppmd.7z" \
+            --parquet-object-uri "r2://collectfolio-tcgcsv-current/slots/${slot}/history/prices.parquet" \
+            --feature-object-uri "r2://collectfolio-tcgcsv-current/slots/${slot}/features/market-features.csv.gz" \
+            --set-feature-object-uri "r2://collectfolio-tcgcsv-current/slots/${slot}/features/set-features.csv" \
+            "${history_args[@]}"
+
+      - name: Collect the complete current card catalog without database ingestion
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          python -m collectfolio_analytics.tcgcsv_universe_cli sync-catalog \
+            --source-id "$TCGCSV_SOURCE_ID" \
+            --terms-review-id "$TCGCSV_TERMS_REVIEW_ID" \
+            --user-agent "$TCGCSV_USER_AGENT" \
+            --output .tcgcsv-run/catalog-packet.json
+
+      - name: Verify the full cohort and exact source identity
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const read = async (path) => JSON.parse(await readFile(path, 'utf8'));
+          const [claim, archive, catalog] = await Promise.all([
+            read('.tcgcsv-control/claim.json'),
+            read('.tcgcsv-run/archive-packet.json'),
+            read('.tcgcsv-run/catalog-packet.json')
+          ]);
+          const instant = (value) => new Date(value).toISOString();
+          if (instant(archive.sourceUpdatedAt) !== claim.sourceUpdatedAt
+              || instant(archive.sourceAvailableAt) !== claim.sourceUpdatedAt
+              || instant(catalog.sourceUpdatedAt) !== claim.sourceUpdatedAt) {
+            throw new Error('Prepared packets do not match the claimed source build');
+          }
+          if (archive.archiveDate !== claim.archiveDate
+              || archive.normalization.priceCount <= 0
+              || archive.features.featureCount !== archive.normalization.priceCount
+              || archive.features.setFeatureCount <= 0) {
+            throw new Error('Archive packet is incomplete');
+          }
+          if (catalog.partial !== false || catalog.errors.length !== 0
+              || catalog.categories.length <= 0 || catalog.groups.length <= 0
+              || catalog.products.length <= 0
+              || catalog.metadata.plannedProductGroupCount !== catalog.groups.length
+              || catalog.metadata.successfulProductGroupCount !== catalog.groups.length) {
+            throw new Error('Catalog packet is partial or does not cover every card group');
+          }
+          NODE
+
+      - name: Create deterministic compressed artifacts and local SHA-256 receipt
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          gzip -n -9 -c .tcgcsv-run/market-features.csv > .tcgcsv-run/market-features.csv.gz
+          gzip -n -9 -c .tcgcsv-run/catalog-packet.json > .tcgcsv-run/catalog-packet.json.gz
+          archive_date='${{ steps.claim.outputs.archive_date }}'
+          sha256sum \
+            ".tcgcsv-run/prices-${archive_date}.ppmd.7z" \
+            .tcgcsv-run/prices.parquet \
+            .tcgcsv-run/market-features.csv.gz \
+            .tcgcsv-run/set-features.csv \
+            .tcgcsv-run/archive-packet.json \
+            .tcgcsv-run/catalog-packet.json.gz \
+            > .tcgcsv-control/local-artifact-sha256.txt
+
+      - name: Upload six hash-bound artifacts through the private Worker gateway
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          archive_date='${{ steps.claim.outputs.archive_date }}'
+          slot='${{ steps.claim.outputs.slot }}'
+          source='${{ steps.claim.outputs.source_updated_at }}'
+          run_id='${{ steps.claim.outputs.run_id }}'
+          upload() {
+            node scripts/tcgcsv-r2-refresh-client.mjs upload \
+              "$1" "$slot" "$source" "$run_id" "$2" ".tcgcsv-control/receipts/$1.json"
+          }
+          upload raw_archive ".tcgcsv-run/prices-${archive_date}.ppmd.7z"
+          upload prices_parquet .tcgcsv-run/prices.parquet
+          upload market_features_gzip .tcgcsv-run/market-features.csv.gz
+          upload set_features .tcgcsv-run/set-features.csv
+          upload archive_packet .tcgcsv-run/archive-packet.json
+          upload catalog_packet_gzip .tcgcsv-run/catalog-packet.json.gz
+
+      - name: Seal the slot marker after the final upstream check
+        if: ${{ steps.claim.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          node scripts/tcgcsv-r2-refresh-client.mjs complete \
+            .tcgcsv-control/claim.json \
+            .tcgcsv-control/receipts/raw_archive.json \
+            .tcgcsv-control/receipts/prices_parquet.json \
+            .tcgcsv-control/receipts/market_features_gzip.json \
+            .tcgcsv-control/receipts/set_features.json \
+            .tcgcsv-control/receipts/archive_packet.json \
+            .tcgcsv-control/receipts/catalog_packet_gzip.json \
+            > .tcgcsv-control/completion.json
+
+      - name: Release a failed lease for the next hourly retry
+        if: ${{ failure() && steps.claim.outputs.started == 'true' }}
+        continue-on-error: true
+        run: |
+          node scripts/tcgcsv-r2-refresh-client.mjs fail \
+            .tcgcsv-control/claim.json github_workflow_failed
+
+      - name: Retain small private SHA-256 and control receipts
+        if: ${{ always() && steps.claim.outputs.started == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcgcsv-r2-refresh-${{ github.run_id }}
+          path: |
+            .tcgcsv-control/local-artifact-sha256.txt
+            .tcgcsv-control/receipts/*.json
+            .tcgcsv-control/completion.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -16,6 +16,7 @@ This increment ships the local product foundation plus a private research baseli
 - explicit identity-only, unsupported, restricted, and research-gated states;
 - a bounded TCGCSV weekly-history adapter and reviewed exact mapping for one research cohort; and
 - a separate fixed-origin JustTCG paid-source adapter with one-year history, honest backfill availability, and fail-closed subscription/rights gates (not activated); and
+- a separate fixed-origin Cardbase MTG private-research adapter with exact vendor/finish/type/currency series, a replay-safe first-seen ledger, one-key quota enforcement, and no public output (not activated); and
 - append-only private model, prediction, evaluation, scorecard, and promotion-review ledgers from migration 0005; and
 - pending migration 0006 hardening for the database kill switch, immutable source reviews and mapping versions, explicit Unscorable evidence, versioned scorecard membership/policy, authenticated model review, and per-card disable receipts.
 

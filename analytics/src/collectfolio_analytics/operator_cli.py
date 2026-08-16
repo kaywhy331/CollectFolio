@@ -186,6 +186,16 @@ def _approved_mappings(
             external_variant_key=variant_key,
             variant_id=variant_id,
             mapping_version=mapping_version,
+            language=_text(item.get("language", "en"), f"approvedMappings[{index}].language"),
+            finish=_text(item.get("finish"), f"approvedMappings[{index}].finish"),
+            condition_class=_text(
+                item.get("conditionClass", "raw"),
+                f"approvedMappings[{index}].conditionClass",
+            ),
+            market_condition=_text(
+                item.get("marketCondition", "unspecified"),
+                f"approvedMappings[{index}].marketCondition",
+            ),
         ))
         observations.append(ObservationMapping(
             mapping_id=_text(item.get("mappingId"), f"approvedMappings[{index}].mappingId"),
@@ -200,6 +210,11 @@ def _approved_mappings(
             condition_class=_text(
                 item.get("conditionClass", "raw"),
                 f"approvedMappings[{index}].conditionClass",
+            ),
+            language=_text(item.get("language", "en"), f"approvedMappings[{index}].language"),
+            market_condition=_text(
+                item.get("marketCondition", "unspecified"),
+                f"approvedMappings[{index}].marketCondition",
             ),
         ))
     return tuple(approved), tuple(observations)

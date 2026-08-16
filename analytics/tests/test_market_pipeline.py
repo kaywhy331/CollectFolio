@@ -57,6 +57,8 @@ def mapping(**overrides):
         "mapping_version": "mapping-v1",
         "finish": "holofoil",
         "condition_class": "raw",
+        "language": "en",
+        "market_condition": "near-mint",
     }
     values.update(overrides)
     return ObservationMapping(**values)
@@ -79,7 +81,9 @@ def record(price=100, **overrides):
 
 
 def history():
-    key = PriceSeriesKey(VARIANT_ID, SOURCE_ID, "USD", "holofoil", "raw", "market")
+    key = PriceSeriesKey(
+        VARIANT_ID, SOURCE_ID, "USD", "holofoil", "raw", "market", "en", "near-mint"
+    )
     return [
         PriceObservation(
             key,
@@ -101,6 +105,13 @@ class MarketPipelineTests(unittest.TestCase):
         self.assertEqual(prepared.status, "accepted")
         self.assertEqual(prepared.database_row["variant_id"], VARIANT_ID)
         self.assertEqual(prepared.database_row["terms_review_id"], TERMS_ID)
+        self.assertNotIn("market_condition", prepared.database_row)
+        self.assertNotIn("language", prepared.database_row)
+        self.assertEqual(prepared.market_series_row["market_condition"], "near-mint")
+        self.assertEqual(prepared.market_series_row["language"], "en")
+        self.assertEqual(
+            prepared.database_row["market_series_id"], prepared.market_series_row["id"]
+        )
         self.assertIsNotNone(prepared.trend_observation)
         self.assertIsNone(prepared.quality_event)
 
@@ -113,6 +124,16 @@ class MarketPipelineTests(unittest.TestCase):
         self.assertEqual(prepared.status, "rejected")
         self.assertIsNone(prepared.database_row)
         self.assertEqual(prepared.quality_event["flag_code"], "mapping_not_approved")
+
+    def test_observation_semantics_match_the_normalized_market_series(self):
+        prepared = prepare_price_record(
+            record(price_semantics="Market Price"), mapping(), terms(), (),
+            ingestion_run_id=RUN_ID, ingested_at=NOW,
+            actor_label="market-parser-v1",
+        )
+        self.assertEqual(prepared.database_row["price_semantics"], "market-price")
+        self.assertEqual(prepared.market_series_row["price_semantics"], "market-price")
+        self.assertEqual(prepared.trend_observation.key.price_semantics, "market-price")
 
     def test_disallowed_terms_stop_ingestion_before_a_row_is_built(self):
         with self.assertRaises(PermissionError):
@@ -163,7 +184,9 @@ class MarketPipelineTests(unittest.TestCase):
             )
 
     def test_future_available_history_cannot_drive_outlier_detection(self):
-        key = PriceSeriesKey(VARIANT_ID, SOURCE_ID, "USD", "holofoil", "raw", "market")
+        key = PriceSeriesKey(
+            VARIANT_ID, SOURCE_ID, "USD", "holofoil", "raw", "market", "en", "near-mint"
+        )
         future_history = [
             PriceObservation(
                 key,
@@ -179,6 +202,27 @@ class MarketPipelineTests(unittest.TestCase):
             actor_label="market-parser-v1",
         )
         self.assertEqual(prepared.status, "accepted")
+
+    def test_batch_keeps_conditions_in_separate_rolling_histories(self):
+        lp_mapping = mapping(
+            mapping_id="ffffffff-ffff-4fff-8fff-ffffffffffff",
+            external_variant_key="holofoil-lp",
+            market_condition="lightly-played",
+        )
+        lp_record = record(
+            external_record_id="record-lp",
+            external_variant_key="holofoil-lp",
+            market_price=30,
+        )
+        batch = prepare_observation_batch(
+            [record(), lp_record], [mapping(), lp_mapping], terms(), {VARIANT_ID: history()},
+            ingestion_run_id=RUN_ID, ingested_at=NOW, actor_label="market-parser-v1",
+        )
+        self.assertEqual(batch.status_counts["accepted"], 2)
+        self.assertEqual(
+            {item.key.market_condition for item in batch.trend_observations},
+            {"near-mint", "lightly-played"},
+        )
 
     def test_outlier_baseline_excludes_obsolete_price_regimes(self):
         obsolete_history = [

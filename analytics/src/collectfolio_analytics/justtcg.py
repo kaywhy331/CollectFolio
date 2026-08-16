@@ -34,7 +34,7 @@ from .observations import PriceObservation
 DEFAULT_BASE_URL = "https://api.justtcg.com/v1/cards"
 DEFAULT_USER_AGENT = "CollectFolio/0.1 licensed price ingestion"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
-PRICE_SEMANTICS = "justtcg_volume_weighted_market"
+PRICE_SEMANTICS = "justtcg-volume-weighted-market"
 TERMS_MINIMUM_REVIEW_DATE = date(2026, 7, 27)
 HISTORY_DURATIONS = {"7d": 7, "30d": 30, "90d": 90, "180d": 180, "1y": 365}
 HISTORY_WINDOW_TOLERANCE_DAYS = 2
@@ -284,6 +284,7 @@ class JustTCGSnapshot:
             edition="standard",
             finish=variant.printing,
             condition_class="raw",
+            market_condition=_condition_key(variant.condition),
         ) for variant in self.variants)
 
     def raw_price_records(self, *, quality_score: float = 0.90) -> tuple[RawPriceRecord, ...]:

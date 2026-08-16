@@ -1,11 +1,14 @@
 dist/
 .netlify/
 node_modules/
+.wrangler/
 playwright-report/
 test-results/
 supabase/.temp/
 *.log
 __pycache__/
+analytics/build/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .DS_Store

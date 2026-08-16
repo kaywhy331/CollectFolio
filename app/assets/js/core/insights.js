@@ -1,5 +1,12 @@
 import { FORECAST_HORIZONS, normalizeIntelligencePayload } from './intelligence-contract.js';
 import { holdingMarketValue, portfolioSummary } from './calculations.js';
+import {
+  expectedMarketSeriesKey,
+  holdingMarketSeriesIdentity,
+  publicationCandidates,
+  selectExactPublication,
+  watchlistMarketSeriesIdentity
+} from './market-series.js';
 
 export const INSIGHTS_VIEWS = Object.freeze(['performance', 'forecasts', 'alerts', 'track-record']);
 export const INSIGHTS_HORIZONS = FORECAST_HORIZONS;
@@ -59,7 +66,7 @@ export function forecastAvailabilityForHolding(holding = {}, rawPublication = nu
   if (hasManualValue(holding)) return {
     status: 'unavailable', reason: 'This holding uses a manual value.',
     nextAction: 'The manual value remains in current portfolio totals but is excluded from forecasts.', selectedHorizon,
-    publication: rawPublication ? normalizeIntelligencePayload(rawPublication) : null,
+    publication: null,
     forecast: null, availableHorizons: []
   };
   if (!rawPublication) return {
@@ -68,8 +75,26 @@ export function forecastAvailabilityForHolding(holding = {}, rawPublication = nu
     publication: null, forecast: null, availableHorizons: []
   };
 
-  const publication = normalizeIntelligencePayload(rawPublication);
-  const availableHorizons = Object.keys(publication.forecasts).map(Number).sort((left, right) => left - right);
+  const holdingSeries = holdingMarketSeriesIdentity(holding, currency);
+  const requiredIdentity = ['language', 'finish', 'conditionClass', 'marketCondition'];
+  const publications = publicationCandidates(rawPublication)
+    .map(normalizeIntelligencePayload);
+  const exact = selectExactPublication(rawPublication, holdingSeries, { requireMarketCondition: true });
+  const publication = exact ? normalizeIntelligencePayload(exact) : null;
+  const availableHorizons = publication
+    ? Object.keys(publication.forecasts).map(Number).sort((left, right) => left - right)
+    : [];
+  if (!publication && requiredIdentity.some((field) => !holdingSeries[field]
+    || publications.every((candidate) => !candidate.seriesIdentity[field]))) return {
+    status: 'unavailable', reason: 'The holding and forecast do not share a complete exact market identity.',
+    nextAction: 'Confirm language, printing, and market condition before using this forecast.', selectedHorizon,
+    publication: null, forecast: null, availableHorizons
+  };
+  if (!publication) return {
+    status: 'unavailable', reason: 'This forecast is for a different language, printing, or market condition.',
+    nextAction: 'Use a publication that exactly matches this holding.', selectedHorizon,
+    publication: null, forecast: null, availableHorizons
+  };
   if (publication.observed && normalizedCurrency(publication.observed.currency) !== normalizedCurrency(currency)) return {
     status: 'unavailable', reason: `${publication.observed.currency} cannot be combined with ${normalizedCurrency(currency)} without an approved conversion rate.`,
     nextAction: 'View this product separately; portfolio forecast totals never guess currency conversion.', selectedHorizon,
@@ -186,12 +211,24 @@ export function forecastAssets(holdings = [], watchlistItems = [], byVariant = {
       ...forecastAvailabilityForHolding(holding, raw, horizon, options)
     };
   });
-  const represented = new Set(holdings.map((holding) => String(holding.canonicalVariantId || '').toLowerCase()).filter(Boolean));
+  const represented = new Set(holdings.map((holding) => expectedMarketSeriesKey(
+    holding.canonicalVariantId,
+    holdingMarketSeriesIdentity(holding, options.currency || 'USD')
+  )).filter(Boolean));
   for (const entry of watchlistItems) {
-    const variantId = String(entry.canonicalVariantId || '').toLowerCase();
-    if (variantId && represented.has(variantId)) continue;
-    const syntheticHolding = { canonicalVariantId: entry.canonicalVariantId, item: entry.catalogRef || {}, quantity: 1, manualMarketPrice: '' };
+    const expected = watchlistMarketSeriesIdentity(entry, options.currency || 'USD');
+    const representedKey = expectedMarketSeriesKey(entry.canonicalVariantId, expected);
+    if (representedKey && represented.has(representedKey)) continue;
+    const syntheticHolding = {
+      canonicalVariantId: entry.canonicalVariantId,
+      item: entry.catalogRef || {},
+      conditionClass: entry.catalogRef?.conditionClass,
+      marketCondition: entry.marketCondition || entry.catalogRef?.marketCondition,
+      quantity: 1,
+      manualMarketPrice: ''
+    };
     const raw = rawPublicationFor(byVariant, entry.canonicalVariantId);
+    const selected = selectExactPublication(raw, expected, { requireMarketCondition: true });
     assets.push({
       key: `watch:${entry.watchKey}`,
       item: entry.catalogRef || {},
@@ -200,7 +237,7 @@ export function forecastAssets(holdings = [], watchlistItems = [], byVariant = {
       watchKey: entry.watchKey,
       quantity: 1,
       context: 'Watchlist item',
-      ...forecastAvailabilityForHolding(syntheticHolding, raw, horizon, options)
+      ...forecastAvailabilityForHolding(syntheticHolding, selected || raw, horizon, options)
     });
   }
   return assets.sort((left, right) => {
@@ -214,14 +251,19 @@ function historyPublicationList(records = [], currentByVariant = {}) {
   const publications = [
     ...records.map((record) => record?.value || record).filter(Boolean),
     ...Object.values(currentByVariant || {})
-  ];
+  ].flat();
   const unique = new Map();
   for (const publication of publications) {
     if (!publication?.variantId || !publication?.publishedAt) continue;
     const normalized = normalizeIntelligencePayload(publication);
+    const series = normalized.seriesIdentity;
+    const seriesId = [
+      series.sourceId, series.currency, series.language, series.finish,
+      series.conditionClass, series.marketCondition, series.priceSemantics
+    ].join(':');
     for (const forecast of Object.values(normalized.forecasts)) {
-      const forecastId = [normalized.variantId, forecast.horizon, publication.publishedAt, forecast.modelVersion].join(':');
-      if (!unique.has(forecastId)) unique.set(forecastId, { forecastId, raw: publication, publication: normalized, forecast });
+      const forecastId = [normalized.variantId, seriesId, forecast.horizon, publication.publishedAt, forecast.modelVersion].join(':');
+      if (!unique.has(forecastId)) unique.set(forecastId, { forecastId, seriesId, raw: publication, publication: normalized, forecast });
     }
   }
   return [...unique.values()];
@@ -232,7 +274,7 @@ export function predictionHistoryModels(records = [], currentByVariant = {}, now
   const values = historyPublicationList(records, currentByVariant);
   const groups = new Map();
   for (const value of values) {
-    const key = `${value.publication.variantId}:${value.forecast.horizon}`;
+    const key = `${value.publication.variantId}:${value.seriesId}:${value.forecast.horizon}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(value);
   }
@@ -258,6 +300,7 @@ export function predictionHistoryModels(records = [], currentByVariant = {}, now
       result.push({
         forecastId: value.forecastId,
         canonicalId: value.publication.variantId,
+        seriesIdentity: value.publication.seriesIdentity,
         horizon: forecast.horizon,
         asOfDate: value.raw.publishedAt,
         maturityDate: forecast.maturesAt,
@@ -282,7 +325,7 @@ export function predictionHistoryModels(records = [], currentByVariant = {}, now
 
 export function publishedScorecards(byVariant = {}) {
   const unique = new Map();
-  for (const raw of Object.values(byVariant || {})) {
+  for (const raw of Object.values(byVariant || {}).flat()) {
     const publication = normalizeIntelligencePayload(raw);
     if (publication.supportTier < 5) continue;
     for (const scorecard of publication.scorecards) {

@@ -5,6 +5,7 @@ import { localPortfolioInsights, localPortfolioScenario } from '../core/local-sc
 import { allocationChart, trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
+import { selectPublicationForHolding } from '../core/market-series.js';
 
 export const OVERVIEW_RANGES = Object.freeze(['1D', '7D', '1M', '3M', '1Y', 'All']);
 
@@ -56,7 +57,9 @@ export function overviewChange(points = []) {
 export function pricingCoverage(holdings = [], byVariant = {}) {
   const result = { market: 0, manual: 0, unpriced: 0, covered: 0, total: holdings.length, percent: 0 };
   holdings.forEach((holding) => {
-    const publication = holding.canonicalVariantId ? byVariant?.[holding.canonicalVariantId] : null;
+    const publication = holding.canonicalVariantId
+      ? selectPublicationForHolding(byVariant?.[holding.canonicalVariantId], holding, holdingMarketCurrency(holding))
+      : null;
     const model = holdingViewModel(holding, { publication });
     if (hasManualValue(holding)) result.manual += 1;
     else if (['verified', 'delayed'].includes(model.valueSource) || (model.valueSource === 'pending' && model.unitValue > 0)) result.market += 1;
@@ -72,8 +75,14 @@ export function pricingCoverage(holdings = [], byVariant = {}) {
 // create empty dashboard chrome.
 export function portfolioMovers(holdings = [], byVariant = {}) {
   return holdings
-    .filter((holding) => holding.canonicalVariantId && byVariant[holding.canonicalVariantId])
-    .map((holding) => ({ holding, intelligence: normalizeIntelligencePayload(byVariant[holding.canonicalVariantId]) }))
+    .map((holding) => ({
+      holding,
+      publication: holding.canonicalVariantId
+        ? selectPublicationForHolding(byVariant[holding.canonicalVariantId], holding, holdingMarketCurrency(holding))
+        : null
+    }))
+    .filter(({ publication }) => publication)
+    .map(({ holding, publication }) => ({ holding, intelligence: normalizeIntelligencePayload(publication) }))
     .filter(({ intelligence }) => intelligence.supportTier >= 2 && intelligence.trend.return30d !== null)
     .sort((left, right) => Math.abs(right.intelligence.trend.return30d) - Math.abs(left.intelligence.trend.return30d))
     .slice(0, 3);
@@ -102,7 +111,9 @@ function forecastCoverage(state) {
   const scenario = localPortfolioScenario(state.holdings, state.localValueObservations || [], 90, { currency });
   const published = state.featureFlags?.publicPriceIntelligence
     ? state.holdings.filter((holding) => {
-      const publication = holding.canonicalVariantId ? state.intelligence?.byVariant?.[holding.canonicalVariantId] : null;
+      const publication = holding.canonicalVariantId
+        ? selectPublicationForHolding(state.intelligence?.byVariant?.[holding.canonicalVariantId], holding, currency)
+        : null;
       return publication && holdingViewModel(holding, { publication }).forecasts.length > 0;
     }).length
     : 0;
@@ -149,6 +160,27 @@ function allocationModule(state, currency) {
   return `<section class="card overview-module"><div class="section-heading compact"><div><p class="eyebrow">By market value</p><h2>Collection mix</h2></div></div>${allocationChart(allocation)}</section>`;
 }
 
+function refreshStatusMarkup(refresh = {}) {
+  if (!refresh.status || refresh.status === 'disabled') return '';
+  const labels = {
+    loading: ['Checking market data', 'Reading the latest private refresh receipt.'],
+    current: ['Market data is current', 'The latest TCGCSV source build completed successfully.'],
+    in_progress: ['Market data is updating', 'One deterministic full-cohort refresh is in progress.'],
+    update_required: ['New market data is queued', 'The hourly refresh lane will process this source build.'],
+    unavailable: ['Refresh status unavailable', 'The portfolio remains usable with its existing local data.']
+  };
+  const [label, detail] = labels[refresh.status] || labels.unavailable;
+  const successful = refresh.lastSuccessfulSourceBuild
+    ? validDate(refresh.lastSuccessfulSourceBuild)
+    : null;
+  const receipt = successful
+    ? ` Last successful build: ${successful.toLocaleString(undefined, {
+      dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC'
+    })} UTC.`
+    : '';
+  return `<section class="source-refresh-status" data-source-refresh-status="${escapeAttribute(refresh.status)}" role="status"><span class="source-refresh-dot" aria-hidden="true"></span><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(detail + receipt)}</small></span></section>`;
+}
+
 export function renderHome(state) {
   const currency = state.settings.currency || 'USD';
   const summary = portfolioSummary(state.holdings, { currency });
@@ -166,12 +198,13 @@ export function renderHome(state) {
   const header = pageHeader('Portfolio', 'Overview', state.holdings.length
     ? `${summary.uniqueItems} unique items · ${summary.totalQuantity} total pieces`
     : 'A clear view of what you own and what needs attention', '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>');
+  const sourceRefresh = refreshStatusMarkup(state.tcgcsvRefresh);
 
   if (!state.holdings.length) {
-    return `${header}<div class="overview-empty">${emptyState('Build your first portfolio view', 'Add one collectible to begin tracking value, cost basis, and collection mix.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Add first collectible</button><button class="button ghost" type="button" data-go="search">Search cards</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}`;
+    return `${header}${sourceRefresh}<div class="overview-empty">${emptyState('Build your first portfolio view', 'Add one collectible to begin tracking value, cost basis, and collection mix.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Add first collectible</button><button class="button ghost" type="button" data-go="search">Search cards</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}`;
   }
 
-  return `${header}
+  return `${header}${sourceRefresh}
     <section class="overview-hero" aria-label="Portfolio performance">
       <article class="card overview-performance">
         <div class="overview-performance-head"><div><p class="metric-label">Estimated market value · ${escapeHTML(currency)} only</p><strong class="overview-value">${escapeHTML(formatCurrency(summary.marketValue, currency))}</strong>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Portfolio chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>

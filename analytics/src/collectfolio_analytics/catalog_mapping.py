@@ -11,6 +11,8 @@ from typing import Iterable, Mapping, Sequence
 import unicodedata
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from .observations import normalize_market_identity
+
 CATALOG_NAMESPACE = uuid5(NAMESPACE_URL, "https://collectfolio.app/catalog/v1")
 CONDITION_CLASSES = {"raw", "graded", "sealed", "other"}
 
@@ -231,6 +233,7 @@ class ExternalProduct:
     finish: str
     variant_name: str = ""
     condition_class: str = "raw"
+    market_condition: str = "unspecified"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_id", _uuid(self.source_id, "source_id"))
@@ -246,6 +249,8 @@ class ExternalProduct:
         object.__setattr__(self, "variant_name", normalize_identity(self.variant_name))
         condition = normalize_identity(self.condition_class)
         object.__setattr__(self, "condition_class", condition)
+        market_condition = normalize_market_identity(self.market_condition)
+        object.__setattr__(self, "market_condition", market_condition)
 
     @property
     def external_key(self) -> tuple[str, str, str]:
@@ -257,6 +262,7 @@ class ExternalProduct:
             self.game, self.language, self.canonical_set_key,
             normalize_identity(self.name), normalize_card_number(self.number),
             self.edition, self.finish, self.variant_name, self.condition_class,
+            self.market_condition,
         )
 
 
@@ -267,6 +273,10 @@ class ApprovedMapping:
     external_variant_key: str
     variant_id: str
     mapping_version: str
+    language: str = "en"
+    finish: str = "unspecified"
+    condition_class: str = "raw"
+    market_condition: str = "unspecified"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_id", _uuid(self.source_id, "source_id"))
@@ -274,6 +284,17 @@ class ApprovedMapping:
         object.__setattr__(self, "external_variant_key", str(self.external_variant_key or "").strip())
         object.__setattr__(self, "variant_id", _uuid(self.variant_id, "variant_id"))
         object.__setattr__(self, "mapping_version", _required(self.mapping_version, "mapping_version"))
+        object.__setattr__(self, "language", normalize_market_identity(_required(self.language, "language")))
+        object.__setattr__(self, "finish", normalize_market_identity(_required(self.finish, "finish")))
+        condition_class = normalize_market_identity(_required(self.condition_class, "condition_class"))
+        if condition_class not in CONDITION_CLASSES:
+            raise ValueError(f"condition_class must be one of {sorted(CONDITION_CLASSES)}")
+        object.__setattr__(self, "condition_class", condition_class)
+        object.__setattr__(
+            self,
+            "market_condition",
+            normalize_market_identity(_required(self.market_condition, "market_condition")),
+        )
 
     @property
     def external_key(self) -> tuple[str, str, str]:
@@ -387,6 +408,7 @@ def _variant_evidence(product: ExternalProduct, variant: CanonicalVariant) -> di
         "finishMatch": product.finish == variant.finish,
         "variantNameMatch": product.variant_name == variant.variant_name,
         "conditionClassMatch": product.condition_class == variant.condition_class,
+        "marketCondition": product.market_condition,
         "canonicalKey": variant.canonical_key,
     }
 
@@ -426,6 +448,7 @@ def map_external_product(
             ("set", product.canonical_set_key), ("name", product.name),
             ("number", product.number), ("edition", product.edition),
             ("finish", product.finish), ("condition", product.condition_class),
+            ("market_condition", product.market_condition),
         ) if not value
     ]
     if missing:

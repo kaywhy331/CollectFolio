@@ -5,11 +5,13 @@ import {
   compactCompletedScanDraft,
   completedScanRetentionPlan,
   createScanDraft,
+  identifyDraftCrops,
   normalizeAcquisition,
   searchCatalogCandidates,
   scanReviewSummary,
   scanReviewTotals
 } from '../app/assets/js/services/scan-review.js';
+import { catalogReferenceForItem } from '../app/assets/js/core/catalog-identity.js';
 import { renderScanReview } from '../app/assets/js/views/scan.js';
 
 const card = {
@@ -41,11 +43,12 @@ test('bulk acquisition applies normalized shared fields without approving any cr
   const draft = reviewDraft();
   const approvals = draft.crops.map((crop) => crop.approved);
   assert.equal(applyAcquisitionPatch(draft, {
-    quantity: '3', condition: 'Good', purchaseCurrency: 'cad', manualMarketCurrency: 'eur',
+    quantity: '3', condition: 'Good', marketCondition: 'lightly-played', purchaseCurrency: 'cad', manualMarketCurrency: 'eur',
     purchaseDate: '2026-08-10', seller: 'Local show'
   }), 2);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.quantity), [3, 3]);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.condition), ['Good', 'Good']);
+  assert.deepEqual(draft.crops.map((crop) => crop.acquisition.marketCondition), ['lightly-played', 'lightly-played']);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.purchaseCurrency), ['CAD', 'CAD']);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.manualMarketCurrency), ['EUR', 'EUR']);
   assert.deepEqual(draft.crops.map((crop) => crop.acquisition.seller), ['Local show', 'Local show']);
@@ -78,9 +81,31 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   assert.match(html, /data-crop-acquisition="purchasePrice"/);
   assert.match(html, /data-crop-acquisition="purchaseCurrency"/);
   assert.match(html, /data-crop-acquisition="manualMarketCurrency"/);
+  assert.match(html, /data-crop-acquisition="marketCondition"/);
   assert.match(html, /\$22\.00 USD cost basis/);
   assert.match(html, /Add 1 approved/);
   assert.match(html, /Unapproved and unmatched items are skipped/);
+});
+
+test('scan review recognizes a condition-aware mapped watch', () => {
+  const variantId = '123e4567-e89b-42d3-a456-426614174000';
+  const mappedCard = { ...card, canonicalVariantId: variantId };
+  const catalogRef = catalogReferenceForItem(mappedCard, { marketCondition: 'Near Mint' });
+  const draft = reviewDraft();
+  draft.crops[0].candidates = [mappedCard];
+  const html = renderScanReview(draft, {
+    settings: { currency: 'USD' },
+    featureFlags: { watchlists: true },
+    watchlistItems: [{
+      id: catalogRef.watchKey,
+      watchKey: catalogRef.watchKey,
+      canonicalVariantId: variantId,
+      catalogRef,
+      marketCondition: 'near-mint',
+      updatedAt: '2026-08-10T00:00:00.000Z'
+    }]
+  });
+  assert.match(html, /★ Watching/);
 });
 
 test('review labels candidates as similarity evidence rather than calibrated confidence', () => {
@@ -98,7 +123,7 @@ test('review labels candidates as similarity evidence rather than calibrated con
 
 test('catalog candidate search relaxes in order, recovers, and deduplicates useful matches', async () => {
   const evidence = { title: 'Charizard ex', number: '223/197', query: 'Charizard ex 223/197' };
-  const queries = ['Charizard ex 223/197', 'Charizard ex', 'Charizard'];
+  const queries = ['Charizard ex 223/197', '223/197', 'Charizard ex', 'Charizard'];
   const calls = [];
   const recovered = await searchCatalogCandidates(queries, evidence, async ({ query }) => {
     calls.push(query);
@@ -111,10 +136,48 @@ test('catalog candidate search relaxes in order, recovers, and deduplicates usef
       warnings: ['One provider was unavailable.'], fulfilledProviders: 2
     };
   });
-  assert.deepEqual(calls, ['Charizard ex 223/197', 'Charizard ex']);
+  assert.deepEqual(calls, ['Charizard ex 223/197', '223/197', 'Charizard ex']);
   assert.equal(recovered.candidates.length, 1);
   assert.equal(recovered.allAttemptsFailed, false);
   assert.deepEqual(recovered.warnings, ['One provider was unavailable.']);
+});
+
+test('automatic identification processes every queued crop without user initiation', async () => {
+  const draft = createScanDraft([
+    { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' },
+    { box: { x: 10, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+  ]);
+  assert.deepEqual(draft.crops.map((crop) => crop.status), ['queued', 'queued']);
+  const calls = [];
+  await identifyDraftCrops(draft, {
+    concurrency: 2,
+    identify: async (_draft, cropId, query) => {
+      calls.push([cropId, query]);
+      const crop = draft.crops.find((entry) => entry.id === cropId);
+      crop.status = 'unmatched';
+    }
+  });
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(([, query]) => query === ''));
+});
+
+test('automatic identification isolates one crop failure and continues the queue', async () => {
+  const draft = createScanDraft([
+    { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' },
+    { box: { x: 10, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+  ]);
+  const calls = [];
+  await identifyDraftCrops(draft, {
+    identify: async (_draft, cropId) => {
+      calls.push(cropId);
+      if (calls.length === 1) throw new Error('synthetic OCR failure');
+      draft.crops.find((crop) => crop.id === cropId).status = 'unmatched';
+    }
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(draft.crops[0].status, 'error');
+  assert.match(draft.crops[0].error, /synthetic OCR failure/);
+  assert.equal(draft.crops[1].status, 'unmatched');
 });
 
 test('catalog candidate search distinguishes a full provider outage from a valid no-match', async () => {

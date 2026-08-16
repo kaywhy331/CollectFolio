@@ -150,9 +150,14 @@ export async function deleteRecordWithTombstone(storeName, tombstoneStoreName, k
 
 export async function saveHolding(input) {
   const now = new Date().toISOString();
+  const conditionClass = input.grade ? 'graded' : 'raw';
+  const confirmedMarketCondition = conditionClass === 'graded'
+    ? `${input.gradeCompany || 'unknown'}-${input.grade || 'ungraded'}`
+    : input.marketCondition || '';
   const catalogRef = catalogReferenceForItem(input.item, {
     canonicalVariantId: input.canonicalVariantId || input.catalogVariantId,
-    conditionClass: input.grade ? 'graded' : 'raw'
+    conditionClass,
+    marketCondition: confirmedMarketCondition
   });
   const holding = {
     id: input.id || createId(),
@@ -162,6 +167,7 @@ export async function saveHolding(input) {
     item: { ...input.item },
     quantity: Math.max(1, Number(input.quantity) || 1),
     condition: input.condition || 'Near Mint',
+    marketCondition: catalogRef.marketCondition,
     gradeCompany: input.gradeCompany || '',
     grade: input.grade || '',
     purchasePrice: input.purchasePrice === '' ? '' : Math.max(0, Number(input.purchasePrice) || 0),
@@ -276,7 +282,7 @@ function validCatalogItem(item) {
 function validHoldingRecord(record) {
   return validCatalogItem(record.item)
     && (record.tags === undefined || stringArray(record.tags))
-    && ['catalogId', 'catalogKey', 'canonicalVariantId', 'condition', 'gradeCompany', 'grade',
+    && ['catalogId', 'catalogKey', 'canonicalVariantId', 'condition', 'marketCondition', 'gradeCompany', 'grade',
       'purchaseCurrency', 'purchaseDate', 'manualMarketCurrency', 'seller', 'folder', 'notes',
       'userImage', 'createdAt', 'updatedAt', 'lastPriceRefresh']
       .every((field) => optionalString(record[field]))
@@ -335,7 +341,7 @@ function validTombstoneRecord(record) {
 function validWatchlistRecord(record) {
   return typeof record.watchKey === 'string'
     && validCatalogItem(record.catalogRef)
-    && ['canonicalVariantId', 'targetCurrency', 'notes', 'createdAt', 'updatedAt']
+    && ['canonicalVariantId', 'marketCondition', 'targetCurrency', 'notes', 'createdAt', 'updatedAt']
       .every((field) => optionalString(record[field]))
     && ['targetPrice', 'alertPercentChange'].every((field) => optionalFinite(record[field]))
     && ['alertTrendChange', 'alertRangeChange', 'alertForecastChange', 'dirty']

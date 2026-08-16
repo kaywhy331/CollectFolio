@@ -82,3 +82,47 @@ test('a 1,000-holding portfolio renders a bounded first page', () => {
   assert.match(html, /data-action="load-more-holdings"/);
   assert.match(html, /Show 100 more/);
 });
+
+test('Portfolio Sets groups local printings without inventing catalog completion', () => {
+  const samePrintingSecondLot = {
+    ...holdings[0], id: 'market-lot-2', quantity: 3,
+    item: { ...marketItem }, updatedAt: '2026-08-10T00:00:00.000Z'
+  };
+  const html = renderPortfolio(state({
+    holdings: [...holdings, samePrintingSecondLot],
+    portfolio: {
+      ...state().portfolio,
+      section: 'sets', setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: 60
+    }
+  }));
+  assert.match(html, /aria-label="Set collection summary"/);
+  assert.match(html, /<dt>Named sets<\/dt><dd>3<\/dd>/);
+  assert.match(html, /Alpha Set/);
+  assert.match(html, /1 distinct printing · 5 copies across 2 acquisition lots/);
+  assert.match(html, /Catalog total not linked; completion percentage is intentionally unavailable/);
+  assert.match(html, /data-action="view-set-holdings"/);
+  assert.doesNotMatch(html, /\d+% complete/i);
+  assert.match(html, /data-portfolio-section="sets"/);
+});
+
+test('Portfolio Sets retains every local group while bounding the first render', () => {
+  const large = Array.from({ length: 1_000 }, (_, index) => ({
+    ...holdings[0],
+    id: `set-holding-${index}`,
+    item: {
+      ...marketItem,
+      id: `set-card-${index}`,
+      externalId: `set-card-${index}`,
+      name: `Card ${index}`,
+      setName: `Set ${String(index).padStart(4, '0')}`
+    }
+  }));
+  const html = renderPortfolio(state({
+    holdings: large,
+    portfolio: { ...state().portfolio, section: 'sets', setLimit: 60 }
+  }));
+  assert.equal((html.match(/class="portfolio-set-card"/g) || []).length, 60);
+  assert.match(html, /<strong>1000 sets<\/strong>|<strong>1,000 sets<\/strong>/);
+  assert.match(html, /data-action="load-more-portfolio-sets"/);
+  assert.match(html, /Show 60 more/);
+});

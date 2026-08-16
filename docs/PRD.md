@@ -100,8 +100,8 @@ The Add action is visually elevated because ingestion is the highest-frequency g
    - retry automatic detection;
    - apply a configurable row/column binder grid.
 6. App creates compressed individual crops.
-7. User runs OCR individually or as a batch.
-8. OCR text becomes a catalog query.
+7. Straightened crops automatically run local OCR and catalog search.
+8. Reliable OCR text becomes ordered catalog queries; visual recovery remains available when text is unusable.
 9. Pokémon, Magic, and Yu-Gi-Oh! results are normalized and ranked.
 10. A perceptual image hash reranks candidate images when cross-origin image access permits.
 11. User selects the exact match and explicitly approves it.
@@ -158,7 +158,7 @@ The Add action is visually elevated because ingestion is the highest-frequency g
 - **CAP-02:** The app must return at least one editable box; full-frame fallback is acceptable when auto-detection fails.
 - **CAP-03:** Users must be able to add, move, resize, delete, and retry boundaries.
 - **CAP-04:** Binder grid fallback must support 1–12 rows and columns.
-- **CAP-05:** OCR must be lazy-loaded and optional.
+- **CAP-05:** OCR must be lazy-loaded, local, automatically initiated after crop confirmation, and safely retryable/manual when unavailable.
 - **CAP-06:** Low-confidence results must never be silently added.
 - **CAP-07:** Users must be able to approve, retry, search manually, delete, or create a custom item per crop.
 - **CAP-08:** Batch add must add only explicitly approved crops.
@@ -206,7 +206,7 @@ Sports cards, comics, autographs, memorabilia, unsupported TCGs, altered items, 
 ## 10. Non-functional requirements
 
 - Initial shell should remain small and dependency-free.
-- External OCR must load only after explicit use.
+- External OCR code may load only after the user explicitly chooses/captures an image and confirms its crop; no OCR runs during ordinary browsing.
 - Original photos must not be automatically uploaded.
 - The UI must work from 320 px through desktop widths.
 - All interactive controls must have visible focus states.
@@ -233,7 +233,7 @@ The MVP is complete when:
 2. Text search returns normalized Pokémon, Magic, and Yu-Gi-Oh! results.
 3. A user can upload a multi-item image and receive editable crop boundaries.
 4. Boundary add, move, resize, delete, retry, and grid split work.
-5. OCR can produce an editable query.
+5. OCR automatically produces an editable query or an explicit recoverable fallback.
 6. Candidate results can be selected and explicitly approved.
 7. Approved crops can be batch-added; unapproved crops are excluded.
 8. Custom sports/comic/other entries can use the user’s photo.

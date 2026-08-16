@@ -1,5 +1,5 @@
 import { textSimilarity } from '../core/utils.js';
-import { differenceHash, hashSimilarity } from './image-algorithms.js';
+import { cardDestinationSize, differenceHash, hashSimilarity, perspectiveTransform, projectPoint } from './image-algorithms.js';
 
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const IMAGE_LOAD_TIMEOUT_MS = 10_000;
@@ -9,12 +9,16 @@ const OCR_MAX_WIDTH = 1600;
 const OCR_MAX_PIXELS = 3_000_000;
 export const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
 let tesseractPromise;
+let tesseractWorkerPromise;
+let ocrQueue = Promise.resolve();
+let ocrWorkerGeneration = 0;
 
 const OCR_IGNORED_WORDS = new Set([
   'basic', 'card', 'copyright', 'edition', 'energy', 'hp', 'illustrated', 'illustration',
   'illustrator', 'pokemon', 'pokémon', 'stage', 'trademark', 'trainer'
 ]);
 const OCR_VARIANT_WORDS = new Set(['ex', 'gx', 'lv', 'v', 'vmax', 'vstar']);
+const OCR_SHORT_TITLE_WORDS = new Set(['of', 'to', 'in', 'on', 'at', 'by', 'my', 'no', 'go', 'mr', 'ms', 'dr', 'la', 'de', 'le', 'el', 'un']);
 const OCR_BOILERPLATE = /(?:copyright|trademark|illustrat(?:ed|ion|or)|\ball rights reserved\b|\bweakness\b|\bresistance\b|\bretreat\b|\bwww\.|©|™)/iu;
 const OCR_STAT_LINE = /(?:\b(?:atk|def|hp)\s*\d+\b|\b\d+\s*(?:damage|hp)\b)/iu;
 const COLLECTOR_PATTERNS = [
@@ -95,11 +99,23 @@ function titleCandidate(line, index, number) {
 
 export function buildOCRQueryVariants({ title = '', number = '', alternate = '' } = {}) {
   const primary = [title, number].filter(Boolean).join(' ');
+  const titleTokens = title.split(' ').filter(Boolean);
   const relaxed = title.split(' ').length > 1 && OCR_VARIANT_WORDS.has(title.split(' ').at(-1)?.toLowerCase())
     ? title.split(' ').slice(0, -1).join(' ')
     : '';
-  const third = alternate && normalizeEvidence(alternate) !== normalizeEvidence(title) ? alternate : relaxed;
-  const values = [primary, title, third]
+  const withoutShortNoise = titleTokens.length > 1 && titleTokens.some((token) => {
+    const letters = token.replace(/[^\p{L}]/gu, '');
+    return letters.length === 2 && token === token.toUpperCase()
+      && !OCR_VARIANT_WORDS.has(token.toLowerCase()) && !OCR_SHORT_TITLE_WORDS.has(token.toLowerCase());
+  })
+    ? titleTokens.filter((token) => {
+      const letters = token.replace(/[^\p{L}]/gu, '');
+      return letters.length !== 2 || token !== token.toUpperCase()
+        || OCR_VARIANT_WORDS.has(token.toLowerCase()) || OCR_SHORT_TITLE_WORDS.has(token.toLowerCase());
+    }).join(' ')
+    : '';
+  const distinctAlternate = alternate && normalizeEvidence(alternate) !== normalizeEvidence(title) ? alternate : '';
+  const values = [primary, number, title, withoutShortNoise, distinctAlternate, relaxed]
     .map((query) => cleanOCRLine(query).slice(0, 160))
     .filter((query) => query.length >= 2);
   const seen = new Set();
@@ -108,7 +124,7 @@ export function buildOCRQueryVariants({ title = '', number = '', alternate = '' 
     if (!normalized || seen.has(normalized)) return false;
     seen.add(normalized);
     return true;
-  }).slice(0, 3);
+  }).slice(0, 6);
 }
 
 export function queryEvidenceFromText(value = '') {
@@ -143,8 +159,12 @@ export function analyzeOCRText(text = '', { confidence = null } = {}) {
   const numericConfidence = confidence === null || confidence === undefined || confidence === '' ? null : Number(confidence);
   const confidenceAccepted = numericConfidence === null || (Number.isFinite(numericConfidence) && numericConfidence >= 35);
   const repeatedNoise = /([^\s])\1{3,}/iu.test(raw);
-  const queries = buildOCRQueryVariants({ title, number, alternate });
-  const accepted = Boolean(queries.length && title && confidenceAccepted && symbolRatio <= 0.3 && !repeatedNoise);
+  const titleTokens = title.split(' ').filter(Boolean);
+  const titleLetters = title.replace(/[^\p{L}]/gu, '').length;
+  const reliableTitle = title && (titleTokens.length > 1 || titleLetters >= 4) ? title : '';
+  const reliableNumber = number && (/[/\-]/.test(number) || numericConfidence === null || numericConfidence >= 55) ? number : '';
+  const queries = buildOCRQueryVariants({ title: reliableTitle, number: reliableNumber, alternate });
+  const accepted = Boolean(queries.length && (reliableTitle || reliableNumber) && confidenceAccepted && symbolRatio <= 0.3 && !repeatedNoise);
   const quality = accepted
     ? Math.max(0, Math.min(1, ((uniqueTitles[0]?.score || 0) / 100) * 0.7 + ((numericConfidence ?? 70) / 100) * 0.3))
     : 0;
@@ -157,11 +177,82 @@ export function analyzeOCRText(text = '', { confidence = null } = {}) {
     text: raw,
     accepted,
     quality,
-    title: accepted ? title : '',
-    number: accepted ? number : '',
+    title: accepted ? reliableTitle : '',
+    number: accepted ? reliableNumber : '',
     queries: accepted ? queries : [],
     query: accepted ? queries[0] : '',
     reason: accepted ? '' : reason || 'No reliable card name was detected.'
+  };
+}
+
+function passConfidence(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(100, number <= 1 ? number * 100 : number));
+}
+
+function fuzzyEvidenceGroup(groups, value) {
+  const normalized = normalizeEvidence(value);
+  if (!normalized) return null;
+  return groups.find((group) => group.values.some((entry) => textSimilarity(normalized, entry.normalized) >= 0.78)) || null;
+}
+
+export function analyzeOCRPasses(passes = []) {
+  const entries = passes.map((pass) => {
+    const data = pass?.result?.data || pass?.result || pass || {};
+    const confidence = passConfidence(data.confidence ?? pass?.confidence);
+    const analysis = analyzeOCRText(data.text || pass?.text || '', { confidence });
+    return { ...pass, confidence, analysis };
+  }).filter((entry) => String(entry.analysis.text || '').trim());
+  const titleGroups = [];
+  const numberGroups = new Map();
+  for (const entry of entries) {
+    const weight = Math.max(0.2, (entry.confidence ?? 55) / 100);
+    if (entry.analysis.title) {
+      let group = fuzzyEvidenceGroup(titleGroups, entry.analysis.title);
+      if (!group) {
+        group = { values: [], weight: 0, passes: 0 };
+        titleGroups.push(group);
+      }
+      group.values.push({ value: entry.analysis.title, normalized: normalizeEvidence(entry.analysis.title), weight });
+      group.weight += weight;
+      group.passes++;
+    }
+    if (entry.analysis.number) {
+      const normalized = normalizeEvidence(entry.analysis.number);
+      const group = numberGroups.get(normalized) || { value: entry.analysis.number, weight: 0, passes: 0 };
+      group.weight += weight;
+      group.passes++;
+      numberGroups.set(normalized, group);
+    }
+  }
+  const titleGroup = titleGroups.sort((left, right) => right.passes - left.passes || right.weight - left.weight)[0];
+  const title = titleGroup?.values.sort((left, right) => right.weight - left.weight || right.value.length - left.value.length)[0]?.value || '';
+  const alternate = titleGroups.slice(1).flatMap((group) => group.values).sort((left, right) => right.weight - left.weight)[0]?.value || '';
+  const number = [...numberGroups.values()].sort((left, right) => right.passes - left.passes || right.weight - left.weight)[0]?.value || '';
+  const queries = buildOCRQueryVariants({ title, number, alternate });
+  const supporting = entries.filter((entry) =>
+    (title && entry.analysis.title && textSimilarity(title, entry.analysis.title) >= 0.78)
+    || (number && normalizeEvidence(entry.analysis.number) === normalizeEvidence(number))
+  );
+  const quality = supporting.length
+    ? supporting.reduce((total, entry) => total + (entry.analysis.quality || (entry.confidence ?? 50) / 100), 0) / supporting.length
+    : 0;
+  const accepted = Boolean(queries.length && (title || number));
+  return {
+    text: [...new Set(supporting.flatMap((entry) => String(entry.analysis.text).split(/\r?\n/)).map(cleanOCRLine).filter(Boolean))].join('\n'),
+    accepted,
+    quality: Math.max(0, Math.min(1, quality)),
+    title,
+    number,
+    queries,
+    query: queries[0] || '',
+    reason: accepted ? '' : entries.map((entry) => entry.analysis.reason).find(Boolean) || 'No reliable card name or collector number was detected.',
+    passes: entries.map((entry) => ({
+      label: entry.label || '', rotation: Number(entry.rotation) || 0,
+      confidence: entry.confidence, accepted: entry.analysis.accepted,
+      title: entry.analysis.title, number: entry.analysis.number
+    }))
   };
 }
 
@@ -213,12 +304,61 @@ export function fileToImageDataURL(file) {
 }
 
 export function cropToJPEG(image, box, maxWidth = 1200, quality = 0.9) {
+  if (box?.corners?.length === 4) return rectifyCardToJPEG(image, box.corners, maxWidth, quality);
   const scale = Math.min(1, maxWidth / Math.max(1, box.width));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(box.width * scale));
   canvas.height = Math.max(1, Math.round(box.height * scale));
   canvas.getContext('2d', { alpha: false }).drawImage(image, box.x, box.y, box.width, box.height, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/jpeg', quality);
+}
+
+export function rectifyCardPixels(sourcePixels, sourceWidth, sourceHeight, corners, maximumWidth = 1200) {
+  const destination = cardDestinationSize(corners, maximumWidth);
+  const targetCorners = [
+    { x: 0, y: 0 }, { x: destination.width - 1, y: 0 },
+    { x: destination.width - 1, y: destination.height - 1 }, { x: 0, y: destination.height - 1 }
+  ];
+  const inverse = perspectiveTransform(targetCorners, destination.corners);
+  const output = new Uint8ClampedArray(destination.width * destination.height * 4);
+  const sample = (x, y, channel) => {
+    const xx = Math.max(0, Math.min(sourceWidth - 1, x));
+    const yy = Math.max(0, Math.min(sourceHeight - 1, y));
+    return sourcePixels[(yy * sourceWidth + xx) * 4 + channel];
+  };
+  for (let y = 0; y < destination.height; y++) for (let x = 0; x < destination.width; x++) {
+    const point = projectPoint(inverse, { x, y });
+    const sourceX = Math.max(0, Math.min(sourceWidth - 1, point.x));
+    const sourceY = Math.max(0, Math.min(sourceHeight - 1, point.y));
+    const x0 = Math.floor(sourceX); const y0 = Math.floor(sourceY);
+    const x1 = Math.min(sourceWidth - 1, x0 + 1); const y1 = Math.min(sourceHeight - 1, y0 + 1);
+    const dx = sourceX - x0; const dy = sourceY - y0;
+    const outputOffset = (y * destination.width + x) * 4;
+    for (let channel = 0; channel < 3; channel++) {
+      const top = sample(x0, y0, channel) * (1 - dx) + sample(x1, y0, channel) * dx;
+      const bottom = sample(x0, y1, channel) * (1 - dx) + sample(x1, y1, channel) * dx;
+      output[outputOffset + channel] = Math.round(top * (1 - dy) + bottom * dy);
+    }
+    output[outputOffset + 3] = 255;
+  }
+  return { width: destination.width, height: destination.height, data: output, corners: destination.corners };
+}
+
+export function rectifyCardToJPEG(image, corners, maximumWidth = 1200, quality = 0.9) {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const source = document.createElement('canvas');
+  source.width = sourceWidth;
+  source.height = sourceHeight;
+  const context = source.getContext('2d', { alpha: false, willReadFrequently: true });
+  context.drawImage(image, 0, 0, sourceWidth, sourceHeight);
+  const pixels = context.getImageData(0, 0, sourceWidth, sourceHeight);
+  const rectified = rectifyCardPixels(pixels.data, sourceWidth, sourceHeight, corners, maximumWidth);
+  const output = document.createElement('canvas');
+  output.width = rectified.width;
+  output.height = rectified.height;
+  output.getContext('2d', { alpha: false }).putImageData(new ImageData(rectified.data, rectified.width, rectified.height), 0, 0);
+  return output.toDataURL('image/jpeg', quality);
 }
 
 export function cropsFromBoxes(image, boxes) {
@@ -258,9 +398,24 @@ function percentile(histogram, total, ratio) {
   return 255;
 }
 
-function preprocessOCRRegion(image, { start = 0, end = 1, threshold = false } = {}) {
+function orientedCanvas(image, rotation = 0) {
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
+  const normalized = ((Math.round(rotation / 90) * 90) % 360 + 360) % 360;
+  const canvas = document.createElement('canvas');
+  canvas.width = normalized % 180 ? sourceHeight : sourceWidth;
+  canvas.height = normalized % 180 ? sourceWidth : sourceHeight;
+  const context = canvas.getContext('2d', { alpha: false });
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.rotate(normalized * Math.PI / 180);
+  context.drawImage(image, -sourceWidth / 2, -sourceHeight / 2, sourceWidth, sourceHeight);
+  return canvas;
+}
+
+function preprocessOCRRegion(image, { start = 0, end = 1, threshold = false, rotation = 0 } = {}) {
+  const oriented = orientedCanvas(image, rotation);
+  const sourceWidth = oriented.width;
+  const sourceHeight = oriented.height;
   const sourceY = Math.max(0, Math.round(sourceHeight * start));
   const sourceRegionHeight = Math.max(1, Math.round(sourceHeight * (end - start)));
   let scale = Math.min(OCR_MAX_WIDTH / sourceWidth, Math.max(1, OCR_MIN_WIDTH / sourceWidth));
@@ -273,7 +428,7 @@ function preprocessOCRRegion(image, { start = 0, end = 1, threshold = false } = 
   const context = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  context.drawImage(image, 0, sourceY, sourceWidth, sourceRegionHeight, 0, 0, canvas.width, canvas.height);
+  context.drawImage(oriented, 0, sourceY, sourceWidth, sourceRegionHeight, 0, 0, canvas.width, canvas.height);
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
   const grayscale = new Uint8Array(canvas.width * canvas.height);
   const histogram = new Uint32Array(256);
@@ -301,12 +456,18 @@ function preprocessOCRRegion(image, { start = 0, end = 1, threshold = false } = 
   return canvas.toDataURL('image/png');
 }
 
-export function* createOCRSources(image) {
-  yield { label: 'title grayscale', psm: '6', source: preprocessOCRRegion(image, { start: 0.02, end: 0.32 }) };
-  yield { label: 'title threshold', psm: '6', source: preprocessOCRRegion(image, { start: 0.02, end: 0.32, threshold: true }) };
-  yield { label: 'footer grayscale', psm: '6', source: preprocessOCRRegion(image, { start: 0.68, end: 1 }) };
-  yield { label: 'footer threshold', psm: '6', source: preprocessOCRRegion(image, { start: 0.68, end: 1, threshold: true }) };
-  yield { label: 'full card', psm: '11', source: preprocessOCRRegion(image) };
+export function* createOrientationOCRSources(image) {
+  for (const rotation of [0, 90, 180, 270]) {
+    yield { label: 'orientation', rotation, psm: '11', source: preprocessOCRRegion(image, { rotation }) };
+  }
+}
+
+export function* createOCRSources(image, rotations = [0]) {
+  for (const rotation of rotations) {
+    yield { label: 'title grayscale', rotation, psm: '6', source: preprocessOCRRegion(image, { start: 0.02, end: 0.32, rotation }) };
+    yield { label: 'title threshold', rotation, psm: '6', source: preprocessOCRRegion(image, { start: 0.02, end: 0.32, threshold: true, rotation }) };
+    yield { label: 'footer threshold', rotation, psm: '6', source: preprocessOCRRegion(image, { start: 0.68, end: 1, threshold: true, rotation }) };
+  }
 }
 
 async function loadTesseract() {
@@ -338,6 +499,42 @@ async function loadTesseract() {
   }
 }
 
+async function sharedTesseractWorker() {
+  const tesseract = await loadTesseract();
+  if (!tesseract.createWorker) return null;
+  if (!tesseractWorkerPromise) {
+    tesseractWorkerPromise = withTimeout(tesseract.createWorker('eng'), 30_000, 'OCR worker did not initialize within 30 seconds.')
+      .catch((error) => {
+        tesseractWorkerPromise = null;
+        throw error;
+      });
+  }
+  return tesseractWorkerPromise;
+}
+
+export async function releaseOCRWorker() {
+  const pending = tesseractWorkerPromise;
+  tesseractWorkerPromise = null;
+  ocrWorkerGeneration++;
+  if (!pending) return;
+  const worker = await pending.catch(() => null);
+  if (worker?.terminate) await withTimeout(Promise.resolve(worker.terminate()), 2_000).catch(() => {});
+}
+
+async function invalidateOCRWorker(expectedWorker = null) {
+  const pending = tesseractWorkerPromise;
+  tesseractWorkerPromise = null;
+  ocrWorkerGeneration++;
+  const worker = expectedWorker || await pending?.catch(() => null);
+  if (worker?.terminate) await withTimeout(Promise.resolve(worker.terminate()), 2_000).catch(() => {});
+}
+
+function queuedOCR(operation) {
+  const next = ocrQueue.catch(() => {}).then(operation);
+  ocrQueue = next.catch(() => {});
+  return next;
+}
+
 export async function recognizeText(imageSource) {
   const image = await loadImage(imageSource);
   if ('TextDetector' in window) {
@@ -345,43 +542,53 @@ export async function recognizeText(imageSource) {
       const blocks = await new window.TextDetector().detect(image);
       const text = blocks.map((block) => block.rawValue).join('\n');
       const confidences = blocks.map((block) => Number(block.confidence)).filter(Number.isFinite);
-      const analysis = analyzeOCRText(text, { confidence: confidences.length ? Math.max(...confidences) * (Math.max(...confidences) <= 1 ? 100 : 1) : null });
+      const analysis = analyzeOCRPasses([{ text, confidence: confidences.length ? Math.max(...confidences) : null, label: 'native', rotation: 0 }]);
       if (analysis.accepted) return { ...analysis, engine: 'TextDetector' };
     } catch {
       // The user explicitly requested OCR, so the configured fallback may run.
     }
   }
   const tesseract = await loadTesseract();
-  let worker;
-  const recognition = (async () => {
+  let worker = null;
+  let workerGeneration = ocrWorkerGeneration;
+  const recognition = queuedOCR(async () => {
     if (!tesseract.createWorker) {
       const result = await tesseract.recognize(imageSource, 'eng');
-      return [{ result, label: 'full card' }];
+      return [{ result, label: 'full card', rotation: 0 }];
     }
-    worker = await tesseract.createWorker('eng');
-    const results = [];
-    for (const pass of createOCRSources(image)) {
+    worker = await sharedTesseractWorker();
+    workerGeneration = ocrWorkerGeneration;
+    const orientationResults = [];
+    for (const pass of createOrientationOCRSources(image)) {
       if (worker.setParameters) await worker.setParameters({ preserve_interword_spaces: '1', tessedit_pageseg_mode: pass.psm });
-      results.push({ result: await worker.recognize(pass.source), label: pass.label });
+      orientationResults.push({ result: await worker.recognize(pass.source), label: pass.label, rotation: pass.rotation });
     }
-    return results;
-  })();
+    const rankedOrientations = orientationResults.map((pass) => {
+      const analysis = analyzeOCRPasses([pass]);
+      return { rotation: pass.rotation, score: (analysis.accepted ? 1 : 0) + analysis.quality + (analysis.number ? 0.35 : 0) };
+    }).sort((left, right) => right.score - left.score || left.rotation - right.rotation);
+    const rotation = rankedOrientations[0]?.rotation || 0;
+    const targeted = [];
+    for (const pass of createOCRSources(image, [rotation])) {
+      if (worker.setParameters) await worker.setParameters({ preserve_interword_spaces: '1', tessedit_pageseg_mode: pass.psm });
+      targeted.push({ result: await worker.recognize(pass.source), label: pass.label, rotation: pass.rotation });
+    }
+    return [...orientationResults, ...targeted];
+  });
   let passes;
   try {
     passes = await withTimeout(recognition, OCR_TIMEOUT_MS, 'OCR did not finish within 45 seconds. Enter a query manually or retry.');
-  } finally {
-    if (worker?.terminate) await withTimeout(Promise.resolve(worker.terminate()), 2_000).catch(() => {});
+  } catch (error) {
+    // A timed-out recognition can continue running inside Tesseract and would
+    // otherwise hold the serialized queue forever. Terminate that generation
+    // and reset the queue so a user retry starts with a fresh worker.
+    if (error?.name === 'TimeoutError' && workerGeneration === ocrWorkerGeneration) {
+      ocrQueue = Promise.resolve();
+      await invalidateOCRWorker(worker);
+    }
+    throw error;
   }
-  const texts = [];
-  const confidences = [];
-  for (const pass of passes || []) {
-    const data = pass?.result?.data || pass?.result || {};
-    const confidence = Number(data.confidence);
-    if (Number.isFinite(confidence)) confidences.push(confidence);
-    if (!Number.isFinite(confidence) || confidence >= 25) texts.push(data.text || '');
-  }
-  const text = [...new Set(texts.flatMap((value) => String(value).split(/\r?\n/)).map((line) => line.trim()).filter(Boolean))].join('\n');
-  return { ...analyzeOCRText(text, { confidence: confidences.length ? Math.max(...confidences) : null }), engine: 'Tesseract.js' };
+  return { ...analyzeOCRPasses(passes), engine: 'Tesseract.js' };
 }
 
 export function imageDifferenceHash(image) {
@@ -406,7 +613,14 @@ export function candidateEvidenceScore(candidate = {}, evidence = {}) {
   const normalizedCandidateNumber = candidateNumber.replace(/^#/, '').split('/')[0].replace(/[^a-z0-9]/gi, '').toLowerCase().replace(/^0+(?=\d)/, '');
   const numberAvailable = Boolean(normalizedNumber && normalizedCandidateNumber);
   const numberMatches = numberAvailable && normalizedNumber === normalizedCandidateNumber;
-  let score = titleScore * (numberAvailable ? 0.68 : 0.88) + queryScore * 0.12 + (numberMatches ? 0.2 : 0);
+  const titleAvailable = Boolean(String(title).trim() && normalizeEvidence(title) !== normalizeEvidence(number));
+  let score = titleAvailable
+    ? titleScore * (numberAvailable ? 0.68 : 0.88) + queryScore * 0.12 + (numberMatches ? 0.2 : 0)
+    : numberMatches ? 0.82 : queryScore * 0.12;
+  // A matching collector number is strong recovery evidence even when a title
+  // pass contains OCR noise; preserve it for reranking instead of filtering it
+  // out before the image tie-breaker can inspect the candidate.
+  if (numberMatches) score = Math.max(score, titleAvailable ? 0.62 : 0.82);
   if (numberAvailable && !numberMatches) score = Math.min(score, 0.45);
   return Math.max(0, Math.min(1, score));
 }

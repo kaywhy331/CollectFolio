@@ -11,14 +11,13 @@ const fallbackSetEndpoint = 'https://api.tcgdex.net/v2/en/sets';
 // metadata-only; licensed values arrive through rights-gated publications.
 const SELECT_FIELDS = 'id,name,number,rarity,set,images';
 const PAGE_SIZE = 250;
-const MAX_RESULTS = 500;
 const FETCH_OPTIONS = { retries: 3, retryDelay: 250 };
 const FETCH_TIMEOUT_MS = 8_000;
 const SET_FETCH_TIMEOUT_MS = 4_000;
 const PRIMARY_SET_LOOKUP_TIMEOUT_MS = 1_000;
 const PRIMARY_SET_FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 const SET_CACHE_MS = 24 * 60 * 60 * 1000;
-const SET_CACHE_VERSION = 'v1';
+const SET_CACHE_VERSION = 'v2';
 const setMemory = new Map();
 const setRequests = new Map();
 const primarySetMatches = new Map();
@@ -104,6 +103,32 @@ function storeSets(source, sets) {
   } catch { /* Set discovery still works when browser storage is unavailable. */ }
 }
 
+export function normalizePokemonSet(set) {
+  const externalId = String(set?.pokemonId || set?.id || '').trim();
+  if (!externalId) return null;
+  const printedTotal = Number(set.printedTotal);
+  const total = Number(set.total);
+  const cardCount = Number.isFinite(total) ? total : Number.isFinite(printedTotal) ? printedTotal : null;
+  return {
+    ...set,
+    id: `pokemon:${externalId}`,
+    pokemonId: externalId,
+    externalId,
+    provider: 'pokemon',
+    gameId: 'pokemon',
+    game: 'Pokémon',
+    name: set.name || externalId,
+    code: String(set.ptcgoCode || externalId).toUpperCase(),
+    series: set.series || '',
+    releasedAt: set.releaseDate || '',
+    year: String(set.releaseDate || '').slice(0, 4),
+    productCount: cardCount,
+    cardCount,
+    setType: 'expansion',
+    supplemental: false
+  };
+}
+
 async function cachedSets(source, loader) {
   if (setMemory.has(source)) return setMemory.get(source);
   const stored = readStoredSets(source);
@@ -125,19 +150,23 @@ async function cachedSets(source, loader) {
 async function loadPokemonSets() {
   return cachedSets('pokemon', async () => {
     const url = new URL(setEndpoint);
-    url.searchParams.set('select', 'id,name');
+    url.searchParams.set('select', 'id,name,series,printedTotal,total,releaseDate,ptcgoCode');
     url.searchParams.set('pageSize', String(PAGE_SIZE));
     const sets = [];
     for (let page = 1; ; page++) {
       url.searchParams.set('page', String(page));
       const payload = await fetchJSON(url, { retries: 1, retryDelay: 250 }, SET_FETCH_TIMEOUT_MS);
       const batch = Array.isArray(payload?.data) ? payload.data : [];
-      sets.push(...batch.map((set) => ({ pokemonId: String(set.id), name: String(set.name || '') })).filter((set) => set.pokemonId && set.name));
+      sets.push(...batch.map(normalizePokemonSet).filter((set) => set?.pokemonId && set.name));
       const total = Number(payload?.totalCount ?? sets.length);
       if (!batch.length || sets.length >= total || batch.length < PAGE_SIZE) break;
     }
     return sets;
   });
+}
+
+export async function listPokemonSets() {
+  return loadPokemonSets();
 }
 
 async function loadTCGDexSets() {
@@ -262,15 +291,45 @@ async function searchPokemonPrimary(intent) {
   url.searchParams.set('select', SELECT_FIELDS);
   url.searchParams.set('pageSize', String(PAGE_SIZE));
   const cards = [];
-  for (let page = 1; cards.length < MAX_RESULTS; page++) {
+  const cardIds = new Set();
+  for (let page = 1; ; page++) {
     url.searchParams.set('page', String(page));
     const payload = await fetchJSON(url, FETCH_OPTIONS, FETCH_TIMEOUT_MS);
     const batch = payload.data || [];
-    cards.push(...batch);
-    const total = Number(payload.totalCount ?? cards.length);
-    if (!batch.length || cards.length >= total || batch.length < PAGE_SIZE) break;
+    let added = 0;
+    batch.forEach((card) => {
+      const id = String(card?.id || '');
+      if (id && cardIds.has(id)) return;
+      if (id) cardIds.add(id);
+      cards.push(card);
+      added++;
+    });
+    const total = payload.totalCount === null || payload.totalCount === undefined ? null : Number(payload.totalCount);
+    if (!batch.length || !added || (Number.isFinite(total) && cards.length >= total) || batch.length < PAGE_SIZE) break;
   }
-  return cards.slice(0, MAX_RESULTS).map(normalizePokemonCard);
+  return cards.map(normalizePokemonCard);
+}
+
+export async function getPokemonSetCards(setId) {
+  const externalId = String(setId || '').trim();
+  const sets = await loadPokemonSets();
+  const set = sets.find((candidate) => candidate.pokemonId === externalId);
+  if (!set) throw new Error('This Pokémon set could not be found.');
+  try {
+    return await searchPokemonPrimary({ raw: set.name, name: '', number: '', set });
+  } catch (primaryError) {
+    try {
+      const fallbackSet = (await loadTCGDexSets()).find((candidate) => normalizeQuery(candidate.name) === normalizeQuery(set.name));
+      if (!fallbackSet?.tcgdexId) throw primaryError;
+      const payload = await fetchJSON(`${fallbackSetEndpoint}/${encodeURIComponent(fallbackSet.tcgdexId)}`, { retries: 2, retryDelay: 250 }, FETCH_TIMEOUT_MS);
+      const cards = payload?.cards;
+      const expectedTotal = Number(payload?.cardCount?.total);
+      if (!Array.isArray(cards) || !Number.isFinite(expectedTotal) || cards.length < expectedTotal) throw primaryError;
+      return cards.map((card) => normalizeTCGDexCard(card, { name: payload?.name || set.name, releaseDate: payload?.releaseDate || set.releasedAt }));
+    } catch {
+      throw primaryError;
+    }
+  }
 }
 
 function fallbackCardMatches(card, intent) {
@@ -299,7 +358,6 @@ async function searchPokemonFallback(query) {
     const set = { name: payload?.name || intent.set.name, releaseDate: payload?.releaseDate || '' };
     const results = cards
       .filter((card) => fallbackCardMatches(card, intent))
-      .slice(0, MAX_RESULTS)
       .map((card) => normalizeTCGDexCard(card, set));
     return { results, authoritative: true };
   }
@@ -309,7 +367,6 @@ async function searchPokemonFallback(query) {
   const payload = await fetchJSON(url, { retries: 2, retryDelay: 250 }, FETCH_TIMEOUT_MS);
   const results = (Array.isArray(payload) ? payload : [])
     .filter((card) => fallbackCardMatches(card, intent))
-    .slice(0, MAX_RESULTS)
     .map((card) => normalizeTCGDexCard(card));
   return { results, authoritative: false };
 }

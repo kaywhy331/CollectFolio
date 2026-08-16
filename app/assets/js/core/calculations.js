@@ -122,6 +122,10 @@ export function filterAndSortHoldings(holdings = [], { query = '', category = 'a
   const needle = String(query).trim().toLowerCase();
   const selected = { ...filters };
   const matches = (value, filter) => !filter || String(value || '').toLowerCase().includes(String(filter).toLowerCase());
+  const matchesSet = (value) => !selected.setName
+    || (selected.setNameExact
+      ? String(value || '').trim().localeCompare(String(selected.setName).trim(), undefined, { sensitivity: 'base' }) === 0
+      : matches(value, selected.setName));
   const filtered = holdings.filter((holding) => {
     const item = holding.item || {};
     const matchesCategory = category === 'all' || item.category === category;
@@ -129,7 +133,7 @@ export function filterAndSortHoldings(holdings = [], { query = '', category = 'a
     const gain = holdingGain(holding, currency);
     return matchesCategory
       && (!needle || haystack.includes(needle))
-      && matches(item.setName, selected.setName)
+      && matchesSet(item.setName)
       && (!selected.ownership || ownershipType(holding) === selected.ownership)
       && matches(holding.condition, selected.condition)
       && matches(holding.gradeCompany, selected.gradeCompany)

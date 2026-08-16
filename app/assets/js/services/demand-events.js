@@ -11,6 +11,10 @@ export const DEMAND_EVENT_TYPES = Object.freeze([
   'portfolio_add', 'scan_confirm', 'alert_create'
 ]);
 
+const MODEL_MEDIATED_ORIGINS = new Set(['insights']);
+const EXPOSURE_SENSITIVE_EVENTS = new Set(['search_view', 'card_view']);
+const KNOWN_ORGANIC_VIEW_ORIGINS = new Set(['search', 'portfolio']);
+
 /** Hour-truncated ISO bucket. Also the server-side rate-limit/dedup key
  * (Sec 29.2): the database's unique constraint on (user, variant, type, key)
  * silently collapses repeats within the same hour rather than trusting the
@@ -26,11 +30,17 @@ export function demandEventId(userId, canonicalVariantId, eventType, eventKey) {
 
 /** Pure eligibility check, isolated from session/config lookups so the
  * decision itself is unit-testable without a browser. */
-export function demandEventEligible({ eventType, canonicalVariantId, optedOut, signedIn }) {
+export function demandEventEligible({ eventType, canonicalVariantId, optedOut, signedIn, origin = '' }) {
   if (!DEMAND_EVENT_TYPES.includes(eventType)) throw new Error(`Unknown demand event type: ${eventType}`);
   if (optedOut) return false;
   if (!isUUID(canonicalVariantId)) return false; // only exact-mapped variants are tracked
   if (!signedIn) return false; // local-only usage never reaches the aggregate boundary
+  // Until an exposure ledger exists, accept view events only from a known
+  // organic surface. Model-mediated and unknown origins are both withheld.
+  if (EXPOSURE_SENSITIVE_EVENTS.has(eventType)) {
+    if (MODEL_MEDIATED_ORIGINS.has(origin)) return false;
+    if (!KNOWN_ORGANIC_VIEW_ORIGINS.has(origin)) return false;
+  }
   return true;
 }
 
@@ -60,7 +70,11 @@ async function postDemandEvent(entry, session) {
  * never interrupt the user action that triggered it. Returns the queued
  * record, or null if nothing was recorded.
  */
-export async function recordDemandEvent(canonicalVariantId, eventType, { occurredAt = new Date().toISOString() } = {}) {
+export async function recordDemandEvent(
+  canonicalVariantId,
+  eventType,
+  { occurredAt = new Date().toISOString(), origin = '' } = {}
+) {
   let session = null;
   try {
     if (isSupabaseConfigured()) session = await validSession().catch(() => null);
@@ -71,7 +85,8 @@ export async function recordDemandEvent(canonicalVariantId, eventType, { occurre
     eventType,
     canonicalVariantId,
     optedOut: Boolean(getState().settings.demandAnalyticsOptOut),
-    signedIn: Boolean(session?.user?.id)
+    signedIn: Boolean(session?.user?.id),
+    origin
   });
   if (!eligible) return null;
 

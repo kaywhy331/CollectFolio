@@ -9,16 +9,16 @@ const variantA = '123e4567-e89b-42d3-a456-426614174000';
 const variantB = '223e4567-e89b-42d3-a456-426614174000';
 const item = {
   provider: 'pokemon', externalId: 'sv3-223', category: 'pokemon', game: 'Pokémon',
-  name: 'Charizard ex', setName: 'Obsidian Flames', number: '223', variant: 'holofoil',
+  name: 'Charizard ex', setName: 'Obsidian Flames', number: '223', variant: 'holofoil', language: 'en', marketCondition: 'near-mint',
   price: 90, currency: 'USD'
 };
 
 function watched(watchKey, canonicalVariantId, catalogRef) {
-  return { id: watchKey, watchKey, canonicalVariantId, catalogRef, targetPrice: '' };
+  return { id: watchKey, watchKey, canonicalVariantId, catalogRef, marketCondition: 'near-mint', targetPrice: '' };
 }
 
 function publication(variantId, supportTier, payload) {
-  return { variantId, supportTier, reasonCodes: [], payload, sourceAttributions: [], publishedAt: '2026-08-01T00:00:00Z' };
+  return { variantId, seriesIdentity: { sourceId: 'approved', currency: 'USD', language: 'en', finish: 'holofoil', conditionClass: 'raw', marketCondition: 'near-mint', priceSemantics: 'market' }, supportTier, reasonCodes: [], payload, sourceAttributions: [], publishedAt: '2026-08-01T00:00:00Z' };
 }
 
 test('compare selection toggles, removes, and caps at the PRD limit of four', () => {
@@ -63,13 +63,17 @@ test('column overall confidence is the weakest contributing confidence', () => {
       observed: { price: 800, currency: 'USD' },
       trend: { return30d: 0.18, status: 'strong_rise', confidence: 90 },
       fairValue: { q10: 500, q25: 550, q50: 600, q75: 680, q90: 720, position: 'above_range', confidence: 70 },
-      forecasts: { 365: { q10: 540, q25: 700, q50: 850, q75: 990, q90: 1200, probabilityUp: 0.6, confidence: 45 } }
+      forecasts: {
+        30: { q10: 760, q25: 780, q50: 820, q75: 850, q90: 880, probabilityUp: 0.6, confidence: 45 },
+        365: { q10: 540, q25: 700, q50: 850, q75: 990, q90: 1200, probabilityUp: 0.9, confidence: 20 }
+      }
     })
   };
   const { columns } = buildComparison([ref.watchKey], [watched(ref.watchKey, variantA, ref)], byVariant);
   assert.equal(columns[0].confidence, 45);
   assert.equal(columns[0].confidenceLabel, 'Medium-low');
   assert.equal(columns[0].probabilityUp, '60%');
+  assert.equal(columns[0].forecastHorizon, 30);
 });
 
 test('scorecard normalization rejects incomplete or out-of-range entries', () => {

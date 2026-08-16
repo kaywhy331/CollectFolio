@@ -29,8 +29,21 @@ export async function fetchPublicFeatureFlags() {
 
 export function normalizeIntelligencePublication(row = {}) {
   const payload = row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : {};
+  const payloadSeries = payload.seriesIdentity && typeof payload.seriesIdentity === 'object'
+    ? payload.seriesIdentity
+    : {};
   return {
     variantId: row.catalog_variant_id || '',
+    publicationId: row.id || row.catalog_variant_id || '',
+    seriesIdentity: {
+      sourceId: row.market_source_id || payloadSeries.sourceId || '',
+      currency: row.market_currency || payloadSeries.currency || '',
+      language: row.market_language || payloadSeries.language || '',
+      finish: row.market_finish || payloadSeries.finish || '',
+      conditionClass: row.condition_class || payloadSeries.conditionClass || '',
+      marketCondition: row.market_condition || payloadSeries.marketCondition || '',
+      priceSemantics: row.price_semantics || payloadSeries.priceSemantics || ''
+    },
     supportTier: Math.max(0, Math.min(5, Number(row.support_tier) || 0)),
     status: row.publication_status || 'unsupported',
     reasonCodes: Array.isArray(row.reason_codes) ? row.reason_codes.map(String) : [],
@@ -74,7 +87,12 @@ export async function request(path, { method = 'GET', body, session, headers = {
     });
     const text = await response.text();
     const value = text ? JSON.parse(text) : null;
-    if (!response.ok) throw new Error(value?.msg || value?.message || value?.error_description || `Cloud request failed (${response.status}).`);
+    if (!response.ok) {
+      throw Object.assign(
+        new Error(value?.msg || value?.message || value?.error_description || `Cloud request failed (${response.status}).`),
+        { status: response.status, code: value?.code || '' }
+      );
+    }
     return withMetadata
       ? { value, contentRange: response.headers?.get?.('content-range') || '' }
       : value;
@@ -363,6 +381,7 @@ export function remoteWatchlistItem(row) {
     watchKey: row.watch_key,
     canonicalVariantId: row.catalog_variant_id || catalogRef.canonicalVariantId || '',
     catalogRef,
+    marketCondition: row.market_condition || catalogRef.marketCondition || '',
     targetPrice: row.target_price === null || row.target_price === undefined ? '' : Number(row.target_price),
     targetCurrency: String(catalogRef.targetCurrency || catalogRef.currency || 'USD').toUpperCase(),
     alertPercentChange: row.alert_percent_change === null || row.alert_percent_change === undefined ? '' : Number(row.alert_percent_change),
@@ -376,13 +395,17 @@ export function remoteWatchlistItem(row) {
   };
 }
 
-export function watchlistRow(entry, userId, watchlistId) {
-  return {
+export function watchlistRow(entry, userId, watchlistId, { includeMarketCondition = true } = {}) {
+  const row = {
     watchlist_id: watchlistId,
     user_id: userId,
     watch_key: entry.watchKey,
     catalog_variant_id: isUUID(entry.canonicalVariantId) ? entry.canonicalVariantId : null,
-    catalog_snapshot: { ...(entry.catalogRef || {}), targetCurrency: entry.targetCurrency || entry.catalogRef?.currency || 'USD' },
+    catalog_snapshot: {
+      ...(entry.catalogRef || {}),
+      marketCondition: entry.marketCondition || entry.catalogRef?.marketCondition || '',
+      targetCurrency: entry.targetCurrency || entry.catalogRef?.currency || 'USD'
+    },
     target_price: entry.targetPrice === '' || entry.targetPrice === null || entry.targetPrice === undefined ? null : Number(entry.targetPrice),
     alert_percent_change: entry.alertPercentChange === '' || entry.alertPercentChange === null || entry.alertPercentChange === undefined ? null : Number(entry.alertPercentChange),
     alert_trend_change: Boolean(entry.alertTrendChange),
@@ -392,6 +415,32 @@ export function watchlistRow(entry, userId, watchlistId) {
     created_at: entry.createdAt,
     updated_at: entry.updatedAt
   };
+  if (includeMarketCondition) row.market_condition = entry.marketCondition || null;
+  return row;
+}
+
+function missingWatchlistMarketCondition(error) {
+  return error?.code === '42703' && /\bmarket_condition\b/i.test(error.message || '');
+}
+
+export async function requestWatchlistItems(encodedWatchlistId, {
+  session,
+  requester = requestAllPages
+} = {}) {
+  const base = `/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=`;
+  const common = 'watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc';
+  try {
+    return {
+      rows: await requester(`${base}watch_key,catalog_variant_id,market_condition,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc`, { session }),
+      supportsMarketCondition: true
+    };
+  } catch (error) {
+    if (!missingWatchlistMarketCondition(error)) throw error;
+    return {
+      rows: await requester(`${base}${common}`, { session }),
+      supportsMarketCondition: false
+    };
+  }
 }
 
 function jwtSubject(token) {
@@ -452,14 +501,14 @@ export async function syncWatchlist() {
   if (!isUUID(watchlistId)) throw new Error('Cloud watchlist setup returned an invalid identifier.');
 
   const encodedWatchlistId = encodeURIComponent(watchlistId);
-  const [localItems, localTombstones, remoteRows, remoteDeletionRows] = await Promise.all([
+  const [localItems, localTombstones, remoteResult, remoteDeletionRows] = await Promise.all([
     getAll('watchlistItems'),
     getAll('watchlistDeletions'),
-    requestAllPages(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc`, { session }),
+    requestWatchlistItems(encodedWatchlistId, { session }),
     requestAllPages(`/rest/v1/watchlist_deletions?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,deleted_at&order=watch_key.asc`, { session })
   ]);
 
-  const remoteItems = (remoteRows || []).map(remoteWatchlistItem);
+  const remoteItems = (remoteResult.rows || []).map(remoteWatchlistItem);
   const remoteTombstones = (remoteDeletionRows || []).map((row) => ({
     id: row.watch_key, deletedAt: row.deleted_at, dirty: false
   }));
@@ -490,7 +539,9 @@ export async function syncWatchlist() {
   for (const entry of merged) await putRecord('watchlistItems', { ...entry, dirty: false });
   if (merged.length) {
     await upsertInBatches('/rest/v1/watchlist_items?on_conflict=watchlist_id,watch_key',
-      merged.map((entry) => watchlistRow(entry, userId, watchlistId)), {
+      merged.map((entry) => watchlistRow(entry, userId, watchlistId, {
+        includeMarketCondition: remoteResult.supportsMarketCondition
+      })), {
       session,
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     });

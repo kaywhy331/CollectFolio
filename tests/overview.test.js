@@ -61,3 +61,18 @@ test('Overview discloses partial pricing and never fabricates forecast coverage'
   assert.match(html, /data-overview-range="3M" aria-pressed="true"/);
   assert.match(html, /Tracking began today/);
 });
+
+test('Overview displays refresh state without exposing storage details', () => {
+  const html = renderHome(state({
+    tcgcsvRefresh: {
+      status: 'current',
+      sourceUpdatedAt: '2026-08-15T20:05:57.000Z',
+      lastSuccessfulSourceBuild: '2026-08-15T20:05:57.000Z',
+      lastSuccessfulAt: '2026-08-16T03:30:00.000Z',
+      error: ''
+    }
+  }));
+  assert.match(html, /Market data is current/);
+  assert.match(html, /Last successful build:/);
+  assert.doesNotMatch(html, /R2|artifact|runs\//);
+});

@@ -1,5 +1,5 @@
 import { clamp } from '../core/utils.js';
-import { detectBoundaries, gridBoxes, mapBox } from './image-algorithms.js';
+import { detectBoundaries, gridBoxes, mapBox, quadBox } from './image-algorithms.js';
 
 export class ScanWorkbench {
   constructor(canvas, image, { single = false, onChange = () => {} } = {}) {
@@ -8,7 +8,9 @@ export class ScanWorkbench {
     this.image = image;
     this.onChange = onChange;
     this.single = single;
-    this.boxes = [{ x: 0, y: 0, width: image.naturalWidth || image.width, height: image.naturalHeight || image.height }];
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    this.boxes = [this.manualFallback(width, height)];
     this.selected = 0;
     this.mode = 'select';
     this.drag = null;
@@ -49,8 +51,29 @@ export class ScanWorkbench {
   }
 
   isHandle(point, box) {
+    const corner = this.hitCorner(point, box);
+    if (corner >= 0) return corner;
     const size = Math.max(18, Math.min(this.canvas.width, this.canvas.height) * 0.025);
-    return Math.abs(point.x - (box.x + box.width)) <= size && Math.abs(point.y - (box.y + box.height)) <= size;
+    return Math.abs(point.x - (box.x + box.width)) <= size && Math.abs(point.y - (box.y + box.height)) <= size ? 2 : -1;
+  }
+
+  hitCorner(point, box) {
+    if (!box?.corners?.length) return -1;
+    const size = Math.max(22, Math.min(this.canvas.width, this.canvas.height) * 0.032);
+    return box.corners.findIndex((corner) => Math.hypot(point.x - corner.x, point.y - corner.y) <= size);
+  }
+
+  manualFallback(width = this.canvas.width, height = this.canvas.height) {
+    const insetX = Math.max(1, Math.round(width * 0.025));
+    const insetY = Math.max(1, Math.round(height * 0.025));
+    return {
+      x: insetX, y: insetY, width: width - insetX * 2, height: height - insetY * 2,
+      corners: [
+        { x: insetX, y: insetY }, { x: width - insetX, y: insetY },
+        { x: width - insetX, y: height - insetY }, { x: insetX, y: height - insetY }
+      ],
+      confidence: 0, method: 'manual-fallback', fallback: true
+    };
   }
 
   onPointerDown(event) {
@@ -58,15 +81,20 @@ export class ScanWorkbench {
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.point(event);
     if (this.mode === 'add') {
-      this.boxes.push({ x: point.x, y: point.y, width: 1, height: 1 });
+      this.boxes.push({
+        x: point.x, y: point.y, width: 1, height: 1,
+        corners: [{ ...point }, { ...point }, { ...point }, { ...point }],
+        confidence: 1, method: 'manual-box', fallback: false
+      });
       this.selected = this.boxes.length - 1;
       this.drag = { type: 'draw', start: point };
       this.render();
       return;
     }
     const selectedBox = this.boxes[this.selected];
-    if (selectedBox && this.isHandle(point, selectedBox)) {
-      this.drag = { type: 'resize', start: point, box: { ...selectedBox } };
+    const corner = selectedBox ? this.isHandle(point, selectedBox) : -1;
+    if (selectedBox && corner >= 0) {
+      this.drag = { type: 'corner', corner, start: point, box: structuredClone(selectedBox) };
       return;
     }
     this.selected = this.hitBox(point);
@@ -82,11 +110,31 @@ export class ScanWorkbench {
     if (this.drag.type === 'move') {
       const dx = point.x - this.drag.start.x;
       const dy = point.y - this.drag.start.y;
-      this.boxes[this.selected] = { ...this.drag.box, x: clamp(this.drag.box.x + dx, 0, this.canvas.width - this.drag.box.width), y: clamp(this.drag.box.y + dy, 0, this.canvas.height - this.drag.box.height) };
-    } else if (this.drag.type === 'resize') {
-      this.boxes[this.selected] = { ...this.drag.box, width: clamp(this.drag.box.width + point.x - this.drag.start.x, min, this.canvas.width - this.drag.box.x), height: clamp(this.drag.box.height + point.y - this.drag.start.y, min, this.canvas.height - this.drag.box.y) };
+      const x = clamp(this.drag.box.x + dx, 0, this.canvas.width - this.drag.box.width);
+      const y = clamp(this.drag.box.y + dy, 0, this.canvas.height - this.drag.box.height);
+      const movedX = x - this.drag.box.x;
+      const movedY = y - this.drag.box.y;
+      this.boxes[this.selected] = {
+        ...this.drag.box, x, y,
+        corners: this.drag.box.corners?.map((corner) => ({ x: corner.x + movedX, y: corner.y + movedY }))
+      };
+    } else if (this.drag.type === 'corner') {
+      const corners = this.drag.box.corners?.map((entry) => ({ ...entry })) || [
+        { x: this.drag.box.x, y: this.drag.box.y }, { x: this.drag.box.x + this.drag.box.width, y: this.drag.box.y },
+        { x: this.drag.box.x + this.drag.box.width, y: this.drag.box.y + this.drag.box.height }, { x: this.drag.box.x, y: this.drag.box.y + this.drag.box.height }
+      ];
+      corners[this.drag.corner] = point;
+      this.boxes[this.selected] = { ...quadBox(corners), confidence: 1, method: 'manual-corners', fallback: false };
     } else {
-      this.boxes[this.selected] = { x: Math.min(this.drag.start.x, point.x), y: Math.min(this.drag.start.y, point.y), width: Math.max(min, Math.abs(point.x - this.drag.start.x)), height: Math.max(min, Math.abs(point.y - this.drag.start.y)) };
+      const x = Math.min(this.drag.start.x, point.x);
+      const y = Math.min(this.drag.start.y, point.y);
+      const width = Math.max(min, Math.abs(point.x - this.drag.start.x));
+      const height = Math.max(min, Math.abs(point.y - this.drag.start.y));
+      this.boxes[this.selected] = {
+        x, y, width, height,
+        corners: [{ x, y }, { x: x + width, y }, { x: x + width, y: y + height }, { x, y: y + height }],
+        confidence: 1, method: 'manual-box', fallback: false
+      };
     }
     this.render();
   }
@@ -96,7 +144,11 @@ export class ScanWorkbench {
     event.preventDefault();
     this.drag = null;
     if (this.mode === 'add') this.mode = 'select';
-    this.boxes = this.boxes.map((box) => ({ x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height) }));
+    this.boxes = this.boxes.map((box) => ({
+      ...box,
+      x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height),
+      corners: box.corners?.map((corner) => ({ x: Math.round(corner.x), y: Math.round(corner.y) }))
+    }));
     this.onChange(this.boxes);
     this.render();
   }
@@ -118,25 +170,31 @@ export class ScanWorkbench {
 
   applyGrid(rows, columns) {
     if (this.single) return;
-    this.boxes = gridBoxes(this.canvas.width, this.canvas.height, rows, columns);
+    this.boxes = gridBoxes(this.canvas.width, this.canvas.height, rows, columns).map((box) => ({
+      ...box,
+      corners: [
+        { x: box.x, y: box.y }, { x: box.x + box.width, y: box.y },
+        { x: box.x + box.width, y: box.y + box.height }, { x: box.x, y: box.y + box.height }
+      ],
+      confidence: 1, method: 'manual-grid', fallback: false
+    }));
     this.selected = 0;
     this.onChange(this.boxes);
     this.render();
   }
 
   detect() {
-    if (this.single) {
-      this.boxes = [{ x: 0, y: 0, width: this.canvas.width, height: this.canvas.height }];
-    } else {
-      const max = 1000;
-      const scale = Math.min(1, max / Math.max(this.canvas.width, this.canvas.height));
-      const analysis = document.createElement('canvas');
-      analysis.width = Math.max(1, Math.round(this.canvas.width * scale));
-      analysis.height = Math.max(1, Math.round(this.canvas.height * scale));
-      const context = analysis.getContext('2d', { willReadFrequently: true });
-      context.drawImage(this.image, 0, 0, analysis.width, analysis.height);
-      this.boxes = detectBoundaries(context.getImageData(0, 0, analysis.width, analysis.height)).map((box) => mapBox(box, 1 / scale, 1 / scale));
-    }
+    const max = 1000;
+    const scale = Math.min(1, max / Math.max(this.canvas.width, this.canvas.height));
+    const analysis = document.createElement('canvas');
+    analysis.width = Math.max(1, Math.round(this.canvas.width * scale));
+    analysis.height = Math.max(1, Math.round(this.canvas.height * scale));
+    const context = analysis.getContext('2d', { willReadFrequently: true });
+    context.drawImage(this.image, 0, 0, analysis.width, analysis.height);
+    const detected = detectBoundaries(context.getImageData(0, 0, analysis.width, analysis.height), {
+      maximumCards: this.single ? 1 : 24
+    }).map((box) => mapBox(box, 1 / scale, 1 / scale));
+    this.boxes = this.single ? [detected[0] || this.manualFallback()] : detected;
     this.selected = 0;
     this.onChange(this.boxes);
     this.render();
@@ -151,12 +209,20 @@ export class ScanWorkbench {
       this.context.fillStyle = index === this.selected ? 'rgba(130,232,173,.12)' : 'rgba(120,185,255,.08)';
       this.context.strokeStyle = index === this.selected ? '#82e8ad' : '#78b9ff';
       this.context.lineWidth = line;
-      this.context.fillRect(box.x, box.y, box.width, box.height);
-      this.context.strokeRect(box.x, box.y, box.width, box.height);
+      const corners = box.corners || [
+        { x: box.x, y: box.y }, { x: box.x + box.width, y: box.y },
+        { x: box.x + box.width, y: box.y + box.height }, { x: box.x, y: box.y + box.height }
+      ];
+      this.context.beginPath();
+      this.context.moveTo(corners[0].x, corners[0].y);
+      corners.slice(1).forEach((corner) => this.context.lineTo(corner.x, corner.y));
+      this.context.closePath();
+      this.context.fill();
+      this.context.stroke();
       this.context.fillStyle = this.context.strokeStyle;
       this.context.font = `${line * 4}px system-ui`;
       this.context.fillText(String(index + 1), box.x + line * 2, box.y + line * 5);
-      if (index === this.selected) this.context.fillRect(box.x + box.width - line * 3, box.y + box.height - line * 3, line * 6, line * 6);
+      if (index === this.selected) corners.forEach((corner) => this.context.fillRect(corner.x - line * 3, corner.y - line * 3, line * 6, line * 6));
     });
     if (this.mode === 'add') {
       this.context.fillStyle = 'rgba(9,16,24,.75)';

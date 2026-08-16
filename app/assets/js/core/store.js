@@ -13,13 +13,21 @@ let state = {
   alerts: [],
   settings: { ...SETTINGS_DEFAULTS },
   overview: { range: '3M' },
-  search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', loading: false, results: [], warnings: [] },
-  portfolio: { section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', selected: [], limit: 100 },
-  watchlist: { query: '', category: 'all', sort: 'opportunity-desc' },
+  search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', limit: 200, loading: false, results: [], warnings: [] },
+  discover: { mode: 'search', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setLimit: 120, productQuery: '', productSort: 'number', limit: 120, loading: false, sets: [], products: [], selectedSet: null, warnings: [], error: '', loadedGame: '', loadedSetId: '' },
+  portfolio: {
+    section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', selected: [], limit: 100,
+    setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: 60
+  },
+  watchlist: { query: '', category: 'all', sort: 'forecast-desc' },
   insights: { view: 'forecasts', horizon: 90, alertFilter: 'all' },
   compare: [],
-  featureFlags: { watchlists: true, publicPriceIntelligence: false, loaded: false },
+  featureFlags: { watchlists: true, setBrowsing: true, publicPriceIntelligence: false, loaded: false },
   intelligence: { byVariant: {}, history: [], loading: false, error: '', lastRefresh: '' },
+  tcgcsvRefresh: {
+    status: 'disabled', sourceUpdatedAt: '', lastSuccessfulSourceBuild: null,
+    lastSuccessfulAt: null, error: ''
+  },
   auth: {
     session: null,
     syncing: false,

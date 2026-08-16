@@ -12,10 +12,14 @@ const required = [
   'app/index.html', 'app/manifest.webmanifest', 'app/runtime-config.js', 'app/sw.js',
   'app/assets/css/app.css', 'app/assets/js/app.js', 'app/assets/js/core/db.js', 'app/assets/js/core/calculations.js',
   'app/assets/js/core/router.js', 'app/assets/js/core/view-models.js', 'app/assets/js/core/settings.js',
+  'app/assets/js/core/portfolio-sets.js',
   'app/assets/js/services/catalog.js', 'app/assets/js/services/image-algorithms.js', 'app/assets/js/services/image.js',
+  'app/assets/js/services/catalog-browse.js',
   'app/assets/js/services/scan-workbench.js', 'app/assets/js/services/scan-review.js', 'app/assets/js/services/supabase.js',
+  'app/assets/js/services/visual-index.js', 'app/assets/data/visual-index/pokemon-v1/manifest.json',
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
   'app/assets/js/services/justtcg-refresh.js',
+  'app/assets/js/services/tcgcsv-refresh-status.js',
   'app/assets/js/core/catalog-identity.js', 'app/assets/js/core/intelligence-contract.js',
   'app/assets/js/core/intelligence-alerts.js', 'app/assets/js/core/insights.js', 'app/assets/js/core/local-scenarios.js',
   'app/assets/js/views/insights.js', 'app/assets/js/views/onboarding.js', 'app/assets/js/views/profile.js',
@@ -24,9 +28,15 @@ const required = [
   'analytics/src/collectfolio_analytics/catalog_mapping.py',
   'analytics/src/collectfolio_analytics/market_pipeline.py',
   'analytics/src/collectfolio_analytics/tcgcsv.py',
+  'analytics/src/collectfolio_analytics/tcgcsv_universe.py',
+  'analytics/src/collectfolio_analytics/tcgcsv_universe_io.py',
+  'analytics/src/collectfolio_analytics/tcgcsv_universe_cli.py',
+  'analytics/src/collectfolio_analytics/structural_gap.py',
+  'analytics/src/collectfolio_analytics/structural_gap_cli.py',
   'analytics/src/collectfolio_analytics/operator_cli.py',
   'analytics/src/collectfolio_analytics/monitoring.py',
   'analytics/src/collectfolio_analytics/publication.py',
+  'analytics/src/collectfolio_analytics/prospective.py',
   'analytics/src/collectfolio_analytics/forecasting.py',
   'analytics/src/collectfolio_analytics/qualification.py',
   'analytics/src/collectfolio_analytics/private_sql.py',
@@ -35,6 +45,12 @@ const required = [
   'analytics/src/collectfolio_analytics/walk_forward_cli.py',
   'analytics/src/collectfolio_analytics/walk_forward_sql.py',
   'analytics/src/collectfolio_analytics/walk_forward_sql_cli.py',
+  'analytics/src/collectfolio_analytics/historical_import.py',
+  'analytics/src/collectfolio_analytics/historical_import_cli.py',
+  'analytics/src/collectfolio_analytics/historical_import_sql.py',
+  'analytics/src/collectfolio_analytics/cardbase.py',
+  'analytics/src/collectfolio_analytics/cardbase_history.py',
+  'analytics/src/collectfolio_analytics/cardbase_history_cli.py',
   'analytics/src/collectfolio_analytics/baselines.py', 'analytics/src/collectfolio_analytics/quantiles.py',
   'analytics/src/collectfolio_analytics/scarcity.py', 'analytics/src/collectfolio_analytics/evaluation.py',
   'analytics/src/collectfolio_analytics/video_model_v0.py',
@@ -54,8 +70,15 @@ const required = [
   'netlify/lib/justtcg-ondemand-repository.mjs',
   'netlify/lib/justtcg-ondemand-collector.mjs',
   'netlify/functions/justtcg-refresh.mjs',
+  'cloudflare/tcgcsv-refresh/src/index.js',
+  'cloudflare/tcgcsv-refresh/wrangler.jsonc',
+  'cloudflare/tcgcsv-refresh/worker-configuration.d.ts',
+  'scripts/tcgcsv-r2-refresh-client.mjs',
   '.github/workflows/analytics-check.yml',
   '.github/workflows/price-intelligence-research.yml',
+  '.github/workflows/tcgcsv-market-universe.yml',
+  '.github/workflows/tcgcsv-r2-refresh.yml',
+  '.github/workflows/cardbase-mtg-history.yml',
   '.github/workflows/pull-rate-integrity.yml',
   'analytics/manifests/tcgcsv-surging-sparks-research.json',
   'analytics/manifests/tcgcsv-surging-sparks-current-v2.json',
@@ -69,28 +92,49 @@ const required = [
   'supabase/migrations/0009_pull_rate_registry.sql',
   'supabase/migrations/0014_pull_rate_unavailability_registry.sql',
   'supabase/migrations/0015_remove_my_cloud_data.sql',
+  'supabase/migrations/0016_forecast_engine_v1.sql',
+  'supabase/migrations/0017_private_prospective_forecast_ledger.sql',
+  'supabase/migrations/0018_forecast_execution_and_scorecards.sql',
+  'supabase/migrations/0019_centralized_historical_price_imports.sql',
+  'supabase/migrations/0020_tcgcsv_market_universe.sql',
   'PRD/redesign.md', 'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
   'docs/REDESIGN_COMPATIBILITY.md', 'docs/REDESIGN_FOUNDATION.md', 'docs/REDESIGN_CORE_VERTICAL_SLICE.md',
   'docs/REDESIGN_INTAKE_COLLECTION_MANAGEMENT.md', 'docs/REDESIGN_FORECASTING_INSIGHTS.md',
   'docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md', 'docs/REDESIGN_FINAL_ACCEPTANCE.md',
   'docs/PRICE_INTELLIGENCE_FOUNDATION.md', 'docs/PRICE_INTELLIGENCE_RUNBOOK.md',
+  'docs/TCGCSV_MARKET_UNIVERSE.md',
+  'docs/CARDBASE_MTG_RESEARCH.md',
   'docs/JUSTTCG_CATALOG_COLLECTOR.md', 'docs/JUSTTCG_ONDEMAND_REFRESH.md',
   'docs/PULL_RATE_REGISTRY.md',
   'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md',
+  'docs/source-reviews/TCGCSV_FULL_COHORT_PRIVATE_RESEARCH.md',
+  'docs/source-reviews/TCGCSV_RECURRING_PRIVATE_ROLLING.md',
+  'docs/source-reviews/CARDBASE_MTG_RESEARCH_CANDIDATE.md',
   'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL_V2.md',
   'docs/receipts/TCGCSV_SURGING_SPARKS_MAPPING_V2.md',
+  'docs/receipts/TCGCSV_FULL_COHORT_R2_2026_08_15.md',
+  'docs/receipts/TCGCSV_ROLLING_R2_2026_08_15.md',
   'tests/redesign-protection.test.js',
   'tests/local-scenarios.test.js',
   'tests/router.test.js', 'tests/view-models.test.js', 'tests/overview.test.js',
-  'tests/discover.test.js', 'tests/portfolio-redesign.test.js',
+  'tests/discover.test.js', 'tests/catalog-browse.test.js', 'tests/portfolio-redesign.test.js', 'tests/portfolio-sets.test.js',
   'tests/intake-management.test.js', 'tests/watchlist-management.test.js', 'tests/insights.test.js',
   'tests/settings.test.js', 'tests/phase5-migration.test.js', 'tests/phase5-ui.test.js',
+  'tests/forecast-engine-migration.test.js',
+  'tests/historical-price-import-migration.test.js',
+  'tests/tcgcsv-market-universe-migration.test.js',
+  'tests/tcgcsv-r2-refresh-worker.test.js', 'tests/tcgcsv-refresh-status.test.js',
+  'tests/postgres/run_forecast_runtime.py',
+  'tests/postgres/run_tcgcsv_universe_runtime.py',
+  'tests/postgres/forecast-runtime-fixture.sql',
+  'tests/postgres/forecast-scorecard-fixture.sql',
   'tests/fixtures/redesign/indexeddb-v4-backup-v2.json',
   'tests/fixtures/redesign/cloud-sync.json',
   'tests/fixtures/redesign/legacy-routes.json',
-  'tests/e2e/protection-baseline.spec.js', 'tests/e2e/phase5.spec.js', 'tests/e2e/service-worker.spec.js',
+  'tests/e2e/catalog-pagination.spec.js', 'tests/e2e/browse-sets.spec.js', 'tests/e2e/portfolio-sets.spec.js', 'tests/e2e/protection-baseline.spec.js',
+  'tests/e2e/phase5.spec.js', 'tests/e2e/service-worker.spec.js',
   'tests/e2e/protection-baseline.spec.js-snapshots/legacy-overview-empty-chromium-linux.png',
   'tests/e2e/protection-baseline.spec.js-snapshots/core-slice-overview-empty-chromium-linux.png'
 ];
@@ -112,8 +156,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.1' || packageLock.version !== '0.8.1' || packageLock.packages?.['']?.version !== '0.8.1') {
-  errors.push('Application and lockfile versions must agree on 0.8.1.');
+if (packageJSON.version !== '0.8.5' || packageLock.version !== '0.8.5' || packageLock.packages?.['']?.version !== '0.8.5') {
+  errors.push('Application and lockfile versions must agree on 0.8.5.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -122,14 +166,15 @@ if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@n
 const approvedDevDependencies = {
   '@axe-core/playwright': '4.12.1',
   '@fontsource-variable/inter': '5.3.0',
-  '@playwright/test': '1.62.1'
+  '@playwright/test': '1.62.1',
+  wrangler: '4.123.0'
 };
 const devDependencies = packageJSON.devDependencies || {};
 if (JSON.stringify(Object.keys(devDependencies).sort()) !== JSON.stringify(Object.keys(approvedDevDependencies).sort())
     || Object.entries(approvedDevDependencies).some(([name, version]) => devDependencies[name] !== version)) {
-  errors.push('Dev dependencies must be exactly the pinned Playwright, axe, and snapshot-font packages.');
+  errors.push('Dev dependencies must be exactly the pinned Playwright, axe, snapshot-font, and Wrangler packages.');
 }
-for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
+for (const script of ['dev', 'build', 'test', 'test:analytics', 'test:forecast-db', 'test:tcgcsv-db', 'test:tcgcsv-refresh', 'test:browser', 'test:browser:update', 'check:all', 'qualify:research', 'qualify:research:current', 'forecast:lab', 'history:import', 'cardbase:history', 'tcgcsv:universe', 'worker:tcgcsv:types', 'worker:tcgcsv:dry-run', 'check']) if (!packageJSON.scripts?.[script]) errors.push(`Missing npm script: ${script}`);
 
 const researchManifest = JSON.parse(await readFile(resolve(root, 'analytics/manifests/tcgcsv-surging-sparks-research.json'), 'utf8'));
 const researchReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md'));
@@ -188,8 +233,104 @@ const supersessionValidation = spawnSync('python3', ['-c', `import json\nfrom pa
 if (supersessionValidation.status !== 0) errors.push(`Mapping supersession manifest validation failed: ${supersessionValidation.stderr || supersessionValidation.stdout}`);
 
 const researchWorkflow = await readFile(resolve(root, '.github/workflows/price-intelligence-research.yml'), 'utf8');
-if (!researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty') || !researchWorkflow.includes('--skip-history')) errors.push('Scheduled TCGCSV research must use the current-only v2 manifest with --skip-history.');
-if (researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-research.json --pretty')) errors.push('Scheduled TCGCSV research must not route through the historical v1 manifest.');
+if (!researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-current-v2.json --pretty') || !researchWorkflow.includes('--skip-history')) errors.push('Manual TCGCSV research must use the current-only v2 manifest with --skip-history.');
+if (researchWorkflow.includes('analytics/manifests/tcgcsv-surging-sparks-research.json --pretty')) errors.push('Manual TCGCSV research must not route through the historical v1 manifest.');
+if (!researchWorkflow.includes("TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED != 'true'")) errors.push('Bounded TCGCSV qualification must stop when the full-universe workflow is active.');
+if (/(^|\n)\s*schedule:/.test(researchWorkflow)) errors.push('TCGCSV qualification must remain a manually dispatched static batch.');
+
+const universeWorkflow = await readFile(resolve(root, '.github/workflows/tcgcsv-market-universe.yml'), 'utf8');
+for (const contract of [
+  'TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED', 'workflow_dispatch:', 'schedule:',
+  "cron: '41 6 * * *'", 'concurrency:',
+  "analytics[market-universe]", 'last-updated.txt', 'prepare-archive',
+  'archive_date=', 'prices.parquet', 'ingest-archive', 'sync-catalog',
+  '--use-database-state --ingest', 'retention-days: 30'
+]) {
+  if (!universeWorkflow.includes(contract)) errors.push(`TCGCSV market-universe workflow lacks contract ${contract}.`);
+}
+if (!/permissions:\s*\n\s+contents: read/.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must keep GitHub permissions contents-read-only.');
+if (/service_role|SUPABASE_SERVICE_ROLE/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must use the dedicated ingest credential, not a broad service-role secret.');
+if (/update\s+public\.product_feature_flags/i.test(universeWorkflow)) errors.push('TCGCSV market-universe workflow must not enable public forecasting.');
+if (!/(^|\n)\s*schedule:\s*\n\s*-\s*cron:\s*['"]41 6 \* \* \*['"]/.test(universeWorkflow)) errors.push('TCGCSV market-universe acquisition must retain its daily 06:41 UTC schedule.');
+
+const rollingWorkflow = await readFile(resolve(root, '.github/workflows/tcgcsv-r2-refresh.yml'), 'utf8');
+for (const contract of [
+  "cron: '5 * * * *'", 'TCGCSV_R2_REFRESH_ENABLED', 'concurrency:',
+  "node-version: '22'",
+  'tcgcsv-r2-refresh-client.mjs claim', 'download-if-present',
+  '--source-available-at', 'sync-catalog', 'catalog.partial !== false',
+  'gzip -n -9', 'raw_archive', 'prices_parquet', 'market_features_gzip',
+  'set_features', 'archive_packet', 'catalog_packet_gzip',
+  'github_workflow_failed', 'retention-days: 30'
+]) {
+  if (!rollingWorkflow.includes(contract)) errors.push(`TCGCSV rolling R2 workflow lacks contract ${contract}.`);
+}
+if (!/permissions:\s*\n\s+contents: read/.test(rollingWorkflow)) errors.push('TCGCSV rolling R2 workflow must keep GitHub permissions contents-read-only.');
+if (/DATABASE_URL|SUPABASE_|--use-database-state|--ingest\b|structural[_ -]gap|price[_ -]intelligence/i.test(rollingWorkflow)) {
+  errors.push('TCGCSV rolling R2 workflow must not ingest a database, train, or publish price intelligence.');
+}
+if (!rollingWorkflow.includes('3775d954-f0ce-4abc-97fb-a7a6938c134a')) errors.push('TCGCSV rolling R2 workflow must bind the approved recurring review ID.');
+
+const rollingReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RECURRING_PRIVATE_ROLLING.md'), 'utf8');
+for (const contract of [
+  '3775d954-f0ce-4abc-97fb-a7a6938c134a', 'private_rolling_research',
+  'latest and previous successful cohorts', '90-minute lease',
+  'No LLM', 'Historical accumulation or backfill | No',
+  'PostgreSQL migration or ingestion | No', 'Commercial use | No'
+]) {
+  if (!rollingReview.includes(contract)) errors.push(`TCGCSV rolling source review lacks contract ${contract}.`);
+}
+
+const refreshWorker = await readFile(resolve(root, 'cloudflare/tcgcsv-refresh/src/index.js'), 'utf8');
+for (const contract of [
+  'tcgcsv-r2-refresh-v1', 'coordination/claim.json', 'DEFAULT_LEASE_MINUTES = 90',
+  "return `runs/${runId}/slot-${slot}/${artifact.path}`", 'onlyIf:',
+  'TCGCSV changed before completion', 'Published artifact does not match its marker',
+  'cleanupStaleRunArtifacts', 'crypto.subtle.timingSafeEqual',
+  'lastSuccessfulSourceBuild', "url.pathname === '/status'"
+]) {
+  if (!refreshWorker.includes(contract)) errors.push(`TCGCSV refresh Worker lacks contract ${contract}.`);
+}
+const publicStatusBody = refreshWorker.match(/function publicRefreshStatus\(state\) \{([\s\S]*?)\n\}/)?.[1] || '';
+if (/artifact|runId|key/i.test(publicStatusBody)) errors.push('Public TCGCSV refresh status must not expose artifacts, run IDs, or R2 keys.');
+const refreshConfig = await readFile(resolve(root, 'cloudflare/tcgcsv-refresh/wrangler.jsonc'), 'utf8');
+for (const contract of ['collectfolio-tcgcsv-current', 'collectfolio-staging.netlify.app', '"crons": ["0 * * * *"]', '"enabled": true']) {
+  if (!refreshConfig.includes(contract)) errors.push(`TCGCSV refresh Worker config lacks contract ${contract}.`);
+}
+const universeRunbook = await readFile(resolve(root, 'docs/TCGCSV_MARKET_UNIVERSE.md'), 'utf8');
+for (const contract of [
+  'TCGCSV is the authoritative', 'broad-market history baseline',
+  'Portfolio and search activity never determine ingestion coverage',
+  'Every daily\nrun processes every price series',
+  'Cardbase and other APIs may supplement selected series with targeted'
+]) {
+  if (!universeRunbook.includes(contract)) errors.push(`TCGCSV market-universe runbook lacks architecture contract ${contract}.`);
+}
+
+const cardbaseWorkflow = await readFile(resolve(root, '.github/workflows/cardbase-mtg-history.yml'), 'utf8');
+for (const contract of [
+  'CARDBASE_MTG_RESEARCH_ENABLED', 'schedule:', 'concurrency:',
+  'CARDBASE_API_KEY', 'CARDBASE_MTG_MANIFEST_S3_URI',
+  'CARDBASE_MTG_ARCHIVE_S3_URI', 'cardbase_history_cli',
+  'first-seen-ledger.json', '--state .cardbase-run/prior-state.json',
+  'persist-credentials: false', 'single-key-paced-retry-after',
+  'source.documentHash', 'redacted-receipt.json', 'retention-days: 30'
+]) {
+  if (!cardbaseWorkflow.includes(contract)) errors.push(`Cardbase MTG workflow lacks contract ${contract}.`);
+}
+if (!/permissions:\s*\n\s+contents: read/.test(cardbaseWorkflow)) errors.push('Cardbase MTG workflow must keep GitHub permissions contents-read-only.');
+if (/service_role|SUPABASE_|DATABASE_URL|update\s+public\.product_feature_flags/i.test(cardbaseWorkflow)) errors.push('Cardbase MTG workflow must have no database credential or feature-flag write path.');
+if (/apiKeys|keyRotation|rotateKeys/.test(cardbaseWorkflow)) errors.push('Cardbase MTG workflow must never pool or rotate API keys.');
+if (cardbaseWorkflow.includes('state_args')) errors.push('Cardbase MTG workflow must fail closed when canonical first-seen state cannot be restored.');
+if (!cardbaseWorkflow.includes('path: .cardbase-run/redacted-receipt.json') || cardbaseWorkflow.includes('path: .cardbase-run/import-packet.json')) errors.push('Cardbase CI artifacts must expose only the redacted receipt.');
+const cardbaseReview = await readFile(resolve(root, 'docs/source-reviews/CARDBASE_MTG_RESEARCH_CANDIDATE.md'), 'utf8');
+for (const contract of [
+  '**Decision:** `research_only`', 'Public raw display:** no',
+  'Public derived display / predictive use:** no', 'one server-side key',
+  'provider-aggregate', 'operator_first_seen', 'No Cardbase key is configured'
+]) {
+  if (!cardbaseReview.includes(contract)) errors.push(`Cardbase source review lacks contract ${contract}.`);
+}
 
 const pullRateIntegrityWorkflow = await readFile(resolve(root, '.github/workflows/pull-rate-integrity.yml'), 'utf8');
 for (const contract of [
@@ -241,6 +382,28 @@ for (const contract of [
   if (!walkForwardSQL.includes(contract)) errors.push(`Walk-forward SQL exporter missing safety contract ${contract}.`);
 }
 
+const forecastExecution = await readFile(resolve(
+  root, 'supabase/migrations/0018_forecast_execution_and_scorecards.sql'
+), 'utf8');
+for (const contract of [
+  'prospective_complete_cost_fields_present_check',
+  'create table public.forecast_executor_keys',
+  'create table public.prospective_scorecard_plans',
+  'create table public.forecast_execution_challenges',
+  'create table public.forecast_execution_receipts',
+  'canonical_prospective_candidate_output_hash',
+  'record_challenged_prospective_forecast_run',
+  'create_prospective_model_scorecard',
+  'originClusteredBaselineLiftLower95',
+  'hmac_executor_principal_v1',
+  'artifactExecutionVerified',
+  'Forecast Engine v1 unconditional public-promotion block must remain intact'
+]) {
+  if (!forecastExecution.includes(contract)) errors.push(`Forecast execution migration missing safety contract ${contract}.`);
+}
+if (/update\s+public\.product_feature_flags/i.test(forecastExecution)) errors.push('Forecast execution migration must not mutate public feature flags.');
+if (/create or replace function public\.publish_forecast_intelligence/i.test(forecastExecution)) errors.push('Forecast execution migration must not add a public publisher.');
+
 const appFiles = await filesUnder(app);
 const netlifyFiles = await filesUnder(resolve(root, 'netlify'));
 const sourceFiles = [...appFiles, ...await filesUnder(resolve(root, 'scripts')), ...netlifyFiles, resolve(root, 'netlify.toml'), ...await filesUnder(resolve(root, 'supabase/migrations'))];
@@ -262,8 +425,11 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.1-dev'")) errors.push('Local runtime config must identify the 0.8.1 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.1'")) errors.push('Production builds must default APP_VERSION to 0.8.1.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.5-dev'")) errors.push('Local runtime config must identify the 0.8.5 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.5'")) errors.push('Production builds must default APP_VERSION to 0.8.5.');
+if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
+  errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
+}
 
 const ordinaryUiFiles = [
   resolve(app, 'index.html'), resolve(app, 'assets/js/app.js'),
@@ -357,10 +523,10 @@ for (const contract of ['SETTINGS_SCHEMA_VERSION = 1', 'migrateSettingsRecords',
   if (!settingsModule.includes(contract)) errors.push(`Phase 5 settings module is missing ${contract}.`);
 }
 if (!application.includes("await persistSettings({ currency, onboardingStep: 'add' }")) errors.push('Onboarding currency submission must await durable settings persistence.');
-if (!runtimeConfig.includes('ENABLE_WATCHLISTS: true') || !runtimeConfig.includes('ENABLE_PRICE_INTELLIGENCE: false') || !runtimeConfig.includes('ENABLE_CLOUD_DATA_REMOVAL: false')) {
+if (!runtimeConfig.includes('ENABLE_WATCHLISTS: true') || !runtimeConfig.includes('ENABLE_SET_BROWSING: true') || !runtimeConfig.includes('ENABLE_PRICE_INTELLIGENCE: false') || !runtimeConfig.includes('ENABLE_CLOUD_DATA_REMOVAL: false')) {
   errors.push('Runtime defaults must keep Watchlist independent and unqualified hosted capabilities fail-closed.');
 }
-if (!buildScript.includes("ENABLE_WATCHLISTS ?? 'true'") || !buildScript.includes("ENABLE_PRICE_INTELLIGENCE ?? 'false'") || !buildScript.includes("ENABLE_CLOUD_DATA_REMOVAL ?? 'false'")) {
+if (!buildScript.includes("ENABLE_WATCHLISTS ?? 'true'") || !buildScript.includes("ENABLE_SET_BROWSING ?? 'true'") || !buildScript.includes("ENABLE_PRICE_INTELLIGENCE ?? 'false'") || !buildScript.includes("ENABLE_CLOUD_DATA_REMOVAL ?? 'false'")) {
   errors.push('Build-time feature defaults must keep Watchlist independent and unqualified hosted capabilities fail-closed.');
 }
 const database = await readFile(resolve(app, 'assets/js/core/db.js'), 'utf8');
@@ -369,11 +535,12 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.1'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.1.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.5'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.5.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
   if (file === resolve(app, 'sw.js')) continue;
+  if (name.startsWith('./assets/data/visual-index/') && !name.endsWith('/manifest.json')) continue;
   if (!serviceWorker.includes(name)) errors.push(`Service-worker shell does not reference ${name}`);
 }
 
@@ -524,6 +691,24 @@ if (/update\s+public\.product_feature_flags[\s\S]*public_price_intelligence/i.te
   errors.push('Forecast-research migration must not enable or mutate the public price-intelligence flag.');
 }
 
+const forecastEngineMigration = await readFile(resolve(root, 'supabase/migrations/0016_forecast_engine_v1.sql'), 'utf8');
+for (const table of ['market_series', 'forecast_evaluation_observations']) {
+  if (!forecastEngineMigration.includes(`create table public.${table}`)) errors.push(`Forecast Engine v1 migration missing ${table}.`);
+  if (!forecastEngineMigration.includes(`alter table public.${table} enable row level security`)) errors.push(`Forecast Engine v1 migration missing RLS for ${table}.`);
+}
+for (const contract of [
+  'validate_market_series_lineage', 'validate_forecast_prediction_series',
+  'validate_forecast_evaluation_observation', 'record_scored_forecast_evaluation',
+  'Prediction and evaluation evidence modes differ',
+  'Retrospective evidence cannot authorize model promotion',
+  'Realized outcome fields are derived by the database, not supplied by callers',
+  "to_regprocedure('public.publish_forecast_intelligence(uuid)') is not null"
+]) {
+  if (!forecastEngineMigration.includes(contract)) errors.push(`Forecast Engine v1 migration missing security contract ${contract}.`);
+}
+if (/update\s+public\.product_feature_flags/i.test(forecastEngineMigration)) errors.push('Forecast Engine v1 migration must not mutate public feature flags.');
+if (/create or replace function public\.publish_forecast_intelligence/i.test(forecastEngineMigration)) errors.push('Forecast Engine v1 must not install a public forecast publisher.');
+
 const governanceMigration = await readFile(resolve(root, 'supabase/migrations/0006_price_intelligence_governance_hardening.sql'), 'utf8');
 for (const table of ['model_scorecard_evaluations', 'intelligence_publication_control_events']) {
   if (!governanceMigration.includes(`create table public.${table}`)) errors.push(`Governance migration missing ${table}.`);
@@ -584,9 +769,12 @@ if (!netlify.includes("'wasm-unsafe-eval'")) errors.push('Content Security Polic
 for (const host of ['https://images.pokemontcg.io', 'https://images.scrydex.com', 'https://assets.tcgdex.net', 'https://cards.scryfall.io', 'https://images.ygoprodeck.com']) {
   if (netlify.split(host).length < 3) errors.push(`Content Security Policy must allow ${host} for both provider images and service-worker fetches.`);
 }
+if (!netlify.includes('https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev')) {
+  errors.push('Content Security Policy must allow the public TCGCSV refresh-status Worker.');
+}
 
 if (errors.length) {
   console.error(`Validation failed:\n- ${errors.join('\n- ')}`);
   process.exit(1);
 }
-console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only package, and three pinned browser-test packages.`);
+console.log(`Validation passed: ${required.length} required files, ${javascript.length} browser modules, one pinned server-only package, and four pinned development packages.`);

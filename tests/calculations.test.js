@@ -70,6 +70,8 @@ test('holdings combine collection filters and expanded sorting without hiding un
   assert.deepEqual(filterAndSortHoldings(rows, { filters: { pricing: 'manual' } }).map((row) => row.id), ['manual']);
   assert.deepEqual(filterAndSortHoldings(rows, { filters: { pricing: 'unpriced' } }).map((row) => row.id), ['unpriced']);
   assert.deepEqual(filterAndSortHoldings(rows, { filters: { setName: 'beta' } }).map((row) => row.id), ['manual']);
+  rows[2].item.setName = 'Beta Set 2';
+  assert.deepEqual(filterAndSortHoldings(rows, { filters: { setName: 'Beta Set', setNameExact: true } }).map((row) => row.id), ['manual']);
   assert.deepEqual(filterAndSortHoldings(rows, { sort: 'gain-asc' }).map((row) => row.id), ['manual', 'unpriced', 'graded']);
 });
 

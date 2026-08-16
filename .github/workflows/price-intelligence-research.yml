@@ -2,8 +2,6 @@ name: Price intelligence research qualification
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 6 * * *"
 
 permissions:
   contents: read
@@ -14,6 +12,7 @@ concurrency:
 
 jobs:
   qualify:
+    if: ${{ vars.TCGCSV_FULL_UNIVERSE_RESEARCH_ENABLED != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

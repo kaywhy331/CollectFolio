@@ -80,8 +80,16 @@ analytics/
     market_pipeline.py       # rights/mapping/outlier observation preparation
     justtcg.py               # licensed fixed-origin current/history adapter
     tcgcsv.py                # bounded current/archive research adapter
+    tcgcsv_universe.py       # provider-wide archive normalization/features
+    tcgcsv_universe_io.py    # DuckDB/PostgreSQL/catalog-snapshot adapters
+    structural_gap.py        # current-origin whole-group structural lab
+    structural_gap_cli.py    # mode-0600 private lab packet writer
     qualification.py         # private history/trend/forecast evidence packets
     forecasting.py           # immutable research baseline predictions
+    forecast_engine.py       # private 30/90-day calibrated shadow ensemble
+    forecast_lab_cli.py      # bounded point-in-time feature-manifest runner
+    demand.py                # privacy-gated, versioned interim demand diagnostics
+    prospective.py           # canonical challenged-execution payload contracts
     private_sql.py           # guarded rollback-first hosted SQL export
     walk_forward.py          # honest retrospective origins/evaluations/scorecards
     walk_forward_cli.py      # bounded hosted-row export to mode-0600 packet
@@ -230,6 +238,8 @@ Selecting a catalog result opens a prefilled exact-printing summary rather than 
 
 Market and cost lines are drawn separately so adding a collectible is not visually represented as pure market appreciation. The 90-day SVG includes an explicit currency scale, date anchors, series legend, and exact latest values; it does not rely on an unlabeled line shape.
 
+Portfolio Sets is a derived local view, not a new persistence store. Named sets are grouped by normalized game/category plus set name; exact canonical variants or provider printing/finish identities deduplicate multiple acquisition lots, while copies and lots remain separately counted. Tracked value includes only rights-permitted or manual values in the selected portfolio currency. Unpriced, other-currency, and missing-set records remain explicit. Search, category filters, and sorting only narrow or reorder the retained groups, and rendering begins at 60 groups. The browser never guesses a catalog total or completion percentage; those stay unavailable until an authoritative set manifest is linked.
+
 ## 6. Catalog provider abstraction
 
 Every provider normalizes into the internal item shape. The app never stores a provider ID as the holding’s primary key.
@@ -238,6 +248,7 @@ Every provider normalizes into the internal item shape. The app never stores a p
 
 - Search endpoint: `GET https://api.pokemontcg.io/v2/cards`.
 - Set discovery endpoint: `GET https://api.pokemontcg.io/v2/sets`, with TCGdex `/v2/en/sets` used for resilient set-name discovery.
+- Browse-set cards use the same paginated card endpoint constrained by exact set ID and retain every metadata-only result.
 - Detail endpoint: `/v2/cards/{id}`.
 - Query parsing prefers the longest contiguous exact set-name match, removes those tokens, and combines the remaining card name and number with the resolved set ID. Thus a set name searches the full set while `card name + set name` searches their intersection; numeric set names such as `Base Set 2` are resolved before card-number parsing.
 - Set metadata is cached in browser storage for 24 hours. A failed primary set-ID lookup has a short backoff and falls through to a set-name clause instead of blocking discovery.
@@ -248,6 +259,8 @@ Every provider normalizes into the internal item shape. The app never stores a p
 ### Magic: The Gathering
 
 - Search endpoint: `GET https://api.scryfall.com/cards/search`.
+- Set discovery endpoint: `GET https://api.scryfall.com/sets`; digital-only and empty sets are omitted from the paper-card browser.
+- Browse-set cards use exact set-code queries and follow every provider page.
 - Detail endpoint: `/cards/{id}`.
 - Printings remain distinct.
 - Regular, foil, and etched USD prices become selectable options.
@@ -256,6 +269,7 @@ Every provider normalizes into the internal item shape. The app never stores a p
 ### Yu-Gi-Oh!
 
 - Endpoint: `GET https://db.ygoprodeck.com/api/v7/cardinfo.php`.
+- Set discovery endpoint: `GET https://db.ygoprodeck.com/api/v7/cardsets.php`; exact set-name card requests are reduced back to matching printings.
 - Each returned set printing becomes a distinct internal candidate using set code.
 - A small remote image is displayed during search.
 - The service worker stores successfully retrieved provider images in a browser-local cache for repeat views.
@@ -264,6 +278,8 @@ Every provider normalizes into the internal item shape. The app never stores a p
 ### Failure isolation
 
 Catalog searches use `Promise.allSettled`. One provider failure produces a partial warning but retains successful provider results.
+
+Discover exposes Search cards and Browse sets as peer intents. Browse routes are `/discover/browse`, `/discover/{game}`, and `/discover/{game}/{set}`. Games and sets use a provider-neutral adapter, while set products keep their exact provider printing identity. Filtering and ranking only reorder or narrow the in-memory view; they never truncate the retained provider response. Product rendering starts at 120 cards and can reveal the complete set. `ENABLE_SET_BROWSING` provides a static rollback gate. Private `tcgcsv_*` tables are never read by this browser path.
 
 ### Local caching
 
@@ -291,11 +307,11 @@ This is a heuristic detector, not a trained object model. It is intentionally pa
 
 ### 7.2 Boundary editor
 
-Canvas stores boxes in original-image coordinates and scales them for display. Pointer interactions support:
+The client builds an adaptive Sobel edge map, proposes orientation-constrained Hough lines, scores card-shaped quadrilaterals, and returns typed outlines with a confidence and method. An unreliable detection is never reported as success: the editor shows an explicit inset `manual-fallback` outline instead. Canvas stores four corners in original-image coordinates and scales them for display. Pointer interactions support:
 
 - click/tap selection;
 - dragging inside a selected box to move;
-- dragging the lower-right handle to resize;
+- dragging any of four corner handles to correct perspective;
 - drawing a new box in Add mode;
 - deleting a selected box;
 - re-running detection;
@@ -303,33 +319,35 @@ Canvas stores boxes in original-image coordinates and scales them for display. P
 
 ### 7.3 Crop generation
 
-Crops are rendered to JPEG data URLs with a maximum width of 720 px and 0.84 quality. The crop becomes the user-owned portfolio image and remains in IndexedDB.
+Each four-corner outline is mapped through a projective homography and bilinearly resampled into an upright JPEG with a maximum width of 1,200 px and 0.90 quality. The straightened crop becomes the user-owned portfolio image and remains in IndexedDB; the full camera image is discarded after crop creation.
 
 ### 7.4 OCR
 
 The sequence is:
 
 1. attempt a browser-native `TextDetector` when available;
-2. otherwise lazy-load Tesseract.js from jsDelivr;
-3. recognize English text locally;
-4. normalize OCR lines;
-5. prioritize distinctive long words and number-containing tokens;
-6. present an editable query before or after catalog search.
+2. quality-gate native text and otherwise lazy-load one reusable Tesseract.js worker from jsDelivr;
+3. probe 0°, 90°, 180°, and 270°, then run grayscale/threshold title and footer passes at the best orientation;
+4. fuse only quality-gated pass evidence and reject symbol soup, boilerplate, and short single-token noise;
+5. generate ordered title + collector-number, collector-number-only, title, and cautious OCR-noise-relaxed queries;
+6. search variants automatically and preserve provider outages as retryable errors instead of false no-matches.
 
-OCR is advisory. Failure returns control to manual query entry.
+OCR begins when a straightened crop enters review. Failure returns control to manual query entry and can also invoke the independent visual candidate index; no approved price source is required for identification.
 
-### 7.5 Visual reranking
+### 7.5 Visual candidate recovery and reranking
 
-The app computes a 64-bit difference hash from a 9×8 grayscale rendering of the user crop. For candidate images that permit CORS access, it computes the same hash and combines:
+The app computes a 64-bit difference hash from a 9×8 grayscale rendering of the straightened crop. A versioned, sharded Pokémon index contains compact catalog metadata and the same fingerprint for 20,392 of 20,444 indexed cards, pinned to an immutable `PokemonTCG/pokemon-tcg-data` commit. When OCR produces no useful catalog result, the nearest index records become real catalog candidates without downloading every provider image.
 
-- 62% visual hash similarity;
-- 38% text/metadata match score.
+For OCR-generated candidates whose images permit CORS access, metadata remains primary and full-card dHash is only a tie-breaker:
+
+- 88% title / collector-number metadata match;
+- 12% visual hash similarity.
 
 When candidate images cannot be read through Canvas, ranking falls back to metadata similarity.
 
 ## 8. Review safety model
 
-A crop can be `unmatched`, `identifying`, `matched`, or `error`. It is only included in batch add when:
+A crop can be `queued`, `unmatched`, `identifying`, `matched`, or `error`. Persisted queued/interrupted crops restart automatically when their draft resumes. It is only included in batch add when:
 
 - a candidate or explicit custom fallback is selected; and
 - `approved === true`.
@@ -386,6 +404,22 @@ Migration `0004_price_intelligence_function_acl_hardening.sql` removes Supabase 
 
 Migration `0006_price_intelligence_governance_hardening.sql` makes the database `public_price_intelligence` flag and exact source attribution part of the public RLS predicate; terms-review rows become append-only. Mapping corrections use a one-to-one supersession RPC that preserves referenced versions. Model records distinguish static definitions, nullable training datasets, and code artifacts. Every matured outcome is `scored` or `unscorable`, while scorecards persist a complete case partition, exact membership/hash, and versioned policy/hash. Direct service-role model-review inserts are revoked: an authenticated JWT with server-managed `app_metadata.price_intelligence_operator=true` must use `review_model_promotion`. Descriptive publication and per-card quarantine remain separate service-role RPCs, and disable actions append control receipts. This migration added two RLS-protected tables and is included in the hosted migration inventory recorded below.
 
+Migration `0019_centralized_historical_price_imports.sql` defines the operated central
+history store for bulk backfills. It adds append-only import manifests and exact
+import-to-observation membership, allowing identical observations in overlapping rolling
+archives to be reused without transferring physical row ownership. Deterministic import,
+run, series, observation, and membership contracts make exact replay a no-op and reject
+conflicting overlap. Each batch is bounded to 2,000 exact series and 100,000 observations.
+The source availability claim is retained as `source_available_at`; PostgreSQL authors
+`collectfolio_first_seen_at` and advances effective `available_at` to at least that time.
+`observed_at_proxy` can be stored but is marked point-in-time-ineligible. The tables have no
+browser grants. A security-invoker, service-role-only
+`centralized_history_publication_evidence` view chooses the earliest sealed eligible import
+per observation, preserving retrospective eligibility when later archives overlap. It
+carries source availability, database first sight, and import seal time; proxy-only rows
+are absent. The migration installs no forecast publisher, and applying it to a hosted
+database remains a separate backed-up operator action.
+
 Migration `0015_remove_my_cloud_data.sql` is checked in and intentionally not applied.
 It installs one authenticated security-definer RPC that binds its target to
 `auth.uid()`, removes only that collector's portfolio, Watchlist, snapshot, scan, and
@@ -432,7 +466,58 @@ The latest publication keeps the bounded `intelligence:v1:` TTL cache. Refresh a
 
 The Python analytics core requires exact series identity plus `observed_at` and `available_at`; only accepted records knowable at the feature cutoff enter a snapshot. Outliers remain in the immutable ledger and its audit hash but never become features or realized targets. It implements deterministic canonical rows, conservative mapping candidates, rights-gated observation packets, descriptive features, no-change/damped-momentum baselines, quantile validation, pull-scarcity formulas, and the research-only legacy formula. Evaluation uses the seven-day maturity median and reports point, direction, probability, interval, and baseline-relative metrics.
 
+The client never owns the historical corpus. CollectFolio's centralized database retains
+normalized history for every supported exact catalog variant as licensed data becomes
+available, including later bulk loads. A backfill first seen today may support an estimate
+generated today but not an earlier walk-forward origin. Before descriptive publication,
+the complete trend snapshot and observed value must reproduce from the sealed centralized
+evidence view using database-effective availability and import seal time. Publications may
+then carry an optional, rights-gated chart slice of at most 180 ascending exact-series
+points; final hosted revisions are selected across every status before accepted rows are
+filtered. Authenticating a physical card is outside this data and forecasting contract.
+
 The retrospective builder creates a separate static-baseline model version and selects eligible historical origins at preregistered 30-day spacing. Each origin gets a run/snapshot, an exact feature-dataset hash, and horizon predictions; the model stores a definition hash and current Python code-artifact hash. Deterministic evaluation/scorecard IDs and explicit `retrospective_walk_forward` plus `not_prospectively_generated` reason codes prevent historical simulations from masquerading as prospective outputs. Historical origins are feature cutoffs only: model creation, analytics execution, and evaluation timestamps use the actual generation instant. Rights are checked at that instant and again when guarded SQL executes.
+
+Prospective execution is a separate unapplied 0017/0018 contract. A future-dated
+scorecard plan binds the model, independent executor key, exact-series policy, horizon,
+cohort/source/purpose, 6–18 exact future origin slots, five-baseline policy, and
+quantitative gates before outcomes. Slot anchors are at least 22 days apart so their
+24-hour challenge windows leave 21 full days between any two actual origins, and every
+slot must be consumed exactly once. A database nonce then binds one
+manifest-complete trend run to one still-running
+output-free forecast run. The isolated executor HMAC-signs an order-independent packet
+covering exact-series quantiles, confidence/status/reasons, origin-time cost commitment,
+five baseline prices, after-cost probability, and structural lower bound. The guarded
+transaction independently rehashes it, finalizes the analytics run, makes challenge
+issuance the forecast origin, and writes immutable receipts and prediction-level outputs.
+Every prediction insert first locks its analytics-run row and rejects challenged-run
+writes outside the receipt transaction. The recorder holds that same lock, rechecks for
+zero unsigned predictions immediately before finalization, and admits its reconstructed
+rows only under a transaction-local challenge identifier, closing the direct-insert race.
+Before commit—and again at scorecard creation—the canonical commitment is reconstructed
+from stored typed predictions, cost rows, baselines, and database-required reason codes.
+`service_role` cannot read/provision executor keys or call the older unattested writer.
+
+`tests/postgres/run_forecast_runtime.py` provides executable local evidence against a
+fresh database on an isolated PostgreSQL 15+ cluster. It applies every checked-in
+migration except the unrelated pg_cron-only 0008 schedule, then exercises key ACLs,
+malformed payload and HMAC tamper/replay rejection, terminal-run and challenged-run lock
+serialization, expired-challenge and late-failure rollback, a complete provider-cost row,
+a Python-signed receipt, and canonical stored-output parity. This is a narrow compatibility
+and transaction
+contract test, not hosted Supabase proof: restored-backup migration behavior, production
+roles/RLS, pg_cron, provider rights, executor isolation, prospective outcome windows, and
+six-slot scorecard execution plus human promotion review remain separate gates. The test
+cannot enable public forecasts.
+
+After the full plan window matures, one dedicated evaluation run must contain exactly
+one outcome per planned prediction. The prospective scorecard RPC accepts only plan/run
+IDs and derives exact membership plus point, direction, Brier/calibration, pinball,
+coverage/width, five-baseline, deterministic origin-cluster bootstrap, after-cost, and
+selected-pocket metrics in the same transaction as its hashes and recommendation.
+Direct prospective scorecard declarations are denied. The HMAC is principal attestation,
+not cryptographic workload proof, so receipts retain `artifactExecutionVerified=false`.
+No prospective function publishes a forecast or enables a feature flag.
 
 Every matured prediction receives an immutable outcome. A trailing-window target with accepted observations is `scored`; one without them is `unscorable` with null metrics, zero observations, the exact target window, and a reason. Quarantined predictions may still receive outcomes for completeness but are counted separately and excluded from comparable metric slices. Each scorecard stores matured/scored/unscorable/excluded counts, exact evaluation membership, and the full promotion policy. No-change, damped momentum, market index, lifecycle cohort, and structural convergence are required comparisons; absent data makes the result `insufficient`. The SQL exporter recomputes config, evaluation, policy, membership, packet, code-artifact, and per-origin dataset contracts before emitting rollback-first SQL. Promotion remains a separate authenticated human event and the research packet structurally requires empty promotion-review and public-candidate arrays.
 
@@ -458,10 +543,12 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.0` includes the Settings, onboarding, and local-scenario modules. Navigation
+`collectfolio-shell-v0.8.5` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, and local Portfolio Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
-160-entry cache-first store to reduce repeat downloads without unbounded growth.
+160-entry cache-first store to reduce repeat downloads without unbounded growth. The
+visual index uses a separate 20-entry cache, enough for its manifest and 16 shards;
+the installed shell manifest remains the first-offline-use fallback.
 Runtime configuration uses network-first delivery with its installed copy as an
 offline-only fallback, so key rotation and feature rollback are not hidden by a stale
 shell cache. External catalog API calls are not intercepted, so stale provider data is
@@ -492,7 +579,7 @@ Because filenames are currently stable, browser assets use short revalidation he
 3. Python standard-library tests for point-in-time leakage, robust trends, baselines, five-baseline promotion blocking, Scored/Unscorable outcomes, exact scorecard membership/hash lineage, quantiles, scarcity, and `video_model_v0` reproduction;
 4. production build into `dist/`.
 
-CI runs the same command on pushes and pull requests. A path-filtered Python 3.12 workflow independently protects the analytics package.
+CI runs the same command on pushes and pull requests. A path-filtered Python 3.12 workflow independently protects the analytics package, and a second job installs the optional DuckDB/PostgreSQL adapters so the provider-wide Parquet tests cannot silently skip.
 
 ## 14. Known limitations and next engineering work
 
@@ -508,3 +595,47 @@ CI runs the same command on pushes and pull requests. A path-filtered Python 3.1
 - Migrations 0001 through 0014 are hosted. Migration 0006's guarded mapping supersession and ACL/RLS contracts have been exercised against the hosted project, and migrations 0009/0014 now hold the reviewed pull-rate registry and explicit missing-data evidence. Migration 0015 is checked in but intentionally unapplied. The project still lacks independently retained proof of a restorable Auth/storage-aware backup; WAL-G without PITR and logical dumps do not satisfy that recovery requirement for a future destructive migration.
 - Trend thresholds and interval widths remain configurable research defaults and failed the first real walk-forward calibration gate.
 - The August 5 legacy retrospective evidence contains 109 stored evaluations. The 7-day scorecard rejects the damped-momentum baseline; 30/90/180-day slices are insufficient; all scored horizons have negative no-change-relative lift and under-covered 80% intervals. It predates the 30-day/five-baseline/Unscorable evidence contract and cannot support promotion. Human model promotion remains intentionally empty.
+
+## 15. Private market-universe plane
+
+Migration `0020_tcgcsv_market_universe.sql` adds a private provider-native
+current-state plane backed by immutable raw archives and daily Parquet history.
+The daily compiler produces one feature row for every current provider series
+and one set feature for every archive group, including explicit insufficient
+rows. It produces limited research-only 30/90/180/365-day damped-momentum
+estimates but installs no public forecast publisher.
+
+Archive evidence records the actual post-acquisition `source_available_at` and
+binds raw, Parquet, market-feature, and set-feature object URIs plus their hashes
+into the sealed run. After catalog ingestion, the restricted role exports all
+current catalog rows under `REPEATABLE READ` with a database-authored
+availability timestamp, latest pointers, per-row run provenance, row counts,
+the sealed feature hash/count, an exact current-series manifest hash, and
+price/product reconciliation. Partial refreshes and unresolved or missing
+priced products are explicit abstentions.
+
+The separately disabled Sunday Structural Gap Lab consumes only that current
+feature object and catalog snapshot. It partitions complete provider groups
+across disjoint training, calibration, and held-out sets; compiles subtype,
+rarity, card-type, set-age, and target-excluding peer aggregates; and emits
+private held-out current-price bands with fold/artifact/input hashes. Three
+gap-free weekly origins spanning at least 14 days are required for persistent
+below-band telemetry. V2 has a single pinned NumPy 2.4.2 float64 solver path,
+rounds coefficients before use, and seals the solver version, actual NumPy
+runtime, precision, and implementation-source hash into packets, fold/artifact
+hashes, and persistence compatibility. It claims neither future value nor
+canonical identity and has no browser/publication integration. V2 models
+Pokémon category 3 only while hashing all full-archive exclusions; games cannot
+share folds or coefficients.
+Full packets remain in private object storage, and the public-repository Actions
+artifact exposes sanitized receipts only.
+
+Search-result hydration now includes canonical variants represented by the
+current search result set in addition to Holdings and Watchlist. The result
+adapter and view display name, type, set, observed price, approved rolling
+30-day return, and approved 1/3/6/12-month median estimates. Exact market-series
+selection, support-tier validation, rights checks, and the public feature flag
+still fail closed; private TCGCSV rows never enter that client path directly.
+
+See [TCGCSV_MARKET_UNIVERSE.md](TCGCSV_MARKET_UNIVERSE.md) for the data layout,
+sync algorithm, role/object-store requirements, and recovery contract.
