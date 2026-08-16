@@ -150,7 +150,9 @@ const SET_COVER_KEYWORD_TIERS = Object.freeze([
   Object.freeze(['display']),
   Object.freeze(['box']),
   Object.freeze(['case']),
-  Object.freeze(['booster'])
+  Object.freeze(['booster']),
+  Object.freeze(['booster', 'pack']),
+  Object.freeze(['pack'])
 ]);
 
 export function pickTCGCSVSetCover(products = [], random = Math.random) {
@@ -239,13 +241,25 @@ export function filterCatalogProducts(products = [], { query = '', sort = 'numbe
   const needle = normalizeQuery(query);
   const filtered = products.filter((product) => !needle
     || normalizeQuery([product.name, product.number, product.rarity, product.variant].filter(Boolean).join(' ')).includes(needle));
+  const byNumber = (left, right) => numberCollator.compare(String(left.number || ''), String(right.number || ''))
+    || String(left.name).localeCompare(String(right.name));
+  const byName = (left, right) => String(left.name).localeCompare(String(right.name))
+    || numberCollator.compare(String(left.number || ''), String(right.number || ''));
+  const byPrice = (left, right, direction) => {
+    const priceLeft = Number.isFinite(Number(left.price)) && left.price !== null ? Number(left.price) : null;
+    const priceRight = Number.isFinite(Number(right.price)) && right.price !== null ? Number(right.price) : null;
+    if (priceLeft === null && priceRight === null) return byNumber(left, right);
+    if (priceLeft === null) return 1;
+    if (priceRight === null) return -1;
+    return (direction === 'asc' ? priceLeft - priceRight : priceRight - priceLeft) || byNumber(left, right);
+  };
   return filtered.sort((left, right) => {
-    if (sort === 'name') return String(left.name).localeCompare(String(right.name))
-      || numberCollator.compare(String(left.number || ''), String(right.number || ''));
-    if (sort === 'price-desc') return (Number(right.price) || -1) - (Number(left.price) || -1)
-      || String(left.name).localeCompare(String(right.name));
-    return numberCollator.compare(String(left.number || ''), String(right.number || ''))
-      || String(left.name).localeCompare(String(right.name));
+    if (sort === 'name') return byName(left, right);
+    if (sort === 'name-desc') return byName(right, left);
+    if (sort === 'number-desc') return byNumber(right, left);
+    if (sort === 'price-desc') return byPrice(left, right, 'desc');
+    if (sort === 'price-asc') return byPrice(left, right, 'asc');
+    return byNumber(left, right);
   });
 }
 

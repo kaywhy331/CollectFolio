@@ -7,7 +7,7 @@ const DISCOVER_PROVIDERS = new Set(['all', 'pokemon', 'scryfall', 'ygoprodeck', 
 const DISCOVER_MODES = new Set(['search', 'browse']);
 const BROWSE_SET_SORTS = new Set(['newest', 'alpha', 'largest']);
 const BROWSE_SET_SCOPES = new Set(['all', 'main', 'supplemental']);
-const BROWSE_PRODUCT_SORTS = new Set(['number', 'name', 'price-desc']);
+const BROWSE_PRODUCT_SORTS = new Set(['price-desc', 'price-asc', 'number', 'number-desc', 'name', 'name-desc']);
 const TCGCSV_CATEGORY = /^tcgcsv-category-\d+$/;
 
 function asURL(input = '/') {
@@ -55,10 +55,10 @@ function browsePath(browse = {}) {
   const params = new URLSearchParams();
   const setSort = BROWSE_SET_SORTS.has(browse.sort) ? browse.sort : 'newest';
   const setScope = BROWSE_SET_SCOPES.has(browse.scope) ? browse.scope : 'all';
-  const productSort = BROWSE_PRODUCT_SORTS.has(browse.productSort) ? browse.productSort : 'number';
+  const productSort = BROWSE_PRODUCT_SORTS.has(browse.productSort) ? browse.productSort : 'price-desc';
   if (!setId && setSort !== 'newest') params.set('sort', setSort);
   if (!setId && setScope !== 'all') params.set('scope', setScope);
-  if (setId && productSort !== 'number') params.set('sort', productSort);
+  if (setId && productSort !== 'price-desc') params.set('sort', productSort);
   return `${base}${params.size ? `?${params}` : ''}`;
 }
 
@@ -76,10 +76,10 @@ function discoverRoute(url, pathname = '/discover') {
     const requestedSort = bounded(url.searchParams.get('sort'), 30);
     const requestedScope = bounded(url.searchParams.get('scope'), 30);
     const sort = setId
-      ? (BROWSE_PRODUCT_SORTS.has(requestedSort) ? requestedSort : 'number')
+      ? (BROWSE_PRODUCT_SORTS.has(requestedSort) ? requestedSort : 'price-desc')
       : (BROWSE_SET_SORTS.has(requestedSort) ? requestedSort : 'newest');
     const scope = BROWSE_SET_SCOPES.has(requestedScope) ? requestedScope : 'all';
-    const browse = { game, setId, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'number' };
+    const browse = { game, setId, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'price-desc' };
     return route('discover', 'search', browsePath(browse), {
       mode: 'browse',
       browse,

@@ -38,11 +38,11 @@ test('browse routes preserve progressive game and set identity without hard-codi
   const root = parseAppRoute('/discover?mode=browse');
   assert.equal(root.mode, 'browse');
   assert.equal(root.canonicalPath, '/discover/browse');
-  assert.deepEqual(root.browse, { game: 'all', setId: '', sort: 'newest', scope: 'all', productSort: 'number' });
+  assert.deepEqual(root.browse, { game: 'all', setId: '', sort: 'newest', scope: 'all', productSort: 'price-desc' });
 
   const game = parseAppRoute('/discover/pokemon?sort=alpha&scope=main');
   assert.equal(game.canonicalPath, '/discover/pokemon?sort=alpha&scope=main');
-  assert.deepEqual(game.browse, { game: 'pokemon', setId: '', sort: 'alpha', scope: 'main', productSort: 'number' });
+  assert.deepEqual(game.browse, { game: 'pokemon', setId: '', sort: 'alpha', scope: 'main', productSort: 'price-desc' });
 
   const set = parseAppRoute('/discover/magic/mkm?sort=name');
   assert.equal(set.canonicalPath, '/discover/magic/mkm?sort=name');

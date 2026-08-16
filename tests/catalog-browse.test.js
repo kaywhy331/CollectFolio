@@ -320,6 +320,8 @@ test('set cover selection prefers display+box, then display, box, case, booster,
   assert.equal(pickTCGCSVSetCover([{ name: 'No image product' }]), '');
   assert.equal(pickTCGCSVSetCover([]), '');
   assert.equal(pickTCGCSVSetCover([{ name: 'Display Box', image: 'large-only' }]), 'large-only');
+  assert.equal(pickTCGCSVSetCover([product('Single Card', 'card'), product('Sleeve Pack', 'pack')]), 'pack');
+  assert.equal(pickTCGCSVSetCover([product('Single Card', 'card'), product('Booster Pack', 'booster-pack'), product('Sleeve Pack', 'pack')]), 'booster-pack');
 });
 
 test('set products use natural collector-number ordering without dropping unpriced cards', () => {
@@ -329,6 +331,14 @@ test('set products use natural collector-number ordering without dropping unpric
     { id: 'one', name: 'Card 1', number: '1', price: 1 }
   ];
   assert.deepEqual(filterCatalogProducts(products).map((product) => product.id), ['one', 'two', 'ten']);
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'number-desc' }).map((product) => product.id), ['ten', 'two', 'one']);
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'price-desc' }).map((product) => product.id), ['two', 'one', 'ten']);
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'price-asc' }).map((product) => product.id), ['one', 'two', 'ten']);
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'name-desc' }).map((product) => product.id), ['two', 'ten', 'one']);
+  assert.deepEqual(filterCatalogProducts(
+    [{ id: 'b', name: 'B', number: '2', price: null }, { id: 'a', name: 'A', number: '1', price: null }],
+    { sort: 'price-desc' }
+  ).map((product) => product.id), ['a', 'b']);
   assert.equal(filterCatalogProducts(products, { query: 'card' }).length, 3);
   assert.deepEqual(filterCatalogProducts(products, { sort: 'price-desc' }).map((product) => product.id), ['two', 'one', 'ten']);
 });
