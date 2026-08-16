@@ -84,24 +84,22 @@ test('Browse Sets drills from a restorable game route into every card in a set',
   expect(report.violations.filter((entry) => ['serious', 'critical'].includes(entry.impact))).toEqual([]);
 });
 
-test('Browse Sets makes the full TCGCSV cohort searchable and routes locked categories to sign-in', async ({ page }) => {
+test('Browse Sets makes the full TCGCSV cohort searchable with free community access', async ({ page }) => {
   await mockPokemonCatalog(page);
   await skipOnboarding(page);
   await page.goto('/discover/pokemon');
 
   const categories = page.locator('[data-game-search-text]');
   await expect(categories).toHaveCount(90);
-  await expect(page.getByText('90 TCGCSV categories mapped · sign in to browse imported contents')).toBeVisible();
+  await expect(page.getByText('90 TCGCSV categories mapped · free community access')).toBeVisible();
 
   await page.getByPlaceholder('Find Dragon Ball, One Piece, Digimon…').fill('one piece');
   await expect(categories.filter({ visible: true })).toHaveCount(1);
-  const onePiece = page.getByRole('button', { name: /One Piece Card Game — sign in/ });
+  const onePiece = page.getByRole('button', { name: /One Piece Card Game/ });
   await expect(onePiece).toBeVisible();
-  await expect(page.getByRole('button', { name: /Dragon Ball Z TCG — sign in/ })).toBeHidden();
+  await expect(page.getByRole('button', { name: /Dragon Ball Z TCG/ })).toBeHidden();
 
   await onePiece.click();
   await expect(page).toHaveURL(/\/discover\/tcgcsv-category-68$/);
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Optional cloud account' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog')).toBeHidden();
 });

@@ -42,7 +42,7 @@ test('first-party custom values and unrelated reviewed catalog behavior remain d
   }), [{ finish: 'foil', price: 3 }]);
 });
 
-test('TCGCSV values require the explicit authenticated private-test entitlement', () => {
+test('TCGCSV values display under the free-access or legacy private-test entitlement', () => {
   const restricted = {
     provider: 'tcgcsv', price: 12,
     priceSource: 'TCGCSV authenticated private test · market'
@@ -59,6 +59,15 @@ test('TCGCSV values require the explicit authenticated private-test entitlement'
   assert.equal(isRestrictedCatalogPrice(entitled), false);
   assert.equal(catalogPriceForValuation(entitled), 12);
   assert.deepEqual(catalogPriceOptionsForDisplay(entitled), entitled.priceOptions);
+
+  const freeAccess = {
+    provider: 'tcgcsv', price: 8,
+    pricingEntitlement: 'community-free-access',
+    priceSource: 'TCGCSV community catalog · market'
+  };
+  assert.equal(isRestrictedCatalogPrice(freeAccess), false);
+  assert.equal(catalogPriceForValuation(freeAccess), 8);
+  assert.equal(isRestrictedCatalogPrice({ ...freeAccess, pricingEntitlement: 'commercial-tier' }), true);
 });
 
 test('only rights-aware portfolio snapshots remain eligible for trend display', () => {

@@ -4,6 +4,9 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 200;
 const PRIVATE_TEST_ENTITLEMENT = 'authenticated-private-test';
+const FREE_ACCESS_ENTITLEMENT = 'community-free-access';
+const TCGPLAYER_IMAGE_CDN = 'https://tcgplayer-cdn.tcgplayer.com/product';
+const TCGPLAYER_IMAGE_SIZES = Object.freeze([200, 400, 600, 800, 1000]);
 const PRICE_FIELDS = Object.freeze([
   ['marketPrice', 'market'],
   ['midPrice', 'mid'],
@@ -18,24 +21,27 @@ function config() {
 
 function catalogBaseUrl() {
   const configured = String(config().TCGCSV_CATALOG_URL ?? '').trim();
-  if (!configured) throw new Error('The TCGCSV test catalog is not configured on this site.');
+  if (!configured) throw new Error('The TCGCSV catalog is not configured on this site.');
   let url;
   try {
     url = new URL(configured);
   } catch {
-    throw new Error('The TCGCSV test catalog URL is invalid.');
+    throw new Error('The TCGCSV catalog URL is invalid.');
   }
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) {
-    throw new Error('The TCGCSV test catalog must use HTTPS.');
+    throw new Error('The TCGCSV catalog must use HTTPS.');
   }
   return url;
 }
 
+// Free community access: a signed-in session is attached when present so
+// deployments that still gate the catalog keep working, but browsing never
+// requires one.
 async function catalogSession() {
   try {
     return await validSession();
   } catch {
-    throw new Error('Sign in to use the TCGCSV test catalog.');
+    return null;
   }
 }
 
@@ -56,7 +62,7 @@ async function boundedJson(response) {
   }
   if (!response.ok) {
     const message = response.status === 401
-      ? 'Sign in to use the TCGCSV test catalog.'
+      ? 'This TCGCSV catalog deployment still requires sign-in.'
       : value?.error || `The TCGCSV catalog request failed with HTTP ${response.status}.`;
     throw new Error(message);
   }
@@ -69,16 +75,14 @@ export async function requestTCGCSVCatalog(path, {
   fetchImpl = globalThis.fetch
 } = {}) {
   const activeSession = session || await catalogSession();
-  if (!activeSession?.access_token) throw new Error('Sign in to use the TCGCSV test catalog.');
   const url = new URL(path, catalogBaseUrl());
   Object.entries(params).forEach(([key, value]) => {
     if (value !== '' && value !== null && value !== undefined) url.searchParams.set(key, String(value));
   });
+  const headers = { accept: 'application/json' };
+  if (activeSession?.access_token) headers.authorization = `Bearer ${activeSession.access_token}`;
   const response = await fetchImpl(url, {
-    headers: {
-      accept: 'application/json',
-      authorization: `Bearer ${activeSession.access_token}`
-    },
+    headers,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   });
   return boundedJson(response);
@@ -131,6 +135,13 @@ function extendedValue(product, names) {
     .find((entry) => expected.has(String(entry?.name || entry?.displayName || '').toLowerCase()))?.value || '';
 }
 
+export function tcgcsvProductImageUrl(productId, size = 400) {
+  const id = Number(productId);
+  if (!Number.isSafeInteger(id) || id <= 0) return '';
+  const scale = TCGPLAYER_IMAGE_SIZES.includes(Number(size)) ? Number(size) : 400;
+  return `${TCGPLAYER_IMAGE_CDN}/${id}_in_${scale}x${scale}.jpg`;
+}
+
 function imageFromExtendedData(product) {
   const value = String(extendedValue(product, ['image', 'image url', 'imageurl', 'photo', 'front image']));
   try {
@@ -147,8 +158,8 @@ function normalizedPriceOption(row = {}) {
     finish: String(row.subtypeName || 'Unspecified'),
     price: preferred.value,
     source: preferred.value === null
-      ? 'TCGCSV authenticated private test · price unavailable'
-      : `TCGCSV authenticated private test · ${preferred.label}`,
+      ? 'TCGCSV community catalog · price unavailable'
+      : `TCGCSV community catalog · ${preferred.label}`,
     selectedField: preferred.field,
     lowPrice: finitePrice(row.lowPrice),
     midPrice: finitePrice(row.midPrice),
@@ -177,7 +188,9 @@ export function normalizeTCGCSVProduct(product = {}, {
   const rawPrices = Array.isArray(product.prices) ? product.prices : [];
   const priceOptions = rawPrices.map(normalizedPriceOption);
   const preferred = priceOptions.find((option) => option.price !== null) || null;
-  const image = imageFromExtendedData(product);
+  const extendedImage = imageFromExtendedData(product);
+  const image = extendedImage || tcgcsvProductImageUrl(productId, 1000);
+  const imageSmall = extendedImage || tcgcsvProductImageUrl(productId, 400);
   const setName = group.name || product.groupName || '';
   const releasedAt = group.publishedOn || '';
   const externalId = `${categoryId}:${groupId}:${productId}`;
@@ -185,7 +198,7 @@ export function normalizeTCGCSVProduct(product = {}, {
     id: `tcgcsv:${externalId}`,
     externalId,
     provider: 'tcgcsv',
-    pricingEntitlement: PRIVATE_TEST_ENTITLEMENT,
+    pricingEntitlement: FREE_ACCESS_ENTITLEMENT,
     category: mapped.category,
     game: mapped.game,
     name: product.name || product.cleanName || `TCGCSV product ${productId}`,
@@ -198,7 +211,7 @@ export function normalizeTCGCSVProduct(product = {}, {
     cardType: product.cardType || extendedValue(product, ['card type']),
     year: String(releasedAt).slice(0, 4),
     image,
-    imageSmall: image,
+    imageSmall,
     price: preferred?.price ?? null,
     priceOptions,
     currency: 'USD',
@@ -396,3 +409,4 @@ export async function getTCGCSVProduct(externalId) {
 }
 
 export const TCGCSV_PRIVATE_TEST_ENTITLEMENT = PRIVATE_TEST_ENTITLEMENT;
+export const TCGCSV_FREE_ACCESS_ENTITLEMENT = FREE_ACCESS_ENTITLEMENT;

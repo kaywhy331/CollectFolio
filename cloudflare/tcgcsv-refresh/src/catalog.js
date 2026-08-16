@@ -748,6 +748,9 @@ async function boundedResponseObject(response) {
 }
 
 export async function authenticateCatalogUser(request, env, fetchImpl = globalThis.fetch) {
+  // Community free access: when enabled, catalog reads are open to everyone —
+  // no Supabase session required. Control-plane (/v1/*) routes are unaffected.
+  if (env.CATALOG_PUBLIC_ACCESS === 'true') return { id: 'community-public-access' };
   const authorization = request.headers.get('authorization') ?? '';
   if (!authorization.startsWith('Bearer ') || authorization.length > 16 * 1024) return null;
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) return null;
