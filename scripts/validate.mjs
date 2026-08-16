@@ -794,7 +794,7 @@ const netlify = await readFile(resolve(root, 'netlify.toml'), 'utf8');
 for (const text of ['command = "npm run build"', 'publish = "dist"', 'NODE_VERSION = "22"', 'to = "/index.html"', 'for = "/sw.js"']) if (!netlify.includes(text)) errors.push(`netlify.toml missing ${text}`);
 if (netlify.includes("'unsafe-eval'")) errors.push('Content Security Policy must not allow unsafe-eval.');
 if (!netlify.includes("'wasm-unsafe-eval'")) errors.push('Content Security Policy must allow WebAssembly compilation for configured OCR.');
-for (const host of ['https://images.pokemontcg.io', 'https://images.scrydex.com', 'https://assets.tcgdex.net', 'https://cards.scryfall.io', 'https://images.ygoprodeck.com']) {
+for (const host of ['https://images.pokemontcg.io', 'https://images.scrydex.com', 'https://assets.tcgdex.net', 'https://cards.scryfall.io', 'https://images.ygoprodeck.com', 'https://tcgplayer-cdn.tcgplayer.com']) {
   if (netlify.split(host).length < 3) errors.push(`Content Security Policy must allow ${host} for both provider images and service-worker fetches.`);
 }
 if (!netlify.includes('https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev')) {
