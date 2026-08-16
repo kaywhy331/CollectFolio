@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CATALOG_GAMES,
+  TCGCSV_CATALOG_GAMES,
+  catalogGameRequiresSession,
   catalogGamesFromTCGCSVCategories,
   filterCatalogProducts,
   filterCatalogSets,
   mergeCatalogGames,
   scopedTCGCSVGroups
 } from '../app/assets/js/services/catalog-browse.js';
+import { TCGCSV_CATEGORY_DIRECTORY } from '../app/assets/js/services/providers/tcgcsv-categories.js';
 import { normalizePokemonSet } from '../app/assets/js/services/providers/pokemon.js';
 import { normalizeScryfallSet } from '../app/assets/js/services/providers/scryfall.js';
 import { normalizeYGOSet } from '../app/assets/js/services/providers/ygoprodeck.js';
@@ -26,6 +29,13 @@ import {
 
 test('browse catalog exposes provider-neutral games and normalized set identity', () => {
   assert.deepEqual(CATALOG_GAMES.map((game) => game.id), ['pokemon', 'magic', 'yugioh']);
+  assert.equal(TCGCSV_CATEGORY_DIRECTORY.length, 90);
+  assert.deepEqual(TCGCSV_CATEGORY_DIRECTORY.map((category) => category.categoryId),
+    Array.from({ length: 90 }, (_, index) => index + 1));
+  assert.equal(TCGCSV_CATEGORY_DIRECTORY.find((category) => category.categoryId === 23)?.displayName, 'Dragon Ball Z TCG');
+  assert.equal(TCGCSV_CATEGORY_DIRECTORY.find((category) => category.categoryId === 68)?.displayName, 'One Piece Card Game');
+  assert.equal(TCGCSV_CATEGORY_DIRECTORY.find((category) => category.categoryId === 90)?.displayName, 'CookieRun: Braverse TCG');
+  assert.equal(TCGCSV_CATALOG_GAMES.length, 90);
   const tcgcsvGames = catalogGamesFromTCGCSVCategories([
     { categoryId: 3, displayName: 'Pokemon' },
     { categoryId: 68, displayName: 'One Piece Card Game' }
@@ -34,12 +44,17 @@ test('browse catalog exposes provider-neutral games and normalized set identity'
     { id: 'tcgcsv-category-3', name: 'Pokemon' },
     { id: 'tcgcsv-category-68', name: 'One Piece Card Game' }
   ]);
-  assert.deepEqual(mergeCatalogGames(tcgcsvGames).map((game) => game.id), [
-    'pokemon', 'magic', 'yugioh', 'tcgcsv-category-3', 'tcgcsv-category-68'
-  ]);
+  const mergedGames = mergeCatalogGames(tcgcsvGames);
+  assert.equal(mergedGames.length, 93);
+  assert.deepEqual(mergedGames.slice(0, 3).map((game) => game.id), ['pokemon', 'magic', 'yugioh']);
+  assert.equal(mergedGames.find((game) => game.id === 'tcgcsv-category-68')?.name, 'One Piece Card Game');
+  assert.equal(mergedGames.at(-1)?.id, 'tcgcsv-category-90');
   assert.equal(tcgcsvGameId(68), 'tcgcsv-category-68');
   assert.equal(tcgcsvCategoryId('tcgcsv-category-68'), 68);
   assert.equal(tcgcsvCategoryId('tcgcsv'), null);
+  assert.equal(catalogGameRequiresSession('tcgcsv-category-23'), true);
+  assert.equal(catalogGameRequiresSession('tcgcsv-category-23', [], { access_token: 'test' }), false);
+  assert.equal(catalogGameRequiresSession('pokemon'), false);
   assert.deepEqual(normalizePokemonSet({ id: 'swsh12', name: 'Silver Tempest', series: 'Sword & Shield', printedTotal: 195, releaseDate: '2022-11-11', ptcgoCode: 'SIT' }), {
     id: 'pokemon:swsh12', pokemonId: 'swsh12', externalId: 'swsh12', provider: 'pokemon', gameId: 'pokemon', game: 'Pokémon',
     name: 'Silver Tempest', code: 'SIT', series: 'Sword & Shield', printedTotal: 195, releaseDate: '2022-11-11', ptcgoCode: 'SIT', releasedAt: '2022-11-11',

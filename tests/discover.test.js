@@ -87,7 +87,7 @@ test('Discover retains a complete result set while rendering large catalogs in b
   assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
 });
 
-test('Discover browse renders a compact game-to-set index without exposing private sources', () => {
+test('Discover browse exposes all 90 source categories while keeping imported contents locked signed out', () => {
   const html = renderSearch(state({
     discover: {
       mode: 'browse', game: 'pokemon', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
@@ -100,8 +100,15 @@ test('Discover browse renders a compact game-to-set index without exposing priva
   assert.match(html, /data-set-id="swsh12"/);
   assert.match(html, /Silver Tempest/);
   assert.match(html, /SIT · 2022 · 195 cards/);
-  assert.match(html, /More games will appear as coverage expands/);
-  assert.doesNotMatch(html, /TCGCSV|Data source/);
+  assert.match(html, /All TCGCSV games and categories/);
+  assert.match(html, /90 TCGCSV categories mapped · sign in to browse imported contents/);
+  assert.equal((html.match(/data-game-search-text=/g) || []).length, 90);
+  assert.equal((html.match(/data-catalog-locked="true"/g) || []).length, 90);
+  assert.match(html, /data-game="tcgcsv-category-23"[^>]*>[\s\S]*?Dragon Ball Z TCG/);
+  assert.match(html, /data-game="tcgcsv-category-68"[^>]*>[\s\S]*?One Piece Card Game/);
+  assert.match(html, /data-game="tcgcsv-category-90"[^>]*>[\s\S]*?CookieRun: Braverse TCG/);
+  assert.match(html, /catalog contents are not served anonymously/);
+  assert.doesNotMatch(html, /Data source/);
   assert.doesNotMatch(html, /catalog-search/);
 });
 
@@ -111,6 +118,7 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
     { id: 'tcgcsv-category-68', name: 'One Piece Card Game', shortName: 'One Piece Card Game', provider: 'tcgcsv', categoryId: 68 }
   ];
   const browse = renderSearch(state({
+    auth: { session: { access_token: 'personal-test' } },
     discover: {
       mode: 'browse', game: 'tcgcsv-category-68', games, setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
       sets: [{ id: 'tcgcsv:68:1000', externalId: '68:1000', gameId: 'tcgcsv-category-68', game: 'One Piece Card Game', name: 'Romance Dawn', code: 'OP-01', cardCount: 154, supplemental: false }],
@@ -118,21 +126,32 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
     }
   }));
   assert.match(browse, /data-game="tcgcsv-category-3"/);
-  assert.match(browse, /data-game="tcgcsv-category-68" aria-pressed="true">One Piece Card Game/);
+  assert.match(browse, /data-game="tcgcsv-category-68"[^>]*aria-pressed="true"[^>]*><span>One Piece Card Game/);
+  assert.equal((browse.match(/<small>Active<\/small>/g) || []).length, 90);
+  assert.match(browse, /90 TCGCSV categories mapped · catalog access active/);
   assert.match(browse, /One Piece Card Game[\s\S]*Romance Dawn/);
   assert.doesNotMatch(browse, /Full catalog|Full TCGCSV catalog/);
 
   const search = renderSearch(state({
+    auth: { session: { access_token: 'personal-test' } },
     discover: { mode: 'search', games },
     search: {
       query: 'Luffy', category: 'tcgcsv-category-68', provider: 'tcgcsv', filters: {}, view: 'gallery', loading: false, warnings: [],
       results: [{ ...item, provider: 'tcgcsv', externalId: '68:1000:2000', category: 'tcgcsv-category-68', game: 'One Piece Card Game', name: 'Monkey.D.Luffy' }]
     }
   }));
-  assert.match(search, /<optgroup label="TCGCSV games">/);
+  assert.match(search, /<optgroup label="TCGCSV games and categories \(90\)">/);
   assert.match(search, /value="tcgcsv-category-68" selected>One Piece Card Game/);
   assert.match(search, /class="result-facts"><span>One Piece Card Game<\/span>/);
   assert.doesNotMatch(search, /Full catalog|Full TCGCSV catalog/);
+
+  const signedOutSearch = renderSearch(state({
+    discover: { mode: 'search' },
+    search: { query: 'Luffy', category: 'tcgcsv-category-68', provider: 'tcgcsv', filters: {}, view: 'gallery', loading: false, warnings: [], results: [] }
+  }));
+  assert.match(signedOutSearch, /One Piece Card Game — sign in/);
+  assert.match(signedOutSearch, /One Piece Card Game is mapped and ready/);
+  assert.match(signedOutSearch, /data-action="open-auth">Sign in to search its imported cards and prices/);
 });
 
 test('Discover browse retains a complete set manifest while rendering bounded tiles', () => {

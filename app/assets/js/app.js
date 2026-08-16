@@ -23,7 +23,7 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
-import { clearBrowseCatalogCache, loadCatalogGames, loadCatalogSetProducts, loadCatalogSets, mergeCatalogGames } from './services/catalog-browse.js';
+import { catalogGameRequiresSession, clearBrowseCatalogCache, loadCatalogGames, loadCatalogSetProducts, loadCatalogSets, mergeCatalogGames } from './services/catalog-browse.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
@@ -720,6 +720,13 @@ async function runCatalogSearch(form) {
   const data = Object.fromEntries(new FormData(form));
   const filters = Object.fromEntries(['setName', 'number', 'variant', 'player', 'year', 'grade']
     .map((key) => [key, String(data[key] || '').trim()]));
+  if (catalogGameRequiresSession(data.category, getState().discover.games, getState().auth.session)) {
+    const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: false, results: [], warnings: [], cached: false };
+    setState({ search });
+    navigate('search', { search });
+    openAuth();
+    return;
+  }
   const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: true, results: [], warnings: [], cached: false };
   const recentSearches = [String(data.query || '').trim(), ...(getState().settings.recentSearches || [])]
     .filter(Boolean).filter((query, index, all) => all.findIndex((entry) => entry.toLowerCase() === query.toLowerCase()) === index).slice(0, 5);
@@ -1307,7 +1314,13 @@ root.addEventListener('click', async (event) => {
     if (action.dataset.mode === 'browse' && getState().featureFlags?.setBrowsing !== false) navigateBrowse();
     else navigate('search', { search: getState().search, discover: { ...getState().discover, mode: 'search' } });
   }
-  if (action.dataset.action === 'select-browse-game') navigateBrowse({ game: action.dataset.game || 'all', setId: '' });
+  if (action.dataset.action === 'select-browse-game') {
+    const game = action.dataset.game || 'all';
+    const requiresSession = catalogGameRequiresSession(game, getState().discover.games, getState().auth.session);
+    navigateBrowse({ game, setId: '' });
+    if (requiresSession) openAuth();
+    return;
+  }
   if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '' });
   if (action.dataset.action === 'open-browse-set') navigateBrowse({ game: action.dataset.game, setId: action.dataset.setId });
   if (action.dataset.action === 'browse-back-sets') navigateBrowse({ setId: '' });
@@ -1625,6 +1638,17 @@ root.addEventListener('input', (event) => {
     const crop = activeDraft.crops.find((entry) => entry.id === cropId);
     if (crop) crop.query = event.target.value;
   }
+  if (event.target.matches('[data-browse-game-query]')) {
+    const tokens = String(event.target.value || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let visible = 0;
+    root.querySelectorAll('[data-game-search-text]').forEach((button) => {
+      const matches = tokens.every((token) => button.dataset.gameSearchText.includes(token));
+      button.hidden = !matches;
+      if (matches) visible += 1;
+    });
+    const empty = root.querySelector('[data-browse-game-empty]');
+    if (empty) empty.hidden = visible > 0;
+  }
   const browseField = event.target.matches('[data-browse-set-query]')
     ? ['query', '[data-browse-set-query]']
     : event.target.matches('[data-browse-product-query]')
@@ -1698,6 +1722,7 @@ root.addEventListener('change', async (event) => {
     const form = event.target.form;
     const data = Object.fromEntries(new FormData(form));
     setState({ search: { ...getState().search, query: data.query || '', category: data.category || 'all', provider: data.provider || 'all', filters: {} } });
+    if (catalogGameRequiresSession(data.category, getState().discover.games, getState().auth.session)) openAuth();
   }
   if (event.target.matches('[data-browse-set-sort]')) setState({ discover: { ...getState().discover, sort: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
   if (event.target.matches('[data-browse-set-scope]')) setState({ discover: { ...getState().discover, scope: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });

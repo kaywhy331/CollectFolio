@@ -1,7 +1,7 @@
 window.COLLECTFOLIO_CONFIG = Object.freeze({
   SUPABASE_URL: 'https://agmjgyyvhfcivbwdlvzk.supabase.co',
   SUPABASE_ANON_KEY: '',
-  APP_VERSION: '0.8.7-dev',
+  APP_VERSION: '0.8.8-dev',
   TCGCSV_REFRESH_STATUS_URL: '',
   TCGCSV_CATALOG_URL: '',
   ENABLE_TESSERACT: true,
