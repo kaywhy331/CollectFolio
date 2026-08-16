@@ -1,0 +1,71 @@
+# Continuous deployment to Netlify (collectfolio-staging).
+#
+# The Netlify site is NOT git-linked (no deploy key on the repo): this
+# workflow builds the static bundle and pushes it with the Netlify CLI
+# whenever main changes.
+#
+# Multi-project note: this account hosts several Netlify projects. The
+# target site id is pinned below so this repo can only ever deploy to
+# collectfolio-staging; other repos deploy through their own pipelines.
+#
+# Required repository secret:
+#   NETLIFY_AUTH_TOKEN — a Netlify personal access token
+#   (Netlify → User settings → Applications → New access token,
+#    then: gh secret set NETLIFY_AUTH_TOKEN)
+#
+# All values baked into the build below are public browser-facing config
+# (they are served verbatim to every visitor in runtime-config.js).
+
+name: Deploy to Netlify
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netlify-production-deploy
+  cancel-in-progress: false
+
+env:
+  NETLIFY_SITE_ID: 05b0e479-ad35-4466-a5c0-fa40d93d1a77
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Guard — deploy token present
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "::error::NETLIFY_AUTH_TOKEN secret is not set. Create a Netlify personal access token and run: gh secret set NETLIFY_AUTH_TOKEN"
+            exit 1
+          fi
+      - name: Build
+        env:
+          SUPABASE_URL: https://agmjgyyvhfcivbwdlvzk.supabase.co
+          SUPABASE_ANON_KEY: sb_publishable__helvbERfL9guU3mKGViEA_KJqpT3R4
+          APP_VERSION: 0.8.8
+          TCGCSV_REFRESH_STATUS_URL: https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev/status
+          TCGCSV_CATALOG_URL: https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev
+          ENABLE_TESSERACT: "true"
+          ENABLE_WATCHLISTS: "true"
+          ENABLE_SET_BROWSING: "true"
+          ENABLE_PRICE_INTELLIGENCE: "false"
+          ENABLE_CLOUD_DATA_REMOVAL: "false"
+        run: node scripts/build.mjs
+      - name: Deploy to production
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: npx --yes netlify-cli@17 deploy --prod --dir dist --site "$NETLIFY_SITE_ID" --message "GitHub Actions deploy for ${{ github.sha }}"
