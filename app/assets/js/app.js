@@ -23,7 +23,7 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
-import { clearBrowseCatalogCache, loadCatalogSetProducts, loadCatalogSets } from './services/catalog-browse.js';
+import { clearBrowseCatalogCache, loadCatalogGames, loadCatalogSetProducts, loadCatalogSets, mergeCatalogGames } from './services/catalog-browse.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
@@ -55,6 +55,7 @@ let inspectorReturnTarget = null;
 let inspectorWasOpen = false;
 let searchGeneration = 0;
 let browseGeneration = 0;
+let catalogGamesGeneration = 0;
 let browseFilterTimer = null;
 let routeHydrationId = 0;
 let identificationRun = 0;
@@ -431,6 +432,7 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
     setState({ discover: {
       ...getState().discover,
       loading: false,
+      games: mergeCatalogGames(getState().discover.games, response.games),
       sets: response.sets,
       products,
       selectedSet,
@@ -448,6 +450,22 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
       error: error.message || 'The set catalog could not be loaded.',
       warnings: []
     } });
+  }
+}
+
+async function hydrateCatalogGames({ bypassCache = false } = {}) {
+  if (!getState().auth.session) return;
+  const generation = ++catalogGamesGeneration;
+  try {
+    const games = await loadCatalogGames({ bypassCache });
+    if (generation !== catalogGamesGeneration) return;
+    setState({ discover: {
+      ...getState().discover,
+      games: mergeCatalogGames(getState().discover.games, games)
+    } });
+  } catch {
+    // Browse requests surface actionable catalog warnings. Search keeps its
+    // public options usable when private category metadata is unavailable.
   }
 }
 
@@ -473,6 +491,7 @@ function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = tru
   if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
   if (state.ready && route.key === 'card-detail' && !activeDetail) hydrateCardRoute(route);
   if (state.ready && route.key === 'discover' && route.mode === 'browse') hydrateBrowseRoute(route);
+  if (state.ready && route.key === 'discover' && route.mode === 'search') hydrateCatalogGames();
 }
 
 function navigate(view, context = {}) {
@@ -750,6 +769,13 @@ function confirmClear() {
       button.disabled = true;
       clearCatalogProviderCaches();
       clearBrowseCatalogCache();
+      catalogGamesGeneration += 1;
+      browseGeneration += 1;
+      searchGeneration += 1;
+      setState({
+        discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null },
+        search: { ...getState().search, results: [], warnings: [], cached: false }
+      });
       await Promise.all([clearLocalData(), clearApplicationCacheStorage()]);
       closeModal();
       await loadLocal();
@@ -772,6 +798,10 @@ function openAuth() {
         if (session) {
           setState({ auth: { ...getState().auth, session, status: 'pending', error: '' } });
           closeModal();
+          await hydrateCatalogGames({ bypassCache: true });
+          if (activeRoute.key === 'discover' && activeRoute.mode === 'browse') {
+            await hydrateBrowseRoute(activeRoute, { bypassCache: true });
+          }
           showToast('Cloud account connected');
         } else {
           showToast('Check your email to finish creating the account', 'warning', 7000);
@@ -898,7 +928,15 @@ function confirmRemoveCloudData() {
             syncHistory: []
           });
           closeModal();
-          setState({ auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' } });
+          clearBrowseCatalogCache();
+          catalogGamesGeneration += 1;
+          browseGeneration += 1;
+          searchGeneration += 1;
+          setState({
+            auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' },
+            discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null },
+            search: { ...getState().search, results: [], warnings: [], cached: false }
+          });
           showToast('Cloud data removed; local data is unchanged');
         } catch (error) {
           button.disabled = false;
@@ -1510,7 +1548,15 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'request-price-refresh') requestPriceRefreshAction();
   if (action.dataset.action === 'sign-out') {
     await signOut();
-    setState({ auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' } });
+    clearBrowseCatalogCache();
+    catalogGamesGeneration += 1;
+    browseGeneration += 1;
+    searchGeneration += 1;
+    setState({
+      auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' },
+      discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null },
+      search: { ...getState().search, results: [], warnings: [], cached: false }
+    });
     showToast('Signed out; local portfolio is unchanged');
   }
   if (action.dataset.action === 'refresh-prices') refreshPrices();
@@ -1765,7 +1811,11 @@ addEventListener('popstate', () => {
 });
 loadLocal().then(() => {
   if (activeRoute.key === 'add-review') startDraftIdentification(activeDraft);
-  return Promise.all([hydrateCardRoute(activeRoute), hydrateBrowseRoute(activeRoute)]);
+  return Promise.all([
+    hydrateCardRoute(activeRoute),
+    hydrateBrowseRoute(activeRoute),
+    activeRoute.key === 'discover' ? hydrateCatalogGames() : Promise.resolve()
+  ]);
 }).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
   setState({ ready: true });
   showToast(error.message || 'Could not open local portfolio', 'error', 8000);

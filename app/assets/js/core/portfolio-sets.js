@@ -33,13 +33,15 @@ function setIdentity(holding = {}) {
   const item = holding.item || {};
   const setName = String(item.setName || '').trim();
   if (!setName) return null;
-  const category = identityPart(item.category, 'other');
-  const gameKey = identityPart(item.game || item.category, category);
+  const category = String(item.category || 'other').trim() || 'other';
+  const categoryKey = identityPart(category, 'other');
+  const gameKey = identityPart(item.game || item.category, categoryKey);
   return {
     id: `${gameKey}:${identityPart(setName)}`,
     gameKey,
     game: String(item.game || item.category || 'Other').trim() || 'Other',
     category,
+    categoryKey,
     setName
   };
 }
@@ -118,7 +120,7 @@ export function filterAndSortPortfolioSets(sets = [], controls = {}) {
     ? controls.sort
     : 'recent-desc';
   const filtered = (Array.isArray(sets) ? sets : []).filter((group) => {
-    const matchesCategory = category === 'all' || group.category === category;
+    const matchesCategory = category === 'all' || (group.categoryKey || identityPart(group.category, 'other')) === category;
     const haystack = normalizeQuery(`${group.setName} ${group.game} ${group.category}`);
     return matchesCategory && (!query || haystack.includes(query));
   });

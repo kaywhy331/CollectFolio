@@ -543,7 +543,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.6` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, authenticated full-catalog TCGCSV provider, and local Portfolio Sets modules plus the visual-index manifest. Navigation
+`collectfolio-shell-v0.8.7` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, authenticated category-scoped TCGCSV provider, and local Portfolio Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth. The

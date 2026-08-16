@@ -43,7 +43,7 @@ test('Portfolio combines filters, persists list presentation, and exposes bulk t
     portfolio: { section: 'holdings', query: 'Card', category: 'magic', sort: 'name-asc', filters: { setName: 'Alpha Set', pricing: 'market' }, view: 'list', selected: ['market'], limit: 100 }
   }));
   assert.match(html, /portfolio-holdings list/);
-  assert.match(html, /Category: magic/);
+  assert.match(html, /Category: Magic/);
   assert.match(html, /Set: Alpha Set/);
   assert.match(html, /Pricing: market/);
   assert.match(html, /aria-label="Bulk holding actions"/);
@@ -103,6 +103,36 @@ test('Portfolio Sets groups local printings without inventing catalog completion
   assert.match(html, /data-action="view-set-holdings"/);
   assert.doesNotMatch(html, /\d+% complete/i);
   assert.match(html, /data-portfolio-section="sets"/);
+});
+
+test('Portfolio retains TCGCSV game titles in holding and set category controls', () => {
+  const tcgcsvHolding = {
+    ...holdings[0],
+    id: 'one-piece',
+    item: {
+      ...marketItem,
+      provider: 'tcgcsv',
+      externalId: '68:1000:2000',
+      category: 'tcgcsv-category-68',
+      game: 'One Piece Card Game',
+      name: 'Monkey.D.Luffy',
+      setName: 'Romance Dawn'
+    }
+  };
+  const holdingHtml = renderPortfolio(state({
+    holdings: [tcgcsvHolding],
+    portfolio: { ...state().portfolio, category: 'tcgcsv-category-68' }
+  }));
+  assert.match(holdingHtml, /value="tcgcsv-category-68" selected>One Piece Card Game/);
+  assert.match(holdingHtml, /Category: One Piece Card Game/);
+  assert.match(holdingHtml, /One Piece Card Game · Romance Dawn/);
+
+  const setHtml = renderPortfolio(state({
+    holdings: [tcgcsvHolding],
+    portfolio: { ...state().portfolio, section: 'sets', setCategory: 'tcgcsv-category-68' }
+  }));
+  assert.match(setHtml, /value="tcgcsv-category-68" selected>One Piece Card Game/);
+  assert.match(setHtml, /<p class="eyebrow">One Piece Card Game<\/p>/);
 });
 
 test('Portfolio Sets retains every local group while bounding the first render', () => {

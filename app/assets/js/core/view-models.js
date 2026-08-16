@@ -108,6 +108,7 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
     canonicalId: reference.canonicalVariantId,
     sourceId: reference.externalId,
     category: reference.category,
+    game: reference.game,
     type,
     name: reference.name,
     setName: reference.setName,

@@ -2,12 +2,13 @@ import { INSIGHTS_HORIZONS, INSIGHTS_VIEWS } from './insights.js';
 
 const APP_ORIGIN = 'https://collectfolio.local';
 const PORTFOLIO_SECTIONS = new Set(['holdings', 'sets', 'watchlist']);
-const DISCOVER_CATEGORIES = new Set(['all', 'pokemon', 'magic', 'yugioh', 'full-catalog', 'sports', 'comics', 'slab', 'other']);
+const DISCOVER_CATEGORIES = new Set(['all', 'pokemon', 'magic', 'yugioh', 'sports', 'comics', 'slab', 'other']);
 const DISCOVER_PROVIDERS = new Set(['all', 'pokemon', 'scryfall', 'ygoprodeck', 'tcgcsv']);
 const DISCOVER_MODES = new Set(['search', 'browse']);
 const BROWSE_SET_SORTS = new Set(['newest', 'alpha', 'largest']);
 const BROWSE_SET_SCOPES = new Set(['all', 'main', 'supplemental']);
 const BROWSE_PRODUCT_SORTS = new Set(['number', 'name', 'price-desc']);
+const TCGCSV_CATEGORY = /^tcgcsv-category-\d+$/;
 
 function asURL(input = '/') {
   if (input instanceof URL) return input;
@@ -39,6 +40,10 @@ function browseSegment(value, max = 120) {
   return decoded && !decoded.includes('/') ? bounded(decoded, max) : '';
 }
 
+function discoverCategory(value) {
+  return DISCOVER_CATEGORIES.has(value) || TCGCSV_CATEGORY.test(value) ? value : 'all';
+}
+
 function browsePath(browse = {}) {
   const game = browse.game && browse.game !== 'all' ? browseSegment(browse.game, 50) : '';
   const setId = game ? browseSegment(browse.setId, 120) : '';
@@ -63,7 +68,8 @@ function discoverRoute(url, pathname = '/discover') {
   const pathRequestsBrowse = suffix.length > 0;
   const mode = pathRequestsBrowse || requestedMode === 'browse' ? 'browse' : 'search';
   if (mode === 'browse') {
-    const pathGame = suffix[0] && suffix[0] !== 'browse' ? browseSegment(suffix[0], 50) : '';
+    const requestedPathGame = suffix[0] && suffix[0] !== 'browse' ? browseSegment(suffix[0], 50) : '';
+    const pathGame = ['tcgcsv', 'full-catalog'].includes(requestedPathGame) ? '' : requestedPathGame;
     const pathSet = pathGame && suffix[1] ? browseSegment(suffix[1]) : '';
     const game = pathGame || browseSegment(url.searchParams.get('game'), 50) || 'all';
     const setId = game === 'all' ? '' : pathSet || browseSegment(url.searchParams.get('set'));
@@ -83,7 +89,7 @@ function discoverRoute(url, pathname = '/discover') {
   const query = bounded(url.searchParams.get('q'));
   const requestedCategory = bounded(url.searchParams.get('category'), 30) || 'all';
   const requestedProvider = bounded(url.searchParams.get('provider'), 30) || 'all';
-  const category = DISCOVER_CATEGORIES.has(requestedCategory) ? requestedCategory : 'all';
+  const category = discoverCategory(requestedCategory);
   const provider = DISCOVER_PROVIDERS.has(requestedProvider) ? requestedProvider : 'all';
   const params = new URLSearchParams({ mode: 'search' });
   if (query) params.set('q', query);
@@ -148,7 +154,7 @@ function discoverPath(search = {}, discover = {}) {
   if (discover.mode === 'browse') return browsePath(discover);
   const params = new URLSearchParams({ mode: 'search' });
   const query = bounded(search.query);
-  const category = DISCOVER_CATEGORIES.has(search.category) ? search.category : 'all';
+  const category = discoverCategory(search.category);
   const provider = DISCOVER_PROVIDERS.has(search.provider) ? search.provider : 'all';
   if (query) params.set('q', query);
   if (category !== 'all') params.set('category', category);
