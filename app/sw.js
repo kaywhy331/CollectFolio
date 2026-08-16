@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.10';
+const CACHE = 'collectfolio-shell-v0.8.11';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
@@ -28,7 +28,7 @@ const SHELL = [
   './assets/data/visual-index/pokemon-v1/manifest.json'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
-  'images.pokemontcg.io', 'images.scrydex.com', 'assets.tcgdex.net', 'cards.scryfall.io', 'images.ygoprodeck.com',
+  'images.pokemontcg.io', 'images.scrydex.com', 'assets.tcgdex.net', 'cards.scryfall.io', 'svgs.scryfall.io', 'images.ygoprodeck.com',
   'tcgplayer-cdn.tcgplayer.com'
 ]);
 const CATALOG_HOSTS = new Set([

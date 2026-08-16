@@ -54,6 +54,7 @@ export function normalizeYGOSet(set) {
     series: '',
     releasedAt: set.tcg_date || '',
     year: String(set.tcg_date || '').slice(0, 4),
+    image: set.set_image || '',
     productCount: Number.isFinite(cardCount) ? cardCount : null,
     cardCount: Number.isFinite(cardCount) ? cardCount : null,
     setType: 'expansion',
