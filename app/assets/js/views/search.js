@@ -1,7 +1,7 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
 import { catalogPriceOptionsForDisplay } from '../core/pricing-policy.js';
 import { searchResultViewModel } from '../core/view-models.js';
-import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
+import { escapeAttribute, escapeHTML, formatCurrency, formatPercent, safeImageUrl } from '../core/utils.js';
 import { selectPublicationForCatalogItem } from '../core/market-series.js';
 import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames, catalogSetYears, groupCatalogSets } from '../services/catalog-browse.js';
 import { findWatchedItem } from '../services/watchlist.js';
@@ -177,14 +177,21 @@ function gameChooser(state, browse, catalogGames) {
   </section>`;
 }
 
-function setTile(set, games) {
+function setTile(set, games, covers = {}) {
   const count = Number.isFinite(Number(set.cardCount)) ? `${Number(set.cardCount).toLocaleString()} cards` : 'Card count pending';
   const identity = [set.code, set.year, count].filter(Boolean).join(' · ');
+  const cover = safeImageUrl(covers[set.id] || '');
+  const art = cover
+    ? `<img class="browse-set-art" src="${escapeAttribute(cover)}" data-external-image alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">`
+    : `<span class="browse-set-art placeholder" aria-hidden="true">◇</span>`;
   return `<button class="browse-set-tile" type="button" data-action="open-browse-set" data-game="${escapeAttribute(set.gameId)}" data-set-id="${escapeAttribute(set.externalId)}">
+    ${art}
+    <span class="browse-set-copy">
     <span class="browse-set-game">${escapeHTML(set.game || catalogGame(set.gameId, games)?.name || set.gameId)}</span>
     <strong>${escapeHTML(set.name)}</strong>
     <small>${escapeHTML(identity)}</small>
     ${set.series ? `<span>${escapeHTML(set.series)}</span>` : ''}
+    </span>
   </button>`;
 }
 
@@ -213,8 +220,8 @@ function browseGameHeader(browse, games) {
     <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h2>${escapeHTML(name)}</h2></div><button class="button ghost small" type="button" data-action="browse-all-games">All games</button></div>`;
 }
 
-function browseSetSections(visible, games, groupBy) {
-  const grid = (sets) => `<div class="browse-set-grid">${sets.map((set) => setTile(set, games)).join('')}</div>`;
+function browseSetSections(visible, games, groupBy, covers = {}) {
+  const grid = (sets) => `<div class="browse-set-grid">${sets.map((set) => setTile(set, games, covers)).join('')}</div>`;
   if (groupBy === 'none') return grid(visible);
   const groups = groupCatalogSets(visible, groupBy);
   if (groups.length <= 1) return grid(visible);
@@ -244,7 +251,7 @@ function renderBrowseSets(state, browse) {
     </div>
     ${browseWarnings(browse)}
     <div class="browse-results-head"><strong>${escapeHTML(resultLabel)}</strong><span>Every matching set remains reachable.</span></div>
-    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `${browseSetSections(visible, games, groupBy)}${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-sets">Show ${Math.min(BROWSE_SETS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-sets">Show all ${sets.length}</button></div>` : ''}` : emptyState('No matching sets', 'Try another name, code, game, set type, or year.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
+    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `${browseSetSections(visible, games, groupBy, browse.setCovers || {})}${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-sets">Show ${Math.min(BROWSE_SETS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-sets">Show all ${sets.length}</button></div>` : ''}` : emptyState('No matching sets', 'Try another name, code, game, set type, or year.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
     <p class="fine-print browse-rights-note">${escapeHTML(rightsNote)}</p>`;
 }
 

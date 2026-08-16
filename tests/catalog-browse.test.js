@@ -9,6 +9,7 @@ import {
   catalogSetYears,
   filterCatalogSets,
   groupCatalogSets,
+  pickTCGCSVSetCover,
   mergeCatalogGames,
   scopedTCGCSVGroups
 } from '../app/assets/js/services/catalog-browse.js';
@@ -294,6 +295,28 @@ test('year multi-select narrows sets and grouping organizes them into scannable 
 
   assert.deepEqual(groupCatalogSets(sets, 'none').map((group) => group.sets.length), [6]);
   assert.deepEqual(groupCatalogSets([], 'family'), []);
+});
+
+test('set cover selection prefers display+box, then display, box, case, booster, then random', () => {
+  const product = (name, image) => ({ name, imageSmall: image, image });
+  const full = [
+    product('Alakazam Holo', 'card'),
+    product('Booster Pack', 'booster'),
+    product('Booster Case', 'case'),
+    product('Collector Box', 'box'),
+    product('Elite Display', 'display'),
+    product('Booster Display Box', 'display-box')
+  ];
+  assert.equal(pickTCGCSVSetCover(full), 'display-box');
+  assert.equal(pickTCGCSVSetCover(full.slice(0, 5)), 'display');
+  assert.equal(pickTCGCSVSetCover(full.slice(0, 4)), 'box');
+  assert.equal(pickTCGCSVSetCover(full.slice(0, 3)), 'case');
+  assert.equal(pickTCGCSVSetCover(full.slice(0, 2)), 'booster');
+  assert.equal(pickTCGCSVSetCover(full.slice(0, 1), () => 0), 'card');
+  assert.equal(pickTCGCSVSetCover([product('One', 'a'), product('Two', 'b')], () => 0.9), 'b');
+  assert.equal(pickTCGCSVSetCover([{ name: 'No image product' }]), '');
+  assert.equal(pickTCGCSVSetCover([]), '');
+  assert.equal(pickTCGCSVSetCover([{ name: 'Display Box', image: 'large-only' }]), 'large-only');
 });
 
 test('set products use natural collector-number ordering without dropping unpriced cards', () => {

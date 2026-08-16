@@ -5,6 +5,7 @@ import { getYGOSetCards, listYGOSets } from './providers/ygoprodeck.js';
 import { TCGCSV_CATEGORY_DIRECTORY } from './providers/tcgcsv-categories.js';
 import {
   getTCGCSVGroupProducts,
+  getTCGCSVGroupProductsSample,
   listTCGCSVCategories,
   listTCGCSVGroups,
   tcgcsvCategoryId,
@@ -139,6 +140,38 @@ export function filterCatalogSets(sets = [], { query = '', sort = 'newest', scop
     return String(right.releasedAt || '').localeCompare(String(left.releasedAt || ''))
       || String(left.name).localeCompare(String(right.name));
   });
+}
+
+// Cover-image rule for TCGCSV set tiles: prefer a product whose name has
+// both "display" and "box"; otherwise the first name containing "display",
+// then "box", then "case", then "booster"; otherwise any product at random.
+const SET_COVER_KEYWORD_TIERS = Object.freeze([
+  Object.freeze(['display', 'box']),
+  Object.freeze(['display']),
+  Object.freeze(['box']),
+  Object.freeze(['case']),
+  Object.freeze(['booster'])
+]);
+
+export function pickTCGCSVSetCover(products = [], random = Math.random) {
+  const rows = (Array.isArray(products) ? products : [])
+    .filter((product) => product && (product.imageSmall || product.image));
+  if (!rows.length) return '';
+  const named = rows.map((product) => ({ product, name: String(product.name || '').toLowerCase() }));
+  for (const keywords of SET_COVER_KEYWORD_TIERS) {
+    const match = named.find(({ name }) => keywords.every((keyword) => name.includes(keyword)));
+    if (match) return match.product.imageSmall || match.product.image;
+  }
+  const chosen = rows[Math.min(rows.length - 1, Math.floor(random() * rows.length))];
+  return chosen.imageSmall || chosen.image;
+}
+
+export async function loadTCGCSVSetCoverImage(set, { bypassCache = false, random } = {}) {
+  if (set?.provider !== 'tcgcsv' || !set.externalId) return '';
+  return cached(`cover:${set.id}`, async () => {
+    const products = await getTCGCSVGroupProductsSample(set.externalId, { limit: 100 });
+    return pickTCGCSVSetCover(products, random);
+  }, bypassCache);
 }
 
 export function catalogSetYears(sets = []) {

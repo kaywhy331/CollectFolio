@@ -349,6 +349,23 @@ export async function getTCGCSVGroupProducts(setId) {
   })).filter(Boolean);
 }
 
+// One bounded request (no pagination) — enough to choose a set cover image
+// without paying the full multi-page product download per set.
+export async function getTCGCSVGroupProductsSample(setId, { limit = 100, session, fetchImpl } = {}) {
+  const { categoryId, groupId } = groupIdentity(setId);
+  const payload = await requestTCGCSVCatalog(
+    `/catalog/groups/${categoryId}/${groupId}/products`,
+    { params: { limit }, session, fetchImpl }
+  );
+  const rows = Array.isArray(payload?.products) ? payload.products : [];
+  return rows.map((product) => normalizeTCGCSVProduct(product, {
+    category: payload?.category,
+    group: payload?.group,
+    publicationId: payload?.publicationId,
+    sourceUpdatedAt: payload?.sourceUpdatedAt
+  })).filter(Boolean);
+}
+
 export function searchTCGCSVCategoryIds(category) {
   const scopedCategoryId = tcgcsvCategoryId(category);
   if (scopedCategoryId !== null) return [scopedCategoryId];

@@ -23,7 +23,7 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
-import { catalogGameRequiresSession, clearBrowseCatalogCache, loadCatalogGames, loadCatalogSetProducts, loadCatalogSets, mergeCatalogGames } from './services/catalog-browse.js';
+import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets, loadCatalogGames, loadCatalogSetProducts, loadCatalogSets, loadTCGCSVSetCoverImage, mergeCatalogGames } from './services/catalog-browse.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
@@ -412,6 +412,40 @@ function resolveRouteContext(route, state = getState()) {
   if (route.key === 'add-review') activeDraft = state.scanDrafts?.[0] || activeDraft;
 }
 
+const COVER_FETCH_CONCURRENCY = 5;
+const coverRequestsInFlight = new Set();
+
+// Fetch cover images for the currently visible TCGCSV set tiles. One bounded
+// sample request per set, cached for the session; results merge into
+// discover.setCovers so tiles fill in as covers arrive.
+async function hydrateBrowseSetCovers() {
+  const discover = getState().discover || {};
+  if (activeRoute?.key !== 'discover' || discover.loading || !Array.isArray(discover.sets)) return;
+  const limit = Math.max(BROWSE_SETS_PAGE_SIZE, Number(discover.setLimit) || BROWSE_SETS_PAGE_SIZE);
+  const visible = filterCatalogSets(discover.sets, {
+    query: discover.query, sort: discover.sort, scope: discover.scope, years: discover.years
+  }).slice(0, limit);
+  const covers = discover.setCovers || {};
+  const pending = visible.filter((set) =>
+    set.provider === 'tcgcsv' && covers[set.id] === undefined && !coverRequestsInFlight.has(set.id));
+  if (!pending.length) return;
+  pending.forEach((set) => coverRequestsInFlight.add(set.id));
+  const queue = [...pending];
+  const worker = async () => {
+    for (let set = queue.shift(); set; set = queue.shift()) {
+      let cover = '';
+      try {
+        cover = await loadTCGCSVSetCoverImage(set);
+      } catch { /* leave the placeholder; a later render may retry */ }
+      coverRequestsInFlight.delete(set.id);
+      const current = getState().discover || {};
+      if (!Array.isArray(current.sets) || !current.sets.some((entry) => entry.id === set.id)) continue;
+      setState({ discover: { ...current, setCovers: { ...(current.setCovers || {}), [set.id]: cover } } });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(COVER_FETCH_CONCURRENCY, pending.length) }, worker));
+}
+
 async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
   if (route.key !== 'discover' || route.mode !== 'browse' || getState().featureFlags?.setBrowsing === false) return;
   const generation = ++browseGeneration;
@@ -442,6 +476,7 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
       loadedSetId: requested.setId || ''
     } });
     if (products.length) await hydrateIntelligence();
+    if (!requested.setId) hydrateBrowseSetCovers();
   } catch (error) {
     if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
     setState({ discover: {
@@ -1326,8 +1361,14 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'browse-back-sets') navigateBrowse({ setId: '' });
   if (action.dataset.action === 'retry-browse') hydrateBrowseRoute(activeRoute, { bypassCache: true });
   if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE } });
-  if (action.dataset.action === 'load-more-browse-sets') setState({ discover: { ...getState().discover, setLimit: (Number(getState().discover.setLimit) || BROWSE_SETS_PAGE_SIZE) + BROWSE_SETS_PAGE_SIZE } });
-  if (action.dataset.action === 'show-all-browse-sets') setState({ discover: { ...getState().discover, setLimit: getState().discover.sets.length } });
+  if (action.dataset.action === 'load-more-browse-sets') {
+    setState({ discover: { ...getState().discover, setLimit: (Number(getState().discover.setLimit) || BROWSE_SETS_PAGE_SIZE) + BROWSE_SETS_PAGE_SIZE } });
+    hydrateBrowseSetCovers();
+  }
+  if (action.dataset.action === 'show-all-browse-sets') {
+    setState({ discover: { ...getState().discover, setLimit: getState().discover.sets.length } });
+    hydrateBrowseSetCovers();
+  }
   if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (action.dataset.action === 'load-more-browse-products') setState({ discover: { ...getState().discover, limit: (Number(getState().discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE } });
   if (action.dataset.action === 'show-all-browse-products') setState({ discover: { ...getState().discover, limit: getState().discover.products.length } });
