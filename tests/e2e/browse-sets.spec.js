@@ -87,7 +87,7 @@ test('Browse Sets drills from a restorable game route into every card in a set',
 test('Browse Sets makes the full TCGCSV cohort searchable with free community access', async ({ page }) => {
   await mockPokemonCatalog(page);
   await skipOnboarding(page);
-  await page.goto('/discover/pokemon');
+  await page.goto('/discover/browse');
 
   const categories = page.locator('[data-game-search-text]');
   await expect(categories).toHaveCount(90);
@@ -102,4 +102,33 @@ test('Browse Sets makes the full TCGCSV cohort searchable with free community ac
   await onePiece.click();
   await expect(page).toHaveURL(/\/discover\/tcgcsv-category-68$/);
   await expect(page.getByRole('dialog')).toBeHidden();
+
+  // Drilled into a category: the directory collapses into breadcrumbs.
+  await expect(page.locator('.browse-breadcrumbs')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'One Piece Card Game' })).toBeVisible();
+  await expect(categories).toHaveCount(0);
+  await page.getByRole('button', { name: 'All games', exact: true }).click();
+  await expect(page).toHaveURL(/\/discover\/browse$/);
+  await expect(page.locator('[data-game-search-text]')).toHaveCount(90);
+});
+
+test('Browse Sets filters by selected years and groups sets into families', async ({ page }) => {
+  await mockPokemonCatalog(page);
+  await skipOnboarding(page);
+  await page.goto('/discover/pokemon');
+
+  await expect(page.locator('.browse-breadcrumbs')).toBeVisible();
+  await expect(page.getByText('2 sets', { exact: true })).toBeVisible();
+
+  await page.locator('.browse-year-filter summary').click();
+  await page.locator('[data-browse-year][value="2022"]').check();
+  await expect(page.getByText('1 set', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Silver Tempest/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Base Set/ })).toBeHidden();
+
+  await page.locator('[data-browse-year][value="1999"]').check();
+  await expect(page.getByText('2 sets', { exact: true })).toBeVisible();
+
+  await page.locator('[data-browse-set-group]').selectOption('year');
+  await expect(page.locator('.browse-set-group summary').first()).toContainText('2022');
 });

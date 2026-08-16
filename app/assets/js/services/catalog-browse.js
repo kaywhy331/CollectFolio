@@ -119,11 +119,13 @@ function setSearchScore(set, query) {
   return textSimilarity(needle, `${set.name} ${set.code} ${set.series}`);
 }
 
-export function filterCatalogSets(sets = [], { query = '', sort = 'newest', scope = 'all' } = {}) {
+export function filterCatalogSets(sets = [], { query = '', sort = 'newest', scope = 'all', years = [] } = {}) {
   const needle = normalizeQuery(query);
+  const selectedYears = new Set((Array.isArray(years) ? years : []).map((year) => String(year)).filter(Boolean));
   const filtered = sets.filter((set) => {
     if (scope === 'main' && set.supplemental) return false;
     if (scope === 'supplemental' && !set.supplemental) return false;
+    if (selectedYears.size && !selectedYears.has(String(set.year || ''))) return false;
     return !needle || setSearchScore(set, needle) >= 0.35;
   });
   return filtered.sort((left, right) => {
@@ -137,6 +139,67 @@ export function filterCatalogSets(sets = [], { query = '', sort = 'newest', scop
     return String(right.releasedAt || '').localeCompare(String(left.releasedAt || ''))
       || String(left.name).localeCompare(String(right.name));
   });
+}
+
+export function catalogSetYears(sets = []) {
+  const years = new Set((Array.isArray(sets) ? sets : [])
+    .map((set) => String(set?.year || '').trim())
+    .filter((year) => /^\d{4}$/.test(year)));
+  return [...years].sort((left, right) => right.localeCompare(left));
+}
+
+// Name-derived set families shared across TCGs. Ordered — the first matching
+// rule wins; unmatched sets fall back to "Main expansions" or, when the source
+// flags them supplemental, "Other supplemental".
+const SET_FAMILY_RULES = Object.freeze([
+  Object.freeze({ id: 'commander', name: 'Commander', pattern: /\bcommander\b/ }),
+  Object.freeze({ id: 'secret-lair', name: 'Secret Lair', pattern: /secret lair/ }),
+  Object.freeze({ id: 'universes-beyond', name: 'Universes Beyond', pattern: /universes beyond/ }),
+  Object.freeze({ id: 'jumpstart', name: 'Jumpstart', pattern: /jumpstart/ }),
+  Object.freeze({ id: 'masters-reprints', name: 'Masters & reprints', pattern: /\bmasters\b|remastered|anthology|chronicles/ }),
+  Object.freeze({ id: 'preconstructed', name: 'Preconstructed decks', pattern: /duel deck|starter|structure deck|theme deck|intro pack|event deck|planeswalker deck|challenger deck|trainer kit|battle deck|league battle/ }),
+  Object.freeze({ id: 'promos', name: 'Promos & prerelease', pattern: /\bpromos?\b|prerelease|black star|championship|judge/ }),
+  Object.freeze({ id: 'collections', name: 'Collections & box sets', pattern: /collection|box set|premium|treasure chest|gift set|bundle/ })
+]);
+
+function setFamily(set) {
+  const haystack = `${set?.name || ''} ${set?.setType || ''}`.toLowerCase();
+  const rule = SET_FAMILY_RULES.find((entry) => entry.pattern.test(haystack));
+  if (rule) return { id: rule.id, name: rule.name };
+  return set?.supplemental
+    ? { id: 'other-supplemental', name: 'Other supplemental' }
+    : { id: 'main', name: 'Main expansions' };
+}
+
+export function groupCatalogSets(sets = [], mode = 'family') {
+  const rows = Array.isArray(sets) ? sets : [];
+  if (mode === 'none' || !rows.length) return rows.length ? [{ id: 'all', name: '', sets: rows }] : [];
+  const buckets = new Map();
+  const push = (id, name, set) => {
+    if (!buckets.has(id)) buckets.set(id, { id, name, sets: [] });
+    buckets.get(id).sets.push(set);
+  };
+  if (mode === 'year') {
+    rows.forEach((set) => {
+      const year = String(set?.year || '').trim();
+      push(year || 'undated', year || 'Undated', set);
+    });
+    return [...buckets.values()].sort((left, right) => {
+      if (left.id === 'undated') return 1;
+      if (right.id === 'undated') return -1;
+      return right.id.localeCompare(left.id);
+    });
+  }
+  if (mode === 'game') {
+    rows.forEach((set) => push(String(set?.gameId || 'unknown'), String(set?.game || set?.gameId || 'Unknown game'), set));
+    return [...buckets.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }
+  rows.forEach((set) => {
+    const family = setFamily(set);
+    push(family.id, family.name, set);
+  });
+  const order = ['main', ...SET_FAMILY_RULES.map((rule) => rule.id), 'other-supplemental'];
+  return [...buckets.values()].sort((left, right) => order.indexOf(left.id) - order.indexOf(right.id));
 }
 
 export function filterCatalogProducts(products = [], { query = '', sort = 'number' } = {}) {
