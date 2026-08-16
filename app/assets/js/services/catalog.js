@@ -6,7 +6,7 @@ import { getYGOCard, searchYGOPRODeck } from './providers/ygoprodeck.js';
 import { getTCGCSVProduct, searchTCGCSV } from './providers/tcgcsv.js';
 
 const CACHE_MS = 30 * 60 * 1000;
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 export const CATALOG_CACHE_MAX_ENTRIES = 250;
 let initialCacheMaintenance;
 const providers = {
@@ -14,8 +14,9 @@ const providers = {
   scryfall: { category: 'magic', label: 'Scryfall', search: searchScryfall, detail: getScryfallCard },
   ygoprodeck: { category: 'yugioh', label: 'YGOPRODeck', search: searchYGOPRODeck, detail: getYGOCard },
   tcgcsv: {
-    categories: ['pokemon', 'magic', 'yugioh', 'full-catalog'],
-    label: 'Full TCGCSV catalog',
+    categories: ['pokemon', 'magic', 'yugioh'],
+    categoryPattern: /^tcgcsv-category-\d+$/,
+    label: 'TCGCSV catalog',
     search: searchTCGCSV,
     detail: getTCGCSVProduct
   }
@@ -115,7 +116,10 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
   if (['sports', 'comics', 'slab', 'other'].includes(category)) return { results: [], warnings: [], manual: true, cached: false };
   const selected = Object.entries(providers).filter(([key, config]) =>
     (provider === 'all' || provider === key)
-    && (category === 'all' || category === config.category || config.categories?.includes(category))
+    && (category === 'all'
+      || category === config.category
+      || config.categories?.includes(category)
+      || config.categoryPattern?.test(category))
   );
   const key = `catalog:${CACHE_VERSION}:${category}:${provider}:${normalized}`;
   if (!bypassCache) {

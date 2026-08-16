@@ -6,7 +6,6 @@ import { escapeAttribute, escapeHTML, formatCurrency } from '../core/utils.js';
 
 const CATEGORIES = [
   ['pokemon', 'Pokémon'], ['magic', 'Magic'], ['yugioh', 'Yu-Gi-Oh!'],
-  ['full-catalog', 'Full TCGCSV catalog'],
   ['sports', 'Sports'], ['comics', 'Comics'], ['slab', 'Graded slab'], ['other', 'Other']
 ];
 const CONDITIONS = ['Mint', 'Near Mint', 'Excellent', 'Good', 'Played', 'Poor', 'Graded'];

@@ -3,7 +3,7 @@ import { catalogPriceOptionsForDisplay } from '../core/pricing-policy.js';
 import { searchResultViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForCatalogItem } from '../core/market-series.js';
-import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets } from '../services/catalog-browse.js';
+import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames } from '../services/catalog-browse.js';
 import { findWatchedItem } from '../services/watchlist.js';
 
 export const DISCOVER_VIEWS = Object.freeze(['gallery', 'list']);
@@ -18,9 +18,34 @@ const MATCH_GROUPS = Object.freeze([
   ['unmatched', 'Other results', 'Identity still needs review']
 ]);
 
-function categoryOptions(selected) {
-  return [['all', 'All supported TCGs'], ['pokemon', 'Pokémon'], ['magic', 'Magic'], ['yugioh', 'Yu-Gi-Oh!'], ['full-catalog', 'Full TCGCSV catalog'], ['sports', 'Sports — custom'], ['comics', 'Comics — custom'], ['slab', 'Graded slab — custom'], ['other', 'Other — custom']]
-    .map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
+function categoryOption(value, label, selected) {
+  return `<option value="${escapeAttribute(value)}" ${selected === value ? 'selected' : ''}>${escapeHTML(label)}</option>`;
+}
+
+function categoryOptions(selected, games = []) {
+  const mergedGames = mergeCatalogGames(games);
+  const tcgcsvGames = mergedGames.filter((game) => game.provider === 'tcgcsv');
+  const selectedGame = catalogGame(selected, mergedGames);
+  if (selectedGame?.provider === 'tcgcsv' && !tcgcsvGames.some((game) => game.id === selectedGame.id)) {
+    tcgcsvGames.push(selectedGame);
+  }
+  const standard = [
+    ['all', 'All supported TCGs'],
+    ...CATALOG_GAMES.map((game) => [game.id, game.name])
+  ].map(([value, label]) => categoryOption(value, label, selected)).join('');
+  const tcgcsv = tcgcsvGames.length
+    ? `<optgroup label="TCGCSV games">${tcgcsvGames.map((game) => categoryOption(game.id, game.name, selected)).join('')}</optgroup>`
+    : '';
+  const custom = [['sports', 'Sports — custom'], ['comics', 'Comics — custom'], ['slab', 'Graded slab — custom'], ['other', 'Other — custom']]
+    .map(([value, label]) => categoryOption(value, label, selected)).join('');
+  return `${standard}${tcgcsv}${custom}`;
+}
+
+function categoryLabel(selected, games = []) {
+  if (selected === 'all') return 'All supported TCGs';
+  return catalogGame(selected, games)?.name
+    || ({ sports: 'Sports', comics: 'Comics', slab: 'Graded slab', other: 'Other' })[selected]
+    || selected;
 }
 
 function contextualFilters(category, filters = {}) {
@@ -38,7 +63,7 @@ function contextualFilters(category, filters = {}) {
 }
 
 function providerOptions(selected) {
-  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>Full TCGCSV catalog · signed-in test</option><option value="pokemon" ${selected === 'pokemon' ? 'selected' : ''}>Pokémon market</option><option value="scryfall" ${selected === 'scryfall' ? 'selected' : ''}>Magic market</option><option value="ygoprodeck" ${selected === 'ygoprodeck' ? 'selected' : ''}>Yu-Gi-Oh! market</option>`;
+  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>TCGCSV games · signed-in test</option><option value="pokemon" ${selected === 'pokemon' ? 'selected' : ''}>Pokémon market</option><option value="scryfall" ${selected === 'scryfall' ? 'selected' : ''}>Magic market</option><option value="ygoprodeck" ${selected === 'ygoprodeck' ? 'selected' : ''}>Yu-Gi-Oh! market</option>`;
 }
 
 function pricingMarkup(model) {
@@ -80,7 +105,7 @@ function resultCard(item, index, state, view, { scope = 'search', matchBadge = t
   const identity = [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.type, model.variant, model.rarity].filter(Boolean).join(' · ');
   return `<article class="result-card ${escapeAttribute(view)}" data-action="open-detail" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}" tabindex="0" aria-label="Inspect ${escapeAttribute(model.name || 'catalog result')}">
     <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}${matchBadge ? `<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(model.matchBucket === 'exact' ? 'Exact' : model.matchBucket === 'likely' ? 'Likely' : model.matchBucket === 'possible' ? 'Possible' : 'Review')}</span>` : ''}</div>
-    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model)}${marketOutlookMarkup(model)}<div class="result-facts"><span>${escapeHTML(model.category || 'other')}</span>${finishes.length > 1 ? `<span>${finishes.length} finishes</span>` : ''}<span>${model.forecastStatus === 'available' ? 'Published outlook' : 'No published outlook'}</span></div></div>
+    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model)}${marketOutlookMarkup(model)}<div class="result-facts"><span>${escapeHTML(model.game || model.category || 'other')}</span>${finishes.length > 1 ? `<span>${finishes.length} finishes</span>` : ''}<span>${model.forecastStatus === 'available' ? 'Published outlook' : 'No published outlook'}</span></div></div>
     <div class="result-actions"><button class="button small" type="button" data-action="add-catalog" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Add</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">${escapeHTML(watchLabel)}</button>` : ''}</div>
   </article>`;
 }
@@ -128,16 +153,16 @@ function browseWarnings(browse) {
   return `<div class="search-warning" role="status"><strong>${browse.error ? 'Catalog browsing is temporarily unavailable.' : 'Some catalogs were unavailable.'}</strong>${messages.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<button class="button ghost small" type="button" data-action="retry-browse">Retry</button></div>`;
 }
 
-function gameChips(browse) {
-  const games = [{ id: 'all', shortName: 'All games' }, ...CATALOG_GAMES];
+function gameChips(browse, catalogGames) {
+  const games = [{ id: 'all', shortName: 'All games' }, ...catalogGames];
   return `<div class="browse-game-chips" role="list" aria-label="Card games">${games.map((game) => `<button type="button" role="listitem" data-action="select-browse-game" data-game="${escapeAttribute(game.id)}" aria-pressed="${browse.game === game.id}">${escapeHTML(game.shortName)}</button>`).join('')}</div>`;
 }
 
-function setTile(set) {
+function setTile(set, games) {
   const count = Number.isFinite(Number(set.cardCount)) ? `${Number(set.cardCount).toLocaleString()} cards` : 'Card count pending';
   const identity = [set.code, set.year, count].filter(Boolean).join(' · ');
   return `<button class="browse-set-tile" type="button" data-action="open-browse-set" data-game="${escapeAttribute(set.gameId)}" data-set-id="${escapeAttribute(set.externalId)}">
-    <span class="browse-set-game">${escapeHTML(set.game || catalogGame(set.gameId)?.name || set.gameId)}</span>
+    <span class="browse-set-game">${escapeHTML(set.game || catalogGame(set.gameId, games)?.name || set.gameId)}</span>
     <strong>${escapeHTML(set.name)}</strong>
     <small>${escapeHTML(identity)}</small>
     ${set.series ? `<span>${escapeHTML(set.series)}</span>` : ''}
@@ -145,6 +170,7 @@ function setTile(set) {
 }
 
 function renderBrowseSets(state, browse) {
+  const games = mergeCatalogGames(browse.games);
   const sets = filterCatalogSets(browse.sets || [], { query: browse.query, sort: browse.sort, scope: browse.scope });
   const limit = Math.max(BROWSE_SETS_PAGE_SIZE, Number(browse.setLimit) || BROWSE_SETS_PAGE_SIZE);
   const visible = sets.slice(0, limit);
@@ -154,10 +180,13 @@ function renderBrowseSets(state, browse) {
     : remaining > 0
       ? `Showing ${visible.length.toLocaleString()} of ${sets.length.toLocaleString()} sets`
       : `${sets.length.toLocaleString()} ${sets.length === 1 ? 'set' : 'sets'}`;
-  const rightsNote = browse.game === 'tcgcsv'
-    ? 'Full TCGCSV coverage is available only after sign-in for authenticated personal integration testing. It is not an anonymous redistribution feed.'
+  const selectedGame = catalogGame(browse.game, games);
+  const includesTCGCSV = selectedGame?.provider === 'tcgcsv'
+    || (browse.game === 'all' && games.some((game) => game.provider === 'tcgcsv'));
+  const rightsNote = includesTCGCSV
+    ? 'TCGCSV category coverage is available only after sign-in for authenticated personal integration testing. It is not an anonymous redistribution feed.'
     : 'Browse includes every set available from the currently approved public catalogs. More games will appear as coverage expands.';
-  return `${gameChips(browse)}
+  return `${gameChips(browse, games)}
     <div class="browse-controls">
       <label class="browse-query"><span class="sr-only">Search sets</span><input type="search" data-browse-set-query value="${escapeAttribute(browse.query || '')}" placeholder="Search sets or codes…" autocomplete="off"></label>
       <label><span class="sr-only">Set type</span><select data-browse-set-scope><option value="all" ${browse.scope === 'all' ? 'selected' : ''}>All sets</option><option value="main" ${browse.scope === 'main' ? 'selected' : ''}>Main sets</option><option value="supplemental" ${browse.scope === 'supplemental' ? 'selected' : ''}>Supplemental</option></select></label>
@@ -165,7 +194,7 @@ function renderBrowseSets(state, browse) {
     </div>
     ${browseWarnings(browse)}
     <div class="browse-results-head"><strong>${escapeHTML(resultLabel)}</strong><span>Every matching set remains reachable.</span></div>
-    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `<div class="browse-set-grid">${visible.map(setTile).join('')}</div>${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-sets">Show ${Math.min(BROWSE_SETS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-sets">Show all ${sets.length}</button></div>` : ''}` : emptyState('No matching sets', 'Try another name, code, game, or set type.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
+    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `<div class="browse-set-grid">${visible.map((set) => setTile(set, games)).join('')}</div>${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-sets">Show ${Math.min(BROWSE_SETS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-sets">Show all ${sets.length}</button></div>` : ''}` : emptyState('No matching sets', 'Try another name, code, game, or set type.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
     <p class="fine-print browse-rights-note">${escapeHTML(rightsNote)}</p>`;
 }
 
@@ -177,7 +206,7 @@ function renderBrowseProducts(state, browse) {
   const visible = indexed.slice(0, limit);
   const remaining = indexed.length - visible.length;
   const title = selectedSet?.name || browse.setId;
-  const game = catalogGame(browse.game);
+  const game = catalogGame(browse.game, browse.games);
   return `<nav class="browse-breadcrumbs" aria-label="Browse path"><button type="button" data-action="browse-all-games">Discover</button><span>/</span><button type="button" data-action="select-browse-game" data-game="${escapeAttribute(browse.game)}">${escapeHTML(game?.shortName || browse.game)}</button><span>/</span><strong>${escapeHTML(title)}</strong></nav>
     <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading every card printing…' : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'card' : 'cards'}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
     <div class="browse-product-tabs" role="group" aria-label="Product type"><button type="button" aria-pressed="true">Cards</button><span>Sealed &amp; other will activate with the approved public baseline.</span></div>
@@ -208,7 +237,7 @@ export function renderSearch(state) {
     <form id="catalog-search" class="discover-search">
       <div class="search-command"><button class="search-image-button" type="button" data-action="start-single-scan" aria-label="Search from an image">▣</button><label class="sr-only" for="catalog-query">Search catalog</label><input id="catalog-query" name="query" type="search" required minlength="2" value="${escapeAttribute(search.query)}" placeholder="Card, set, number, character, or player" autocomplete="off"><button class="search-clear" type="button" data-action="clear-search" aria-label="Clear search" ${search.query ? '' : 'hidden'}>×</button><button class="button" ${search.loading ? 'disabled' : ''}>${search.loading ? 'Searching…' : 'Search'}</button></div>
       ${recentSearches({ ...state, search })}
-      <details class="discover-filters" ${Object.values(search.filters || {}).some(Boolean) ? 'open' : ''}><summary><span>Filters</span><span>${escapeHTML(search.category === 'all' ? 'All supported TCGs' : search.category)}</span></summary><div class="discover-filter-grid"><label>Category<select name="category">${categoryOptions(search.category)}</select></label>${contextualFilters(search.category, search.filters)}<details class="data-source-control"><summary>Data source</summary><label>Market source<select name="provider">${providerOptions(search.provider)}</select></label><p>Automatic selection searches every enabled source and keeps partial results if one is unavailable.</p></details></div></details>
+      <details class="discover-filters" ${Object.values(search.filters || {}).some(Boolean) ? 'open' : ''}><summary><span>Filters</span><span>${escapeHTML(categoryLabel(search.category, state.discover?.games))}</span></summary><div class="discover-filter-grid"><label>Category<select name="category">${categoryOptions(search.category, state.discover?.games)}</select></label>${contextualFilters(search.category, search.filters)}<details class="data-source-control"><summary>Data source</summary><label>Market source<select name="provider">${providerOptions(search.provider)}</select></label><p>Automatic selection searches every enabled source and keeps partial results if one is unavailable.</p></details></div></details>
     </form>
     ${search.cached ? '<p class="fine-print search-status">Showing a recent result cached on this device.</p>' : ''}
     ${search.warnings.length ? `<div class="search-warning" role="status"><strong>Some sources were unavailable.</strong>${search.warnings.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<small>Your search and filters are unchanged.</small></div>` : ''}

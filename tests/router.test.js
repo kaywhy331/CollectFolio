@@ -28,6 +28,10 @@ test('discover route restores bounded supported search state in canonical order'
   assert.deepEqual(route.search, { query: 'Black Lotus', category: 'magic', provider: 'scryfall' });
   assert.equal(route.canonicalPath, '/discover?mode=search&q=Black+Lotus&category=magic&provider=scryfall');
   assert.equal(parseAppRoute('/discover?mode=market&provider=unknown').unsupported, 'discover-market');
+  const tcgcsv = parseAppRoute('/discover?mode=search&q=Luffy&category=tcgcsv-category-68&provider=tcgcsv');
+  assert.deepEqual(tcgcsv.search, { query: 'Luffy', category: 'tcgcsv-category-68', provider: 'tcgcsv' });
+  assert.equal(tcgcsv.canonicalPath, '/discover?mode=search&q=Luffy&category=tcgcsv-category-68&provider=tcgcsv');
+  assert.equal(parseAppRoute('/discover?mode=search&category=full-catalog').search.category, 'all');
 });
 
 test('browse routes preserve progressive game and set identity without hard-coding providers', () => {
@@ -47,6 +51,8 @@ test('browse routes preserve progressive game and set identity without hard-codi
   const dynamic = parseAppRoute('/discover/future-game/set%3A1');
   assert.equal(dynamic.browse.game, 'future-game');
   assert.equal(dynamic.browse.setId, 'set:1');
+  assert.equal(parseAppRoute('/discover/tcgcsv').canonicalPath, '/discover/browse');
+  assert.equal(parseAppRoute('/discover/full-catalog').canonicalPath, '/discover/browse');
 });
 
 test('detail routes preserve safe opaque identities and map to their underlying destination', () => {

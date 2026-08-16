@@ -2,7 +2,13 @@ import { normalizeQuery, textSimilarity } from '../core/utils.js';
 import { getPokemonSetCards, listPokemonSets } from './providers/pokemon.js';
 import { getScryfallSetCards, listScryfallSets } from './providers/scryfall.js';
 import { getYGOSetCards, listYGOSets } from './providers/ygoprodeck.js';
-import { getTCGCSVGroupProducts, listTCGCSVGroups } from './providers/tcgcsv.js';
+import {
+  getTCGCSVGroupProducts,
+  listTCGCSVCategories,
+  listTCGCSVGroups,
+  tcgcsvCategoryId,
+  tcgcsvGameId
+} from './providers/tcgcsv.js';
 
 const CACHE_MS = 24 * 60 * 60 * 1000;
 const memoryCache = new Map();
@@ -11,14 +17,13 @@ const numberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity
 export const CATALOG_GAMES = Object.freeze([
   Object.freeze({ id: 'pokemon', name: 'Pokémon', shortName: 'Pokémon', provider: 'pokemon', description: 'Sets and card printings' }),
   Object.freeze({ id: 'magic', name: 'Magic: The Gathering', shortName: 'Magic', provider: 'scryfall', description: 'Paper sets and printings' }),
-  Object.freeze({ id: 'yugioh', name: 'Yu-Gi-Oh!', shortName: 'Yu-Gi-Oh!', provider: 'ygoprodeck', description: 'Sets and card printings' }),
-  Object.freeze({ id: 'tcgcsv', name: 'Full TCGCSV catalog', shortName: 'Full catalog', provider: 'tcgcsv', description: 'Authenticated private test · every category and product group' })
+  Object.freeze({ id: 'yugioh', name: 'Yu-Gi-Oh!', shortName: 'Yu-Gi-Oh!', provider: 'ygoprodeck', description: 'Sets and card printings' })
 ]);
 
 const adapters = Object.freeze({
   pokemon: { sets: listPokemonSets, products: getPokemonSetCards },
-  magic: { sets: listScryfallSets, products: getScryfallSetCards },
-  yugioh: { sets: listYGOSets, products: getYGOSetCards },
+  scryfall: { sets: listScryfallSets, products: getScryfallSetCards },
+  ygoprodeck: { sets: listYGOSets, products: getYGOSetCards },
   tcgcsv: { sets: listTCGCSVGroups, products: getTCGCSVGroupProducts }
 });
 
@@ -35,8 +40,61 @@ export function clearBrowseCatalogCache() {
   memoryCache.clear();
 }
 
-export function catalogGame(gameId) {
-  return CATALOG_GAMES.find((game) => game.id === String(gameId || '')) || null;
+export function catalogGamesFromTCGCSVCategories(categories = []) {
+  return (Array.isArray(categories) ? categories : []).map((category) => {
+    const categoryId = Number(category?.categoryId);
+    const name = String(category?.displayName || category?.name || '').trim();
+    if (!Number.isSafeInteger(categoryId) || categoryId <= 0 || !name) return null;
+    return Object.freeze({
+      id: tcgcsvGameId(categoryId),
+      name,
+      shortName: name,
+      provider: 'tcgcsv',
+      categoryId,
+      description: `Authenticated private test · TCGCSV category ${categoryId}`
+    });
+  }).filter(Boolean).sort((left, right) => left.categoryId - right.categoryId);
+}
+
+export function mergeCatalogGames(...collections) {
+  const games = new Map(CATALOG_GAMES.map((game) => [game.id, game]));
+  collections.flat().forEach((game) => {
+    if (game?.id && !games.has(game.id)) games.set(game.id, game);
+  });
+  const fixedIds = new Set(CATALOG_GAMES.map((game) => game.id));
+  return [
+    ...CATALOG_GAMES,
+    ...[...games.values()].filter((game) => !fixedIds.has(game.id)).sort((left, right) =>
+      (Number(left.categoryId) || Number.MAX_SAFE_INTEGER) - (Number(right.categoryId) || Number.MAX_SAFE_INTEGER)
+      || String(left.name).localeCompare(String(right.name)))
+  ];
+}
+
+export function catalogGame(gameId, games = []) {
+  const id = String(gameId || '');
+  const found = mergeCatalogGames(games).find((game) => game.id === id);
+  if (found) return found;
+  const categoryId = tcgcsvCategoryId(id);
+  return categoryId === null ? null : {
+    id,
+    name: `TCGCSV category ${categoryId}`,
+    shortName: `TCGCSV category ${categoryId}`,
+    provider: 'tcgcsv',
+    categoryId,
+    description: 'Authenticated private test'
+  };
+}
+
+export function scopedTCGCSVGroups(groups = [], gameId) {
+  const categoryId = tcgcsvCategoryId(gameId);
+  if (categoryId === null) return [];
+  return (Array.isArray(groups) ? groups : []).filter((group) =>
+    group?.gameId === gameId && Number(group?.categoryId) === categoryId);
+}
+
+export async function loadCatalogGames({ bypassCache = false } = {}) {
+  const categories = await cached('games:tcgcsv', listTCGCSVCategories, bypassCache);
+  return mergeCatalogGames(catalogGamesFromTCGCSVCategories(categories));
 }
 
 function setSearchScore(set, query) {
@@ -85,26 +143,66 @@ export function filterCatalogProducts(products = [], { query = '', sort = 'numbe
 }
 
 export async function loadCatalogSets({ gameId = 'all', bypassCache = false } = {}) {
-  const selected = gameId === 'all'
-    ? CATALOG_GAMES.filter((game) => game.id !== 'tcgcsv')
-    : CATALOG_GAMES.filter((game) => game.id === gameId);
-  if (!selected.length) throw new Error('This card game does not have an approved browse catalog yet.');
-  const settled = await Promise.allSettled(selected.map((game) => cached(`sets:${game.id}`, adapters[game.id].sets, bypassCache)));
+  const requestedGameId = String(gameId || 'all');
+  const categoryId = tcgcsvCategoryId(requestedGameId);
+  const selectedPublicGames = requestedGameId === 'all'
+    ? CATALOG_GAMES
+    : CATALOG_GAMES.filter((game) => game.id === requestedGameId);
+  if (requestedGameId !== 'all' && !selectedPublicGames.length && categoryId === null) {
+    throw new Error('This card game does not have an approved browse catalog yet.');
+  }
+  const tasks = selectedPublicGames.map((game) => ({
+    game,
+    kind: 'public',
+    load: () => cached(`sets:${game.id}`, adapters[game.provider].sets, bypassCache)
+  }));
+  if (requestedGameId === 'all' || categoryId !== null) {
+    const dynamicGame = categoryId === null ? null : catalogGame(requestedGameId);
+    tasks.push({
+      game: dynamicGame,
+      kind: 'tcgcsv',
+      load: () => cached(`sets:${categoryId === null ? 'tcgcsv:all' : requestedGameId}`,
+        () => listTCGCSVGroups({ categoryId }), bypassCache)
+    });
+  }
+  const settled = await Promise.allSettled(tasks.map((task) => task.load()));
   const sets = [];
   const warnings = [];
+  let games = mergeCatalogGames();
   settled.forEach((result, index) => {
-    const game = selected[index];
-    if (result.status === 'fulfilled') sets.push(...result.value.map((set) => ({ ...set, gameId: game.id, game: game.name })));
-    else warnings.push(`${game.shortName} sets were unavailable: ${result.reason?.message || 'request failed'}`);
+    const task = tasks[index];
+    if (result.status === 'rejected') {
+      const label = task.game?.shortName || 'TCGCSV game categories';
+      warnings.push(`${label} sets were unavailable: ${result.reason?.message || 'request failed'}`);
+      return;
+    }
+    if (task.kind === 'public') {
+      sets.push(...result.value.map((set) => ({ ...set, gameId: task.game.id, game: task.game.name })));
+      return;
+    }
+    const dynamicGames = catalogGamesFromTCGCSVCategories(result.value.categories);
+    games = mergeCatalogGames(games, dynamicGames);
+    const tcgcsvSets = categoryId === null
+      ? result.value.groups
+      : scopedTCGCSVGroups(result.value.groups, requestedGameId);
+    sets.push(...tcgcsvSets);
   });
   if (!sets.length && warnings.length) throw new Error(warnings.join(' '));
-  return { sets: filterCatalogSets(sets), warnings };
+  return { sets: filterCatalogSets(sets), warnings, games };
 }
 
 export async function loadCatalogSetProducts({ gameId, setId, bypassCache = false } = {}) {
   const game = catalogGame(gameId);
   const externalId = String(setId || '').trim();
   if (!game || !externalId) throw new Error('Choose a supported game and set.');
-  const products = await cached(`products:${game.id}:${externalId}`, () => adapters[game.id].products(externalId), bypassCache);
+  const adapter = adapters[game.provider];
+  if (!adapter) throw new Error('This card game does not have an approved browse catalog yet.');
+  if (game.provider === 'tcgcsv' && Number.parseInt(externalId.split(':', 1)[0], 10) !== game.categoryId) {
+    throw new Error('This TCGCSV group does not belong to the selected game.');
+  }
+  const products = await cached(`products:${game.id}:${externalId}`, () => adapter.products(externalId), bypassCache);
+  if (game.provider === 'tcgcsv' && products.some((product) => Number(product?.categoryId) !== game.categoryId)) {
+    throw new Error('The TCGCSV response crossed game-category boundaries.');
+  }
   return filterCatalogProducts(products.map((product) => ({ ...product, gameId: game.id, productKind: 'card' })));
 }

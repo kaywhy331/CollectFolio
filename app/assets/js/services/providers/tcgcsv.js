@@ -18,15 +18,15 @@ function config() {
 
 function catalogBaseUrl() {
   const configured = String(config().TCGCSV_CATALOG_URL ?? '').trim();
-  if (!configured) throw new Error('The full TCGCSV test catalog is not configured on this site.');
+  if (!configured) throw new Error('The TCGCSV test catalog is not configured on this site.');
   let url;
   try {
     url = new URL(configured);
   } catch {
-    throw new Error('The full TCGCSV test catalog URL is invalid.');
+    throw new Error('The TCGCSV test catalog URL is invalid.');
   }
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) {
-    throw new Error('The full TCGCSV test catalog must use HTTPS.');
+    throw new Error('The TCGCSV test catalog must use HTTPS.');
   }
   return url;
 }
@@ -35,29 +35,29 @@ async function catalogSession() {
   try {
     return await validSession();
   } catch {
-    throw new Error('Sign in to use the full TCGCSV test catalog.');
+    throw new Error('Sign in to use the TCGCSV test catalog.');
   }
 }
 
 async function boundedJson(response) {
   const declared = Number.parseInt(response.headers.get('content-length') ?? '', 10);
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-    throw new Error('The full catalog response exceeded its browser limit.');
+    throw new Error('The TCGCSV catalog response exceeded its browser limit.');
   }
   const text = await response.text();
   if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
-    throw new Error('The full catalog response exceeded its browser limit.');
+    throw new Error('The TCGCSV catalog response exceeded its browser limit.');
   }
   let value;
   try {
     value = JSON.parse(text);
   } catch {
-    throw new Error(`The full catalog returned invalid JSON with HTTP ${response.status}.`);
+    throw new Error(`The TCGCSV catalog returned invalid JSON with HTTP ${response.status}.`);
   }
   if (!response.ok) {
     const message = response.status === 401
-      ? 'Sign in to use the full TCGCSV test catalog.'
-      : value?.error || `The full catalog request failed with HTTP ${response.status}.`;
+      ? 'Sign in to use the TCGCSV test catalog.'
+      : value?.error || `The TCGCSV catalog request failed with HTTP ${response.status}.`;
     throw new Error(message);
   }
   return value;
@@ -69,7 +69,7 @@ export async function requestTCGCSVCatalog(path, {
   fetchImpl = globalThis.fetch
 } = {}) {
   const activeSession = session || await catalogSession();
-  if (!activeSession?.access_token) throw new Error('Sign in to use the full TCGCSV test catalog.');
+  if (!activeSession?.access_token) throw new Error('Sign in to use the TCGCSV test catalog.');
   const url = new URL(path, catalogBaseUrl());
   Object.entries(params).forEach(([key, value]) => {
     if (value !== '' && value !== null && value !== undefined) url.searchParams.set(key, String(value));
@@ -97,12 +97,32 @@ export function preferredTCGCSVPrice(price = {}) {
   return { field: '', label: '', value: null };
 }
 
+const TCGCSV_GAME_PATTERN = /^tcgcsv-category-(\d+)$/;
+const KNOWN_CATEGORY_NAMES = Object.freeze({
+  1: 'Magic: The Gathering',
+  2: 'YuGiOh',
+  3: 'Pokemon',
+  85: 'Pokemon Japan'
+});
+
+export function tcgcsvGameId(categoryId) {
+  const id = Number(categoryId);
+  return Number.isSafeInteger(id) && id > 0 ? `tcgcsv-category-${id}` : '';
+}
+
+export function tcgcsvCategoryId(gameId) {
+  const match = TCGCSV_GAME_PATTERN.exec(String(gameId || ''));
+  const categoryId = Number.parseInt(match?.[1] ?? '', 10);
+  return match && Number.isSafeInteger(categoryId) && categoryId > 0 ? categoryId : null;
+}
+
 export function tcgcsvCategory(categoryId, categoryName = '') {
   const id = Number(categoryId);
-  if (id === 1) return { category: 'magic', game: 'Magic: The Gathering' };
-  if (id === 2) return { category: 'yugioh', game: 'Yu-Gi-Oh!' };
-  if (id === 3 || id === 85) return { category: 'pokemon', game: 'Pokémon' };
-  return { category: 'full-catalog', game: String(categoryName || `TCGCSV category ${id}`) };
+  const category = tcgcsvGameId(id);
+  return {
+    category,
+    game: String(categoryName || KNOWN_CATEGORY_NAMES[id] || `TCGCSV category ${id}`)
+  };
 }
 
 function extendedValue(product, names) {
@@ -212,7 +232,7 @@ export function normalizeTCGCSVGroup(group = {}, categories = []) {
     id: `tcgcsv:${externalId}`,
     externalId,
     provider: 'tcgcsv',
-    gameId: 'tcgcsv',
+    gameId: tcgcsvGameId(categoryId),
     game: categoryName,
     name: group.name || `TCGCSV group ${groupId}`,
     code: group.abbreviation || String(groupId),
@@ -233,6 +253,7 @@ export function normalizeTCGCSVGroup(group = {}, categories = []) {
 
 async function collectPages(path, params, {
   session,
+  fetchImpl,
   itemKey,
   maximum = 100_000
 } = {}) {
@@ -243,7 +264,8 @@ async function collectPages(path, params, {
   while (rows.length < maximum) {
     const payload = await requestTCGCSVCatalog(path, {
       params: { ...params, cursor },
-      session
+      session,
+      fetchImpl
     });
     last = payload;
     const page = Array.isArray(payload?.[itemKey]) ? payload[itemKey] : [];
@@ -256,14 +278,36 @@ async function collectPages(path, params, {
   return { payload: last, rows };
 }
 
-export async function listTCGCSVGroups() {
-  const session = await catalogSession();
-  const { payload, rows } = await collectPages('/catalog/groups', { limit: 500 }, {
-    session,
+export async function listTCGCSVCategories({ session, fetchImpl } = {}) {
+  const payload = await requestTCGCSVCatalog('/catalog/summary', { session, fetchImpl });
+  return Array.isArray(payload?.categories) ? payload.categories : [];
+}
+
+export async function listTCGCSVGroups({ categoryId = null, session, fetchImpl } = {}) {
+  const activeSession = session || await catalogSession();
+  const scopedCategoryId = categoryId === null ? null : Number(categoryId);
+  if (scopedCategoryId !== null && (!Number.isSafeInteger(scopedCategoryId) || scopedCategoryId <= 0)) {
+    throw new Error('This TCGCSV category identifier is invalid.');
+  }
+  const path = scopedCategoryId === null
+    ? '/catalog/groups'
+    : `/catalog/categories/${scopedCategoryId}/groups`;
+  const { payload, rows } = await collectPages(path, { limit: scopedCategoryId === null ? 500 : 200 }, {
+    session: activeSession,
+    fetchImpl,
     itemKey: 'groups'
   });
-  const categories = Array.isArray(payload?.categories) ? payload.categories : [];
-  return rows.map((group) => normalizeTCGCSVGroup(group, categories)).filter(Boolean);
+  const categories = scopedCategoryId === null
+    ? (Array.isArray(payload?.categories) ? payload.categories : [])
+    : (payload?.category ? [payload.category] : []);
+  const groups = rows.map((group) => normalizeTCGCSVGroup(group, categories))
+    .filter((group) => group && (scopedCategoryId === null || group.categoryId === scopedCategoryId));
+  return {
+    categories,
+    groups,
+    publicationId: payload?.publicationId || '',
+    sourceUpdatedAt: payload?.sourceUpdatedAt || ''
+  };
 }
 
 function groupIdentity(setId) {
@@ -292,20 +336,23 @@ export async function getTCGCSVGroupProducts(setId) {
   })).filter(Boolean);
 }
 
-function searchCategoryIds(category) {
+export function searchTCGCSVCategoryIds(category) {
+  const scopedCategoryId = tcgcsvCategoryId(category);
+  if (scopedCategoryId !== null) return [scopedCategoryId];
   if (category === 'magic') return [1];
   if (category === 'yugioh') return [2];
   if (category === 'pokemon') return [3, 85];
   return [null];
 }
 
-async function searchCategory(query, categoryId, session) {
+async function searchCategory(query, categoryId, session, fetchImpl) {
   const { payload, rows } = await collectPages('/catalog/search', {
     q: query,
     limit: 50,
     category_id: categoryId
   }, {
     session,
+    fetchImpl,
     itemKey: 'products',
     maximum: MAX_SEARCH_RESULTS
   });
@@ -324,11 +371,11 @@ async function searchCategory(query, categoryId, session) {
   })).filter(Boolean);
 }
 
-export async function searchTCGCSV(query, { category = 'all' } = {}) {
+export async function searchTCGCSV(query, { category = 'all', session, fetchImpl } = {}) {
   if (String(query || '').trim().length < 3) return [];
-  const session = await catalogSession();
-  const results = (await Promise.all(searchCategoryIds(category).map((categoryId) =>
-    searchCategory(String(query || '').trim(), categoryId, session)))).flat();
+  const activeSession = session || await catalogSession();
+  const results = (await Promise.all(searchTCGCSVCategoryIds(category).map((categoryId) =>
+    searchCategory(String(query || '').trim(), categoryId, activeSession, fetchImpl)))).flat();
   return [...new Map(results.map((item) => [item.externalId, item])).values()]
     .slice(0, MAX_SEARCH_RESULTS);
 }

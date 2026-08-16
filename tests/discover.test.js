@@ -105,6 +105,36 @@ test('Discover browse renders a compact game-to-set index without exposing priva
   assert.doesNotMatch(html, /catalog-search/);
 });
 
+test('Discover maps TCGCSV categories to their source game titles in browse and search', () => {
+  const games = [
+    { id: 'tcgcsv-category-3', name: 'Pokemon', shortName: 'Pokemon', provider: 'tcgcsv', categoryId: 3 },
+    { id: 'tcgcsv-category-68', name: 'One Piece Card Game', shortName: 'One Piece Card Game', provider: 'tcgcsv', categoryId: 68 }
+  ];
+  const browse = renderSearch(state({
+    discover: {
+      mode: 'browse', game: 'tcgcsv-category-68', games, setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
+      sets: [{ id: 'tcgcsv:68:1000', externalId: '68:1000', gameId: 'tcgcsv-category-68', game: 'One Piece Card Game', name: 'Romance Dawn', code: 'OP-01', cardCount: 154, supplemental: false }],
+      products: []
+    }
+  }));
+  assert.match(browse, /data-game="tcgcsv-category-3"/);
+  assert.match(browse, /data-game="tcgcsv-category-68" aria-pressed="true">One Piece Card Game/);
+  assert.match(browse, /One Piece Card Game[\s\S]*Romance Dawn/);
+  assert.doesNotMatch(browse, /Full catalog|Full TCGCSV catalog/);
+
+  const search = renderSearch(state({
+    discover: { mode: 'search', games },
+    search: {
+      query: 'Luffy', category: 'tcgcsv-category-68', provider: 'tcgcsv', filters: {}, view: 'gallery', loading: false, warnings: [],
+      results: [{ ...item, provider: 'tcgcsv', externalId: '68:1000:2000', category: 'tcgcsv-category-68', game: 'One Piece Card Game', name: 'Monkey.D.Luffy' }]
+    }
+  }));
+  assert.match(search, /<optgroup label="TCGCSV games">/);
+  assert.match(search, /value="tcgcsv-category-68" selected>One Piece Card Game/);
+  assert.match(search, /class="result-facts"><span>One Piece Card Game<\/span>/);
+  assert.doesNotMatch(search, /Full catalog|Full TCGCSV catalog/);
+});
+
 test('Discover browse retains a complete set manifest while rendering bounded tiles', () => {
   const sets = Array.from({ length: 121 }, (_, index) => ({
     id: `magic:set-${index}`,
