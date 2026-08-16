@@ -28,7 +28,8 @@ const SHELL = [
   './assets/data/visual-index/pokemon-v1/manifest.json'
 ];
 const PROVIDER_IMAGE_HOSTS = new Set([
-  'images.pokemontcg.io', 'images.scrydex.com', 'assets.tcgdex.net', 'cards.scryfall.io', 'images.ygoprodeck.com'
+  'images.pokemontcg.io', 'images.scrydex.com', 'assets.tcgdex.net', 'cards.scryfall.io', 'images.ygoprodeck.com',
+  'tcgplayer-cdn.tcgplayer.com'
 ]);
 const CATALOG_HOSTS = new Set([
   'api.pokemontcg.io', 'api.tcgdex.net', 'api.scryfall.com', 'db.ygoprodeck.com'
