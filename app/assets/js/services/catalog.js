@@ -3,15 +3,22 @@ import { normalizeQuery, textSimilarity } from '../core/utils.js';
 import { clearPokemonSetCache, getPokemonCard, searchPokemon } from './providers/pokemon.js';
 import { getScryfallCard, searchScryfall } from './providers/scryfall.js';
 import { getYGOCard, searchYGOPRODeck } from './providers/ygoprodeck.js';
+import { getTCGCSVProduct, searchTCGCSV } from './providers/tcgcsv.js';
 
 const CACHE_MS = 30 * 60 * 1000;
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v9';
 export const CATALOG_CACHE_MAX_ENTRIES = 250;
 let initialCacheMaintenance;
 const providers = {
   pokemon: { category: 'pokemon', label: 'Pokémon TCG API', search: searchPokemon, detail: getPokemonCard },
   scryfall: { category: 'magic', label: 'Scryfall', search: searchScryfall, detail: getScryfallCard },
-  ygoprodeck: { category: 'yugioh', label: 'YGOPRODeck', search: searchYGOPRODeck, detail: getYGOCard }
+  ygoprodeck: { category: 'yugioh', label: 'YGOPRODeck', search: searchYGOPRODeck, detail: getYGOCard },
+  tcgcsv: {
+    categories: ['pokemon', 'magic', 'yugioh', 'full-catalog'],
+    label: 'Full TCGCSV catalog',
+    search: searchTCGCSV,
+    detail: getTCGCSVProduct
+  }
 };
 
 export function clearCatalogProviderCaches() {
@@ -107,7 +114,8 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
   if (!normalized) throw new Error('Enter a name, set, number, character, or player.');
   if (['sports', 'comics', 'slab', 'other'].includes(category)) return { results: [], warnings: [], manual: true, cached: false };
   const selected = Object.entries(providers).filter(([key, config]) =>
-    (provider === 'all' || provider === key) && (category === 'all' || category === config.category)
+    (provider === 'all' || provider === key)
+    && (category === 'all' || category === config.category || config.categories?.includes(category))
   );
   const key = `catalog:${CACHE_VERSION}:${category}:${provider}:${normalized}`;
   if (!bypassCache) {
@@ -116,7 +124,7 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
   }
   // Provider syntax can depend on punctuation (for example, "Blue-Eyes").
   // Keep the normalized form for cache/ranking, but search with the user's text.
-  const settled = await Promise.allSettled(selected.map(([, config]) => config.search(raw)));
+  const settled = await Promise.allSettled(selected.map(([, config]) => config.search(raw, { category })));
   const { results, warnings, fulfilledProviders, failedProviders } = collectSettledProviders(settled, selected);
   const value = { results: rankCatalogItems(results, normalized), warnings, manual: false, fulfilledProviders, failedProviders };
   // A total upstream outage must stay retryable; caching it would turn a brief

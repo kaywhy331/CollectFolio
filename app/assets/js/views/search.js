@@ -19,7 +19,7 @@ const MATCH_GROUPS = Object.freeze([
 ]);
 
 function categoryOptions(selected) {
-  return [['all', 'All supported TCGs'], ['pokemon', 'Pokémon'], ['magic', 'Magic'], ['yugioh', 'Yu-Gi-Oh!'], ['sports', 'Sports — custom'], ['comics', 'Comics — custom'], ['slab', 'Graded slab — custom'], ['other', 'Other — custom']]
+  return [['all', 'All supported TCGs'], ['pokemon', 'Pokémon'], ['magic', 'Magic'], ['yugioh', 'Yu-Gi-Oh!'], ['full-catalog', 'Full TCGCSV catalog'], ['sports', 'Sports — custom'], ['comics', 'Comics — custom'], ['slab', 'Graded slab — custom'], ['other', 'Other — custom']]
     .map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('');
 }
 
@@ -38,7 +38,7 @@ function contextualFilters(category, filters = {}) {
 }
 
 function providerOptions(selected) {
-  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="pokemon" ${selected === 'pokemon' ? 'selected' : ''}>Pokémon market</option><option value="scryfall" ${selected === 'scryfall' ? 'selected' : ''}>Magic market</option><option value="ygoprodeck" ${selected === 'ygoprodeck' ? 'selected' : ''}>Yu-Gi-Oh! market</option>`;
+  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>Full TCGCSV catalog · signed-in test</option><option value="pokemon" ${selected === 'pokemon' ? 'selected' : ''}>Pokémon market</option><option value="scryfall" ${selected === 'scryfall' ? 'selected' : ''}>Magic market</option><option value="ygoprodeck" ${selected === 'ygoprodeck' ? 'selected' : ''}>Yu-Gi-Oh! market</option>`;
 }
 
 function pricingMarkup(model) {
@@ -154,6 +154,9 @@ function renderBrowseSets(state, browse) {
     : remaining > 0
       ? `Showing ${visible.length.toLocaleString()} of ${sets.length.toLocaleString()} sets`
       : `${sets.length.toLocaleString()} ${sets.length === 1 ? 'set' : 'sets'}`;
+  const rightsNote = browse.game === 'tcgcsv'
+    ? 'Full TCGCSV coverage is available only after sign-in for authenticated personal integration testing. It is not an anonymous redistribution feed.'
+    : 'Browse includes every set available from the currently approved public catalogs. More games will appear as coverage expands.';
   return `${gameChips(browse)}
     <div class="browse-controls">
       <label class="browse-query"><span class="sr-only">Search sets</span><input type="search" data-browse-set-query value="${escapeAttribute(browse.query || '')}" placeholder="Search sets or codes…" autocomplete="off"></label>
@@ -163,7 +166,7 @@ function renderBrowseSets(state, browse) {
     ${browseWarnings(browse)}
     <div class="browse-results-head"><strong>${escapeHTML(resultLabel)}</strong><span>Every matching set remains reachable.</span></div>
     ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `<div class="browse-set-grid">${visible.map(setTile).join('')}</div>${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-sets">Show ${Math.min(BROWSE_SETS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-sets">Show all ${sets.length}</button></div>` : ''}` : emptyState('No matching sets', 'Try another name, code, game, or set type.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
-    <p class="fine-print browse-rights-note">Browse includes every set available from the currently approved public catalogs. More games will appear as coverage expands.</p>`;
+    <p class="fine-print browse-rights-note">${escapeHTML(rightsNote)}</p>`;
 }
 
 function renderBrowseProducts(state, browse) {

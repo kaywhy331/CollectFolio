@@ -5,7 +5,7 @@ export const THEMES = Object.freeze(['dark', 'light', 'system']);
 export const DEFAULT_CONDITIONS = Object.freeze(['Mint', 'Near Mint', 'Excellent', 'Good', 'Played', 'Poor', 'Graded']);
 export const DEFAULT_LANGUAGES = Object.freeze(['en', 'ja', 'fr', 'de', 'es', 'it', 'pt', 'ko', 'zh', 'other']);
 export const DEFAULT_FORECAST_HORIZONS = Object.freeze([7, 30, 90, 180, 365]);
-export const PREFERRED_MARKET_SOURCES = Object.freeze(['all', 'pokemon', 'scryfall', 'ygoprodeck']);
+export const PREFERRED_MARKET_SOURCES = Object.freeze(['all', 'pokemon', 'scryfall', 'ygoprodeck', 'tcgcsv']);
 export const ONBOARDING_STEPS = Object.freeze(['welcome', 'currency', 'add', 'complete']);
 
 export const SETTINGS_DEFAULTS = Object.freeze({

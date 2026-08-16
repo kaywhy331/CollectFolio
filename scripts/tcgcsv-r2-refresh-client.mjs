@@ -10,6 +10,9 @@ import { pipeline } from 'node:stream/promises';
 import { ARTIFACTS, parseSourceUpdatedAt } from '../cloudflare/tcgcsv-refresh/src/index.js';
 
 const MAX_CONTROL_BYTES = 64 * 1024;
+const MAX_CATALOG_MANIFEST_BYTES = 4 * 1024 * 1024;
+const MAX_CATALOG_ASSET_BYTES = 24 * 1024 * 1024;
+const CATALOG_ASSET_FILE = /^(catalog|routing|search)-\d{2,3}\.bin$/;
 
 function requiredEnvironment(name) {
   const value = String(process.env[name] ?? '').trim();
@@ -65,6 +68,24 @@ async function readJson(path) {
   return value;
 }
 
+async function readCatalogManifest(directory) {
+  const path = resolve(directory, 'manifest.json');
+  const metadata = await stat(path);
+  if (!metadata.isFile() || metadata.size <= 0 || metadata.size > MAX_CATALOG_MANIFEST_BYTES) {
+    throw new Error('Catalog manifest is absent, empty, or exceeds its size limit');
+  }
+  const content = await readFile(path);
+  const value = JSON.parse(content.toString('utf8'));
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || value.contractVersion !== 'collectfolio-tcgcsv-web-catalog-v2'
+      || !Array.isArray(value.assets)
+      || value.assets.length <= 0
+      || value.assets.length > 512) {
+    throw new Error('Catalog manifest is invalid');
+  }
+  return { content, metadata, path, value };
+}
+
 async function sha256File(path) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
@@ -82,6 +103,17 @@ function artifactUrl(artifactId, slot, sourceUpdatedAt, runId) {
   return url;
 }
 
+function catalogAssetUrl(file, plan) {
+  if (file !== 'manifest.json' && !CATALOG_ASSET_FILE.test(file)) {
+    throw new Error('Catalog asset filename is invalid');
+  }
+  const url = coordinatorUrl(`/v1/catalog/assets/${encodeURIComponent(file)}`);
+  url.searchParams.set('publication_id', plan.publicationId);
+  url.searchParams.set('source_updated_at', plan.sourceUpdatedAt);
+  url.searchParams.set('run_id', plan.runId);
+  return url;
+}
+
 async function claim(outputPath) {
   const response = await fetch(coordinatorUrl('/v1/claim'), {
     method: 'POST',
@@ -91,6 +123,180 @@ async function claim(outputPath) {
   const result = await boundedResponseJson(response);
   await writeJson(outputPath, result);
   process.stdout.write(`${result.action}\n`);
+}
+
+async function catalogStatus(outputPath) {
+  const response = await fetch(coordinatorUrl('/v1/catalog/status'), {
+    headers: authorizationHeaders({ accept: 'application/json' }),
+    signal: AbortSignal.timeout(30_000)
+  });
+  const result = await boundedResponseJson(response);
+  await writeJson(outputPath, result);
+  process.stdout.write(`${result.status}\n`);
+}
+
+async function catalogPlan(runId, sourceUpdatedAt, directory, outputPath) {
+  const manifest = await readCatalogManifest(directory);
+  const source = parseSourceUpdatedAt(sourceUpdatedAt).sourceUpdatedAt;
+  if (manifest.value.sourceUpdatedAt !== source) {
+    throw new Error('Catalog manifest does not match the sealed source build');
+  }
+  const publicationId = createHash('sha256').update(manifest.content).digest('hex');
+  const body = JSON.stringify({
+    runId,
+    sourceUpdatedAt: source,
+    publicationId,
+    manifestSha256: publicationId,
+    manifestBytes: manifest.metadata.size,
+    assetCount: manifest.value.assets.length
+  });
+  const response = await fetch(coordinatorUrl('/v1/catalog/plan'), {
+    method: 'POST',
+    headers: authorizationHeaders({
+      'content-length': String(Buffer.byteLength(body)),
+      'content-type': 'application/json'
+    }),
+    body,
+    signal: AbortSignal.timeout(30_000)
+  });
+  const result = await boundedResponseJson(response);
+  await writeJson(outputPath, result);
+  process.stdout.write(`${result.action} ${publicationId}\n`);
+}
+
+async function uploadCatalogFile(plan, file, path, expected = null) {
+  const metadata = await stat(path);
+  const maximumBytes = file === 'manifest.json'
+    ? MAX_CATALOG_MANIFEST_BYTES
+    : MAX_CATALOG_ASSET_BYTES;
+  if (!metadata.isFile() || metadata.size <= 0 || metadata.size > maximumBytes) {
+    throw new Error(`${file} is absent, empty, or exceeds ${maximumBytes} bytes`);
+  }
+  const digest = await sha256File(path);
+  if (expected && (metadata.size !== expected.bytes || digest !== expected.sha256)) {
+    throw new Error(`${file} does not match its local manifest receipt`);
+  }
+  const response = await fetch(catalogAssetUrl(file, plan), {
+    method: 'PUT',
+    headers: authorizationHeaders({
+      'content-length': String(metadata.size),
+      'content-type': file === 'manifest.json' ? 'application/json' : 'application/octet-stream',
+      'x-content-sha256': digest
+    }),
+    body: Readable.toWeb(createReadStream(path)),
+    duplex: 'half',
+    signal: AbortSignal.timeout(20 * 60_000)
+  });
+  const receipt = await boundedResponseJson(response);
+  if (receipt.file !== file || receipt.bytes !== metadata.size || receipt.sha256 !== digest) {
+    throw new Error(`Coordinator receipt for ${file} does not match the local file`);
+  }
+  process.stdout.write(`${file} ${metadata.size} ${digest}\n`);
+  return receipt;
+}
+
+async function mapConcurrent(values, concurrency, callback) {
+  const results = new Array(values.length);
+  let next = 0;
+  async function consume() {
+    while (next < values.length) {
+      const index = next;
+      next += 1;
+      results[index] = await callback(values[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, consume));
+  return results;
+}
+
+async function catalogUploadAll(planPath, directory, receiptPath) {
+  const plan = await readJson(planPath);
+  if (!plan.started || plan.action !== 'upload') {
+    throw new Error('Catalog publication plan did not acquire an upload lease');
+  }
+  const manifest = await readCatalogManifest(directory);
+  const manifestHash = createHash('sha256').update(manifest.content).digest('hex');
+  if (manifestHash !== plan.publicationId
+      || manifest.metadata.size !== plan.manifestBytes
+      || manifest.value.sourceUpdatedAt !== plan.sourceUpdatedAt
+      || manifest.value.assets.length !== plan.assetCount) {
+    throw new Error('Local catalog publication does not match its upload plan');
+  }
+  const seen = new Set();
+  const assets = manifest.value.assets.map((asset) => {
+    if (!asset || typeof asset !== 'object' || Array.isArray(asset)
+        || !CATALOG_ASSET_FILE.test(asset.file ?? '')
+        || seen.has(asset.file)
+        || !Number.isSafeInteger(asset.bytes)
+        || asset.bytes <= 0
+        || asset.bytes > MAX_CATALOG_ASSET_BYTES
+        || !/^[0-9a-f]{64}$/.test(asset.sha256 ?? '')) {
+      throw new Error('Catalog manifest contains an invalid upload receipt');
+    }
+    seen.add(asset.file);
+    return asset;
+  });
+  const receipts = [await uploadCatalogFile(
+    plan,
+    'manifest.json',
+    manifest.path,
+    { bytes: plan.manifestBytes, sha256: plan.manifestSha256 }
+  )];
+  receipts.push(...await mapConcurrent(assets, 4, async (asset) =>
+    uploadCatalogFile(plan, asset.file, resolve(directory, asset.file), asset)));
+  await writeJson(receiptPath, {
+    publicationId: plan.publicationId,
+    sourceUpdatedAt: plan.sourceUpdatedAt,
+    runId: plan.runId,
+    assets: receipts
+  });
+}
+
+async function catalogComplete(planPath) {
+  const plan = await readJson(planPath);
+  if (!plan.started || plan.action !== 'upload') {
+    throw new Error('Catalog publication plan did not acquire an upload lease');
+  }
+  const body = JSON.stringify({
+    runId: plan.runId,
+    sourceUpdatedAt: plan.sourceUpdatedAt,
+    publicationId: plan.publicationId,
+    manifestSha256: plan.manifestSha256,
+    manifestBytes: plan.manifestBytes,
+    assetCount: plan.assetCount
+  });
+  const response = await fetch(coordinatorUrl('/v1/catalog/complete'), {
+    method: 'POST',
+    headers: authorizationHeaders({
+      'content-length': String(Buffer.byteLength(body)),
+      'content-type': 'application/json'
+    }),
+    body,
+    signal: AbortSignal.timeout(5 * 60_000)
+  });
+  const result = await boundedResponseJson(response);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+async function catalogFail(planPath, errorCode = 'publication_workflow_failed') {
+  const plan = await readJson(planPath);
+  if (!plan.started || plan.action !== 'upload') return;
+  const body = JSON.stringify({
+    runId: plan.runId,
+    sourceUpdatedAt: plan.sourceUpdatedAt,
+    publicationId: plan.publicationId,
+    errorCode
+  });
+  const response = await fetch(coordinatorUrl('/v1/catalog/fail'), {
+    method: 'POST',
+    headers: authorizationHeaders({
+      'content-length': String(Buffer.byteLength(body)),
+      'content-type': 'application/json'
+    }),
+    body,
+    signal: AbortSignal.timeout(30_000)
+  });
+  await boundedResponseJson(response);
 }
 
 async function upload(artifactId, slotText, sourceUpdatedAt, runId, filePath, receiptPath) {
@@ -233,12 +439,19 @@ async function fail(claimPath, errorCode = 'workflow_failed') {
 async function main(argv) {
   const [command, ...args] = argv;
   if (command === 'claim' && args.length === 1) return claim(args[0]);
+  if (command === 'catalog-status' && args.length === 1) return catalogStatus(args[0]);
+  if (command === 'catalog-plan' && args.length === 4) return catalogPlan(...args);
+  if (command === 'catalog-upload-all' && args.length === 3) return catalogUploadAll(...args);
+  if (command === 'catalog-complete' && args.length === 1) return catalogComplete(args[0]);
+  if (command === 'catalog-fail' && (args.length === 1 || args.length === 2)) return catalogFail(...args);
   if (command === 'upload' && args.length === 6) return upload(...args);
   if (command === 'download-if-present' && args.length === 5) return downloadIfPresent(...args);
   if (command === 'complete' && args.length >= 2) return complete(args[0], args.slice(1));
   if (command === 'fail' && (args.length === 1 || args.length === 2)) return fail(...args);
   throw new Error(
-    'Usage: claim OUTPUT | upload ARTIFACT SLOT SOURCE RUN_ID FILE RECEIPT | '
+    'Usage: claim OUTPUT | catalog-status OUTPUT | catalog-plan RUN_ID SOURCE DIR OUTPUT | '
+    + 'catalog-upload-all PLAN DIR RECEIPT | catalog-complete PLAN | catalog-fail PLAN [ERROR_CODE] | '
+    + 'upload ARTIFACT SLOT SOURCE RUN_ID FILE RECEIPT | '
     + 'download-if-present ARTIFACT SLOT SOURCE RUN_ID OUTPUT | '
     + 'complete CLAIM RECEIPT... | fail CLAIM [ERROR_CODE]'
   );

@@ -2,7 +2,7 @@ import { dataUrlBytes } from '../core/utils.js';
 import { isUUID } from '../core/catalog-identity.js';
 import { portfolioSnapshotId } from '../core/calculations.js';
 import { deleteRecord, getAll, putRecord, recordDailySnapshot, recordLocalHoldingObservations } from '../core/db.js';
-import { PRICING_POLICY_VERSION } from '../core/pricing-policy.js';
+import { isSupportedPricingPolicyVersion } from '../core/pricing-policy.js';
 import { mergeWatchlistItems, mergeWatchlistTombstones } from './watchlist.js';
 
 const SESSION_KEY = 'collectfolio:supabase-session';
@@ -282,7 +282,7 @@ export function normalizePortfolioSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   if (typeof snapshot.id !== 'string' || typeof snapshot.date !== 'string') return null;
   if (!isCalendarDate(snapshot.date)) return null;
-  if (snapshot.pricingPolicyVersion !== PRICING_POLICY_VERSION) return null;
+  if (!isSupportedPricingPolicyVersion(snapshot.pricingPolicyVersion)) return null;
   // Pre-currency snapshots contained provider USD amounts even when the UI
   // relabeled them. Treat that legacy numeric history as USD, never as the
   // collector's later display preference.
@@ -299,7 +299,7 @@ export function normalizePortfolioSnapshot(snapshot) {
   return {
     id,
     date: snapshot.date,
-    pricingPolicyVersion: PRICING_POLICY_VERSION,
+    pricingPolicyVersion: snapshot.pricingPolicyVersion,
     currency,
     marketValue: snapshot.marketValue === 0 ? 0 : snapshot.marketValue,
     costBasis: snapshot.costBasis === 0 ? 0 : snapshot.costBasis,

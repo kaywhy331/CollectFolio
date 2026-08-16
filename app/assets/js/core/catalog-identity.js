@@ -68,6 +68,7 @@ export function catalogReferenceForItem(item = {}, options = {}) {
     imageSmall: item.imageSmall || item.image || '',
     currency: item.currency || 'USD',
     price: item.price === '' || item.price === null || item.price === undefined || !Number.isFinite(Number(item.price)) ? null : Number(item.price),
+    pricingEntitlement: item.pricingEntitlement || '',
     priceSource: item.priceSource || '',
     priceUpdatedAt: item.priceUpdatedAt || ''
   };

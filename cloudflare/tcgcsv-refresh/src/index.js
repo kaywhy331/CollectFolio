@@ -1,3 +1,13 @@
+import {
+  catalogPublicationStatus,
+  cleanupStaleCatalogPublications,
+  completeCatalogPublication,
+  failCatalogPublication,
+  handleCatalogRequest,
+  planCatalogPublication,
+  uploadCatalogAsset
+} from './catalog.js';
+
 const CONTRACT_VERSION = 'tcgcsv-r2-refresh-v1';
 const CLAIM_KEY = 'coordination/claim.json';
 const MARKER_NAME = 'complete.json';
@@ -360,6 +370,9 @@ export async function downloadArtifact(request, env) {
   }
   const headers = new Headers();
   object.writeHttpMetadata(headers);
+  // Coordinator downloads must preserve the stored bytes for SHA-256 checks;
+  // describing a .gz object as HTTP content-encoded would make clients decode it.
+  headers.delete('content-encoding');
   headers.set('content-length', String(object.size));
   headers.set('cache-control', 'private, no-store');
   headers.set('x-content-type-options', 'nosniff');
@@ -566,7 +579,9 @@ async function cleanupStaleRunArtifacts(env, now = new Date()) {
       .map((object) => object.key));
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  if (stale.length) await env.TCGCSV_CURRENT.delete(stale);
+  for (let start = 0; start < stale.length; start += 1000) {
+    await env.TCGCSV_CURRENT.delete(stale.slice(start, start + 1000));
+  }
   return stale.length;
 }
 
@@ -602,12 +617,31 @@ async function handleRequest(request, env) {
       headers: corsHeaders(request, env)
     });
   }
+  if (url.pathname.startsWith('/catalog/')) {
+    return handleCatalogRequest(request, env);
+  }
   if (!url.pathname.startsWith('/v1/') || !await authenticated(request, env)) {
     return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
   }
   if (request.method === 'POST' && url.pathname === '/v1/claim') {
     const result = await claimRefresh(env);
     return jsonResponse(result, { status: result.started ? 201 : 200 });
+  }
+  if (request.method === 'GET' && url.pathname === '/v1/catalog/status') {
+    return jsonResponse(await catalogPublicationStatus(env));
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/catalog/plan') {
+    const result = await planCatalogPublication(request, env);
+    return jsonResponse(result, { status: result.started ? 201 : 200 });
+  }
+  if (url.pathname.startsWith('/v1/catalog/assets/') && request.method === 'PUT') {
+    return jsonResponse(await uploadCatalogAsset(request, env), { status: 201 });
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/catalog/complete') {
+    return jsonResponse(await completeCatalogPublication(request, env));
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/catalog/fail') {
+    return jsonResponse(await failCatalogPublication(request, env));
   }
   if (url.pathname.startsWith('/v1/artifacts/')) {
     if (request.method === 'PUT') return jsonResponse(await uploadArtifact(request, env), { status: 201 });
@@ -643,13 +677,18 @@ export default {
         env,
         new Date(controller.scheduledTime)
       );
+      const cleanedCatalogAssets = await cleanupStaleCatalogPublications(
+        env,
+        new Date(controller.scheduledTime)
+      );
       console.log(JSON.stringify({
         event: 'tcgcsv_refresh_cron_check',
         cron: controller.cron,
         action: state.action,
         archiveDate: state.archiveDate,
         sourceUpdatedAt: state.sourceUpdatedAt,
-        cleanedArtifacts
+        cleanedArtifacts,
+        cleanedCatalogAssets
       }));
       controller.noRetry();
     } catch (error) {

@@ -5,6 +5,12 @@
 **Decision:** `private_rolling_research`
 **Next review:** September 14, 2026
 
+> August 16 scope note: catalog publication remains prohibited by this review
+> itself. The separate
+> `TCGCSV_AUTHENTICATED_FULL_CATALOG_TEST.md` decision permits only a signed-in
+> personal integration-test projection and does not change this lane's public,
+> commercial, or source-artifact prohibitions.
+
 ## Approved boundary
 
 This engineering review permits CollectFolio to check TCGCSV's declared source

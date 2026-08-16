@@ -6,6 +6,7 @@ import { escapeAttribute, escapeHTML, formatCurrency } from '../core/utils.js';
 
 const CATEGORIES = [
   ['pokemon', 'Pokémon'], ['magic', 'Magic'], ['yugioh', 'Yu-Gi-Oh!'],
+  ['full-catalog', 'Full TCGCSV catalog'],
   ['sports', 'Sports'], ['comics', 'Comics'], ['slab', 'Graded slab'], ['other', 'Other']
 ];
 const CONDITIONS = ['Mint', 'Near Mint', 'Excellent', 'Good', 'Played', 'Poor', 'Graded'];
@@ -66,7 +67,7 @@ export function renderHoldingForm(holding = null, {
   return `<form id="holding-form" class="holding-form">
     ${isCatalogItem ? catalogSelection(item, holding, image, defaultLanguage) : customIdentity(item, defaultLanguage)}
     <section class="form-section"><div class="form-section-heading"><div><p class="eyebrow">Ownership</p><h3>Just the essentials</h3></div><span class="fine-print">You can edit these later</span></div><div class="field-grid essentials-grid">
-      ${visiblePriceOptions.length ? `<label class="span-all">Printing / finish<select name="finish">${visiblePriceOptions.map((entry, index) => `<option value="${index}" ${index === (chosenFinish < 0 ? 0 : chosenFinish) ? 'selected' : ''}>${escapeHTML(entry.finish)} · ${escapeHTML(formatCurrency(entry.price, item.currency || 'USD'))}</option>`).join('')}</select><span class="fine-print">The selected finish and available market price are saved together.</span></label>` : ''}
+      ${visiblePriceOptions.length ? `<label class="span-all">Printing / finish<select name="finish">${visiblePriceOptions.map((entry, index) => `<option value="${index}" ${index === (chosenFinish < 0 ? 0 : chosenFinish) ? 'selected' : ''}>${escapeHTML(entry.finish)} · ${entry.price === null || entry.price === undefined ? 'Price unavailable' : escapeHTML(formatCurrency(entry.price, item.currency || 'USD'))}</option>`).join('')}</select><span class="fine-print">The selected finish and available market price are saved together.</span></label>` : ''}
       <label>Quantity<input name="quantity" type="number" min="1" step="1" value="${escapeAttribute(holding?.quantity || 1)}" required></label>
       <label>Collection condition<select name="condition">${CONDITIONS.map((value) => option(value, holding?.condition || defaultCondition)).join('')}</select></label>
       <label>Marketplace condition <span class="optional-label">For forecasting</span><select name="marketCondition"><option value="">Not confirmed</option>${RAW_MARKET_CONDITIONS.map((entry) => option(entry.value, marketCondition, entry.label)).join('')}</select><span class="fine-print">Choose the exact marketplace condition. CollectFolio will not infer it from your collection condition.</span></label>

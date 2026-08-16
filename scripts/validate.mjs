@@ -15,6 +15,7 @@ const required = [
   'app/assets/js/core/portfolio-sets.js',
   'app/assets/js/services/catalog.js', 'app/assets/js/services/image-algorithms.js', 'app/assets/js/services/image.js',
   'app/assets/js/services/catalog-browse.js',
+  'app/assets/js/services/providers/tcgcsv.js',
   'app/assets/js/services/scan-workbench.js', 'app/assets/js/services/scan-review.js', 'app/assets/js/services/supabase.js',
   'app/assets/js/services/visual-index.js', 'app/assets/data/visual-index/pokemon-v1/manifest.json',
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
@@ -71,6 +72,7 @@ const required = [
   'netlify/lib/justtcg-ondemand-collector.mjs',
   'netlify/functions/justtcg-refresh.mjs',
   'cloudflare/tcgcsv-refresh/src/index.js',
+  'cloudflare/tcgcsv-refresh/src/catalog.js',
   'cloudflare/tcgcsv-refresh/wrangler.jsonc',
   'cloudflare/tcgcsv-refresh/worker-configuration.d.ts',
   'scripts/tcgcsv-r2-refresh-client.mjs',
@@ -109,6 +111,7 @@ const required = [
   'docs/source-reviews/TCGCSV_RESEARCH_ONLY.md',
   'docs/source-reviews/TCGCSV_FULL_COHORT_PRIVATE_RESEARCH.md',
   'docs/source-reviews/TCGCSV_RECURRING_PRIVATE_ROLLING.md',
+  'docs/source-reviews/TCGCSV_AUTHENTICATED_FULL_CATALOG_TEST.md',
   'docs/source-reviews/CARDBASE_MTG_RESEARCH_CANDIDATE.md',
   'docs/source-reviews/TCGPLAYER_PULL_RATES_RESEARCH_ONLY.md',
   'docs/mapping-reviews/TCGCSV_590027_HOLOFOIL.md',
@@ -156,8 +159,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.5' || packageLock.version !== '0.8.5' || packageLock.packages?.['']?.version !== '0.8.5') {
-  errors.push('Application and lockfile versions must agree on 0.8.5.');
+if (packageJSON.version !== '0.8.6' || packageLock.version !== '0.8.6' || packageLock.packages?.['']?.version !== '0.8.6') {
+  errors.push('Application and lockfile versions must agree on 0.8.6.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -261,6 +264,7 @@ for (const contract of [
   '--source-available-at', 'sync-catalog', 'catalog.partial !== false',
   'gzip -n -9', 'raw_archive', 'prices_parquet', 'market_features_gzip',
   'set_features', 'archive_packet', 'catalog_packet_gzip',
+  'catalog-status', 'catalog-plan', 'catalog-upload-all', 'catalog-complete',
   'github_workflow_failed', 'retention-days: 30'
 ]) {
   if (!rollingWorkflow.includes(contract)) errors.push(`TCGCSV rolling R2 workflow lacks contract ${contract}.`);
@@ -270,6 +274,7 @@ if (/DATABASE_URL|SUPABASE_|--use-database-state|--ingest\b|structural[_ -]gap|p
   errors.push('TCGCSV rolling R2 workflow must not ingest a database, train, or publish price intelligence.');
 }
 if (!rollingWorkflow.includes('3775d954-f0ce-4abc-97fb-a7a6938c134a')) errors.push('TCGCSV rolling R2 workflow must bind the approved recurring review ID.');
+if (!rollingWorkflow.includes('386a917b-85b5-4028-8fef-d873c2d39988')) errors.push('TCGCSV catalog publication must bind the authenticated test review ID.');
 
 const rollingReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_RECURRING_PRIVATE_ROLLING.md'), 'utf8');
 for (const contract of [
@@ -279,6 +284,26 @@ for (const contract of [
   'PostgreSQL migration or ingestion | No', 'Commercial use | No'
 ]) {
   if (!rollingReview.includes(contract)) errors.push(`TCGCSV rolling source review lacks contract ${contract}.`);
+}
+
+const catalogTestReview = await readFile(resolve(root, 'docs/source-reviews/TCGCSV_AUTHENTICATED_FULL_CATALOG_TEST.md'), 'utf8');
+for (const contract of [
+  '386a917b-85b5-4028-8fef-d873c2d39988', 'authenticated_private_integration_test',
+  'all products, including products with no current price',
+  'marketPrice`, `midPrice`, `lowPrice`, `directLowPrice`, then `highPrice',
+  'Anonymous requests fail closed', 'No LLM', 'Public or commercial availability remains blocked'
+]) {
+  if (!catalogTestReview.includes(contract)) errors.push(`TCGCSV catalog test review lacks contract ${contract}.`);
+}
+
+const catalogWorker = await readFile(resolve(root, 'cloudflare/tcgcsv-refresh/src/catalog.js'), 'utf8');
+for (const contract of [
+  'collectfolio-tcgcsv-web-catalog-v2', 'catalog/pointer.json',
+  'coordination/catalog-publication-claim.json', 'MAX_SEARCH_PAGE_BYTES = 128 * 1024',
+  'authenticateCatalogUser', 'CATALOG_AUTHENTICATED_TEST_ACCESS',
+  'verifyPublicationObjectSet', 'cleanupStaleCatalogPublications'
+]) {
+  if (!catalogWorker.includes(contract)) errors.push(`TCGCSV catalog Worker lacks contract ${contract}.`);
 }
 
 const refreshWorker = await readFile(resolve(root, 'cloudflare/tcgcsv-refresh/src/index.js'), 'utf8');
@@ -425,10 +450,13 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.5-dev'")) errors.push('Local runtime config must identify the 0.8.5 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.5'")) errors.push('Production builds must default APP_VERSION to 0.8.5.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.6-dev'")) errors.push('Local runtime config must identify the 0.8.6 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.6'")) errors.push('Production builds must default APP_VERSION to 0.8.6.');
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
+}
+if (!runtimeConfig.includes("TCGCSV_CATALOG_URL: ''") || !buildScript.includes("process.env.TCGCSV_CATALOG_URL || ''")) {
+  errors.push('TCGCSV catalog URL must remain an explicit, fail-closed runtime setting.');
 }
 
 const ordinaryUiFiles = [
@@ -535,7 +563,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.5'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.5.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.6'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.6.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
