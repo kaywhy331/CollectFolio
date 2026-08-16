@@ -42,13 +42,36 @@ test('first-party custom values and unrelated reviewed catalog behavior remain d
   }), [{ finish: 'foil', price: 3 }]);
 });
 
+test('TCGCSV values require the explicit authenticated private-test entitlement', () => {
+  const restricted = {
+    provider: 'tcgcsv', price: 12,
+    priceSource: 'TCGCSV authenticated private test · market'
+  };
+  assert.equal(isRestrictedCatalogPrice(restricted), true);
+  const entitled = {
+    ...restricted,
+    pricingEntitlement: 'authenticated-private-test',
+    priceOptions: [
+      { finish: 'Normal', price: 12, source: restricted.priceSource },
+      { finish: 'Foil', price: null, source: 'TCGCSV authenticated private test · price unavailable' }
+    ]
+  };
+  assert.equal(isRestrictedCatalogPrice(entitled), false);
+  assert.equal(catalogPriceForValuation(entitled), 12);
+  assert.deepEqual(catalogPriceOptionsForDisplay(entitled), entitled.priceOptions);
+});
+
 test('only rights-aware portfolio snapshots remain eligible for trend display', () => {
   const legacy = { id: 'legacy', marketValue: 999 };
+  const prior = {
+    id: 'prior', marketValue: 10,
+    pricingPolicyVersion: 'rights-aware-v1'
+  };
   const current = {
     id: 'current', marketValue: 12,
     pricingPolicyVersion: PRICING_POLICY_VERSION
   };
-  assert.deepEqual(currentPricingSnapshots([legacy, current]), [current]);
+  assert.deepEqual(currentPricingSnapshots([legacy, prior, current]), [prior, current]);
   assert.deepEqual(currentPricingSnapshots(null), []);
 });
 

@@ -16,13 +16,14 @@ jobs:
   refresh:
     if: ${{ vars.TCGCSV_R2_REFRESH_ENABLED == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 85
+    timeout-minutes: 180
     env:
       TCGCSV_COORDINATOR_URL: ${{ vars.TCGCSV_COORDINATOR_URL }}
       TCGCSV_COORDINATOR_TOKEN: ${{ secrets.TCGCSV_COORDINATOR_TOKEN }}
       TCGCSV_SOURCE_ID: ${{ vars.TCGCSV_SOURCE_ID }}
       TCGCSV_TERMS_REVIEW_ID: ${{ vars.TCGCSV_TERMS_REVIEW_ID }}
-      TCGCSV_USER_AGENT: ${{ vars.TCGCSV_USER_AGENT || 'CollectFolio/0.8.5 private-current-refresh' }}
+      TCGCSV_CATALOG_TEST_REVIEW_ID: ${{ vars.TCGCSV_CATALOG_TEST_REVIEW_ID }}
+      TCGCSV_USER_AGENT: ${{ vars.TCGCSV_USER_AGENT || 'CollectFolio/0.8.6 private-current-refresh' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,7 +37,9 @@ jobs:
           : "${TCGCSV_COORDINATOR_TOKEN:?TCGCSV_COORDINATOR_TOKEN repository secret is required}"
           : "${TCGCSV_SOURCE_ID:?TCGCSV_SOURCE_ID repository variable is required}"
           : "${TCGCSV_TERMS_REVIEW_ID:?TCGCSV_TERMS_REVIEW_ID repository variable is required}"
+          : "${TCGCSV_CATALOG_TEST_REVIEW_ID:?TCGCSV_CATALOG_TEST_REVIEW_ID repository variable is required}"
           [[ "$TCGCSV_TERMS_REVIEW_ID" == "3775d954-f0ce-4abc-97fb-a7a6938c134a" ]]
+          [[ "$TCGCSV_CATALOG_TEST_REVIEW_ID" == "386a917b-85b5-4028-8fef-d873c2d39988" ]]
 
       - name: Claim the exact TCGCSV source build
         id: claim
@@ -58,15 +61,46 @@ jobs:
             fi
           } >> "$GITHUB_OUTPUT"
 
+      - name: Inspect the full-catalog publication state
+        id: catalog
+        run: |
+          set -euo pipefail
+          node scripts/tcgcsv-r2-refresh-client.mjs catalog-status \
+            .tcgcsv-control/catalog-status.json
+          mode=none
+          source_updated_at=
+          run_id=
+          slot=
+          if [[ '${{ steps.claim.outputs.started }}' == 'true' ]]; then
+            mode=refresh
+            source_updated_at='${{ steps.claim.outputs.source_updated_at }}'
+            run_id='${{ steps.claim.outputs.run_id }}'
+            slot='${{ steps.claim.outputs.slot }}'
+          elif [[ '${{ steps.claim.outputs.action }}' == 'current' \
+              && "$(jq -r '.status' .tcgcsv-control/catalog-status.json)" == 'publication_required' \
+              && "$(jq -r '.latestRun != null' .tcgcsv-control/catalog-status.json)" == 'true' ]]; then
+            mode=republish
+            source_updated_at=$(jq -r '.latestRun.sourceUpdatedAt' .tcgcsv-control/catalog-status.json)
+            run_id=$(jq -r '.latestRun.runId' .tcgcsv-control/catalog-status.json)
+            slot=$(jq -r '.latestRun.slot' .tcgcsv-control/catalog-status.json)
+          fi
+          {
+            echo "mode=$mode"
+            echo "needs_publication=$([[ "$mode" == 'none' ]] && echo false || echo true)"
+            echo "source_updated_at=$source_updated_at"
+            echo "run_id=$run_id"
+            echo "slot=$slot"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-python@v5
-        if: ${{ steps.claim.outputs.started == 'true' }}
+        if: ${{ steps.claim.outputs.started == 'true' || steps.catalog.outputs.needs_publication == 'true' }}
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: analytics/pyproject.toml
 
       - name: Install deterministic market-universe dependencies
-        if: ${{ steps.claim.outputs.started == 'true' }}
+        if: ${{ steps.claim.outputs.started == 'true' || steps.catalog.outputs.needs_publication == 'true' }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -202,6 +236,84 @@ jobs:
             .tcgcsv-control/receipts/catalog_packet_gzip.json \
             > .tcgcsv-control/completion.json
 
+      - name: Restore the sealed catalog inputs when publication is missing
+        if: ${{ steps.catalog.outputs.mode == 'republish' }}
+        run: |
+          set -euo pipefail
+          node scripts/tcgcsv-r2-refresh-client.mjs download-if-present \
+            catalog_packet_gzip '${{ steps.catalog.outputs.slot }}' \
+            '${{ steps.catalog.outputs.source_updated_at }}' \
+            '${{ steps.catalog.outputs.run_id }}' \
+            .tcgcsv-publication-source/catalog-packet.json.gz
+          node scripts/tcgcsv-r2-refresh-client.mjs download-if-present \
+            prices_parquet '${{ steps.catalog.outputs.slot }}' \
+            '${{ steps.catalog.outputs.source_updated_at }}' \
+            '${{ steps.catalog.outputs.run_id }}' \
+            .tcgcsv-publication-source/prices.parquet
+          test -s .tcgcsv-publication-source/catalog-packet.json.gz
+          test -s .tcgcsv-publication-source/prices.parquet
+
+      - name: Build the deterministic range-readable full catalog
+        if: ${{ steps.catalog.outputs.needs_publication == 'true' }}
+        run: |
+          set -euo pipefail
+          if [[ '${{ steps.catalog.outputs.mode }}' == 'refresh' ]]; then
+            catalog_packet=.tcgcsv-run/catalog-packet.json.gz
+            prices_parquet=.tcgcsv-run/prices.parquet
+          else
+            catalog_packet=.tcgcsv-publication-source/catalog-packet.json.gz
+            prices_parquet=.tcgcsv-publication-source/prices.parquet
+          fi
+          test -s "$catalog_packet"
+          test -s "$prices_parquet"
+          python -m collectfolio_analytics.tcgcsv_web_catalog_cli \
+            --catalog-packet "$catalog_packet" \
+            --prices-parquet "$prices_parquet" \
+            --output-dir .tcgcsv-web-catalog \
+            > .tcgcsv-control/catalog-build.json
+
+      - name: Acquire one hash-addressed catalog publication lease
+        id: publish_plan
+        if: ${{ steps.catalog.outputs.needs_publication == 'true' }}
+        run: |
+          set -euo pipefail
+          node scripts/tcgcsv-r2-refresh-client.mjs catalog-plan \
+            '${{ steps.catalog.outputs.run_id }}' \
+            '${{ steps.catalog.outputs.source_updated_at }}' \
+            .tcgcsv-web-catalog \
+            .tcgcsv-control/catalog-plan.json
+          {
+            echo "started=$(jq -r '.started // false' .tcgcsv-control/catalog-plan.json)"
+            echo "action=$(jq -r '.action' .tcgcsv-control/catalog-plan.json)"
+            echo "publication_id=$(jq -r '.publicationId' .tcgcsv-control/catalog-plan.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload every catalog shard through the authenticated Worker
+        if: ${{ steps.publish_plan.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          node scripts/tcgcsv-r2-refresh-client.mjs catalog-upload-all \
+            .tcgcsv-control/catalog-plan.json \
+            .tcgcsv-web-catalog \
+            .tcgcsv-control/catalog-upload-receipt.json
+
+      - name: Verify the complete manifest and atomically promote the publication
+        if: ${{ steps.publish_plan.outputs.started == 'true' }}
+        run: |
+          set -euo pipefail
+          node scripts/tcgcsv-r2-refresh-client.mjs catalog-complete \
+            .tcgcsv-control/catalog-plan.json \
+            > .tcgcsv-control/catalog-completion.json
+
+      - name: Release a failed catalog publication lease
+        if: ${{ failure() && steps.catalog.outputs.needs_publication == 'true' }}
+        continue-on-error: true
+        run: |
+          if [[ -s .tcgcsv-control/catalog-plan.json ]]; then
+            node scripts/tcgcsv-r2-refresh-client.mjs catalog-fail \
+              .tcgcsv-control/catalog-plan.json github_publication_failed
+          fi
+
       - name: Release a failed lease for the next hourly retry
         if: ${{ failure() && steps.claim.outputs.started == 'true' }}
         continue-on-error: true
@@ -210,7 +322,7 @@ jobs:
             .tcgcsv-control/claim.json github_workflow_failed
 
       - name: Retain small private SHA-256 and control receipts
-        if: ${{ always() && steps.claim.outputs.started == 'true' }}
+        if: ${{ always() && (steps.claim.outputs.started == 'true' || steps.catalog.outputs.needs_publication == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: tcgcsv-r2-refresh-${{ github.run_id }}
@@ -218,5 +330,10 @@ jobs:
             .tcgcsv-control/local-artifact-sha256.txt
             .tcgcsv-control/receipts/*.json
             .tcgcsv-control/completion.json
+            .tcgcsv-control/catalog-status.json
+            .tcgcsv-control/catalog-build.json
+            .tcgcsv-control/catalog-plan.json
+            .tcgcsv-control/catalog-upload-receipt.json
+            .tcgcsv-control/catalog-completion.json
           if-no-files-found: warn
           retention-days: 30

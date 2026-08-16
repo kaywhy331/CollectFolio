@@ -29,14 +29,21 @@ In Supabase, open **Project Settings → API Keys** and copy the publishable key
 ```text
 SUPABASE_URL=https://agmjgyyvhfcivbwdlvzk.supabase.co
 SUPABASE_ANON_KEY=<your Supabase publishable/anon key>
-APP_VERSION=0.8.5
+APP_VERSION=0.8.6
 ENABLE_TESSERACT=true
 ENABLE_WATCHLISTS=true
 ENABLE_SET_BROWSING=true
+TCGCSV_REFRESH_STATUS_URL=https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev/status
+TCGCSV_CATALOG_URL=https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev
 JUSTTCG_API_KEY=<server-only JustTCG key>
 ```
 
 `JUSTTCG_API_KEY` is consumed only by the scheduled server function and must never be added to a public runtime variable. With only that variable present, the collector expects the Free plan and stages all priced games. Optional server-only controls are `JUSTTCG_GAME=pokemon`, `JUSTTCG_EXPECTED_PLAN=Free`, and `JUSTTCG_COLLECTION_ID=catalog-v1`. Changing the collection ID starts a separate cursor and must not be done until the provider quota cycle and intended scope have been checked.
+
+`TCGCSV_CATALOG_URL` enables the signed-in personal integration-test catalog.
+The Worker must hold `SUPABASE_ANON_KEY` as a secret and validate each bearer
+session; never configure a public R2 domain or place the coordinator token in
+Netlify's browser runtime.
 
 5. Deploy the site.
 
@@ -69,7 +76,7 @@ After Netlify assigns a URL:
 When any file under `app/` changes, update the cache name in `app/sw.js` before a production release, for example:
 
 ```js
-const CACHE = 'collectfolio-shell-v0.8.5';
+const CACHE = 'collectfolio-shell-v0.8.6';
 ```
 
 This ensures installed PWAs replace the prior shell reliably.

@@ -2,8 +2,8 @@ import { INSIGHTS_HORIZONS, INSIGHTS_VIEWS } from './insights.js';
 
 const APP_ORIGIN = 'https://collectfolio.local';
 const PORTFOLIO_SECTIONS = new Set(['holdings', 'sets', 'watchlist']);
-const DISCOVER_CATEGORIES = new Set(['all', 'pokemon', 'magic', 'yugioh', 'sports', 'comics', 'slab', 'other']);
-const DISCOVER_PROVIDERS = new Set(['all', 'pokemon', 'scryfall', 'ygoprodeck']);
+const DISCOVER_CATEGORIES = new Set(['all', 'pokemon', 'magic', 'yugioh', 'full-catalog', 'sports', 'comics', 'slab', 'other']);
+const DISCOVER_PROVIDERS = new Set(['all', 'pokemon', 'scryfall', 'ygoprodeck', 'tcgcsv']);
 const DISCOVER_MODES = new Set(['search', 'browse']);
 const BROWSE_SET_SORTS = new Set(['newest', 'alpha', 'largest']);
 const BROWSE_SET_SCOPES = new Set(['all', 'main', 'supplemental']);

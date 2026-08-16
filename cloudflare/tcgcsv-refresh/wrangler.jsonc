@@ -2,14 +2,17 @@
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "collectfolio-tcgcsv-refresh-dev",
   "main": "src/index.js",
-  "compatibility_date": "2026-08-15",
+  "compatibility_date": "2026-08-16",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "vars": {
     "SOURCE_UPDATED_URL": "https://tcgcsv.com/last-updated.txt",
-    "TCGCSV_USER_AGENT": "CollectFolio/0.8.5 private-current-refresh",
+    "TCGCSV_USER_AGENT": "CollectFolio/0.8.6 private-current-refresh",
     "ALLOWED_ORIGIN": "http://localhost:4173",
-    "LEASE_MINUTES": "90"
+    "LEASE_MINUTES": "90",
+    "CATALOG_LEASE_MINUTES": "180",
+    "CATALOG_AUTHENTICATED_TEST_ACCESS": "true",
+    "SUPABASE_URL": "https://agmjgyyvhfcivbwdlvzk.supabase.co"
   },
   "r2_buckets": [
     {
@@ -27,9 +30,12 @@
       "workers_dev": true,
       "vars": {
         "SOURCE_UPDATED_URL": "https://tcgcsv.com/last-updated.txt",
-        "TCGCSV_USER_AGENT": "CollectFolio/0.8.5 private-current-refresh",
+        "TCGCSV_USER_AGENT": "CollectFolio/0.8.6 private-current-refresh",
         "ALLOWED_ORIGIN": "https://collectfolio-staging.netlify.app",
-        "LEASE_MINUTES": "90"
+        "LEASE_MINUTES": "90",
+        "CATALOG_LEASE_MINUTES": "180",
+        "CATALOG_AUTHENTICATED_TEST_ACCESS": "true",
+        "SUPABASE_URL": "https://agmjgyyvhfcivbwdlvzk.supabase.co"
       },
       "r2_buckets": [
         {

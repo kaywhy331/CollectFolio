@@ -101,6 +101,8 @@ test('portfolio snapshot remote conversion and row serialization preserve hosted
 });
 
 test('portfolio snapshot sync excludes legacy policy and mismatched date identities', () => {
+  const priorRightsAware = snapshot({ pricingPolicyVersion: 'rights-aware-v1' });
+  assert.equal(normalizePortfolioSnapshot(priorRightsAware)?.pricingPolicyVersion, 'rights-aware-v1');
   assert.equal(normalizePortfolioSnapshot(snapshot({ pricingPolicyVersion: 'legacy-v0' })), null);
   assert.equal(normalizePortfolioSnapshot(snapshot({ date: '2026-08-01' })), null);
   assert.equal(normalizePortfolioSnapshot(snapshot({ id: 'portfolio:USD:2026-02-30', date: '2026-02-30' })), null);

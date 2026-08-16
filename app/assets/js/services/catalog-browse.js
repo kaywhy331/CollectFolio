@@ -2,6 +2,7 @@ import { normalizeQuery, textSimilarity } from '../core/utils.js';
 import { getPokemonSetCards, listPokemonSets } from './providers/pokemon.js';
 import { getScryfallSetCards, listScryfallSets } from './providers/scryfall.js';
 import { getYGOSetCards, listYGOSets } from './providers/ygoprodeck.js';
+import { getTCGCSVGroupProducts, listTCGCSVGroups } from './providers/tcgcsv.js';
 
 const CACHE_MS = 24 * 60 * 60 * 1000;
 const memoryCache = new Map();
@@ -10,13 +11,15 @@ const numberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity
 export const CATALOG_GAMES = Object.freeze([
   Object.freeze({ id: 'pokemon', name: 'Pokémon', shortName: 'Pokémon', provider: 'pokemon', description: 'Sets and card printings' }),
   Object.freeze({ id: 'magic', name: 'Magic: The Gathering', shortName: 'Magic', provider: 'scryfall', description: 'Paper sets and printings' }),
-  Object.freeze({ id: 'yugioh', name: 'Yu-Gi-Oh!', shortName: 'Yu-Gi-Oh!', provider: 'ygoprodeck', description: 'Sets and card printings' })
+  Object.freeze({ id: 'yugioh', name: 'Yu-Gi-Oh!', shortName: 'Yu-Gi-Oh!', provider: 'ygoprodeck', description: 'Sets and card printings' }),
+  Object.freeze({ id: 'tcgcsv', name: 'Full TCGCSV catalog', shortName: 'Full catalog', provider: 'tcgcsv', description: 'Authenticated private test · every category and product group' })
 ]);
 
 const adapters = Object.freeze({
   pokemon: { sets: listPokemonSets, products: getPokemonSetCards },
   magic: { sets: listScryfallSets, products: getScryfallSetCards },
-  yugioh: { sets: listYGOSets, products: getYGOSetCards }
+  yugioh: { sets: listYGOSets, products: getYGOSetCards },
+  tcgcsv: { sets: listTCGCSVGroups, products: getTCGCSVGroupProducts }
 });
 
 function cached(key, loader, bypassCache = false) {
@@ -82,7 +85,9 @@ export function filterCatalogProducts(products = [], { query = '', sort = 'numbe
 }
 
 export async function loadCatalogSets({ gameId = 'all', bypassCache = false } = {}) {
-  const selected = gameId === 'all' ? CATALOG_GAMES : CATALOG_GAMES.filter((game) => game.id === gameId);
+  const selected = gameId === 'all'
+    ? CATALOG_GAMES.filter((game) => game.id !== 'tcgcsv')
+    : CATALOG_GAMES.filter((game) => game.id === gameId);
   if (!selected.length) throw new Error('This card game does not have an approved browse catalog yet.');
   const settled = await Promise.allSettled(selected.map((game) => cached(`sets:${game.id}`, adapters[game.id].sets, bypassCache)));
   const sets = [];
