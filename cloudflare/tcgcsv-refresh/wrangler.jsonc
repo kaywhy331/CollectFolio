@@ -12,6 +12,7 @@
     "LEASE_MINUTES": "90",
     "CATALOG_LEASE_MINUTES": "180",
     "CATALOG_AUTHENTICATED_TEST_ACCESS": "true",
+    "CATALOG_PUBLIC_ACCESS": "true",
     "SUPABASE_URL": "https://agmjgyyvhfcivbwdlvzk.supabase.co"
   },
   "r2_buckets": [
@@ -35,6 +36,7 @@
         "LEASE_MINUTES": "90",
         "CATALOG_LEASE_MINUTES": "180",
         "CATALOG_AUTHENTICATED_TEST_ACCESS": "true",
+        "CATALOG_PUBLIC_ACCESS": "true",
         "SUPABASE_URL": "https://agmjgyyvhfcivbwdlvzk.supabase.co"
       },
       "r2_buckets": [

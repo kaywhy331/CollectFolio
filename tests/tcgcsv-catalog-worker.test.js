@@ -489,3 +489,19 @@ test('catalog authentication validates Supabase users and anonymous HTTP access 
   assert.equal(anonymous.status, 401);
   assert.deepEqual(await anonymous.json(), { error: 'Unauthorized' });
 });
+
+test('community free access opens catalog reads without a session but keeps /v1 closed', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const user = await authenticateCatalogUser(
+    new Request('https://refresh.example/catalog/summary'),
+    env,
+    async () => { throw new Error('Supabase must not be called in public mode'); }
+  );
+  assert.deepEqual(user, { id: 'community-public-access' });
+
+  const control = await worker.fetch(
+    new Request('https://refresh.example/v1/refresh/plan', { method: 'POST' }),
+    env
+  );
+  assert.equal(control.status, 401);
+});

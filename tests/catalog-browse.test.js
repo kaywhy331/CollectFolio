@@ -17,6 +17,7 @@ import { normalizeYGOSet } from '../app/assets/js/services/providers/ygoprodeck.
 import {
   normalizeTCGCSVGroup,
   normalizeTCGCSVProduct,
+  tcgcsvProductImageUrl,
   listTCGCSVGroups,
   preferredTCGCSVPrice,
   requestTCGCSVCatalog,
@@ -52,7 +53,7 @@ test('browse catalog exposes provider-neutral games and normalized set identity'
   assert.equal(tcgcsvGameId(68), 'tcgcsv-category-68');
   assert.equal(tcgcsvCategoryId('tcgcsv-category-68'), 68);
   assert.equal(tcgcsvCategoryId('tcgcsv'), null);
-  assert.equal(catalogGameRequiresSession('tcgcsv-category-23'), true);
+  assert.equal(catalogGameRequiresSession('tcgcsv-category-23'), false);
   assert.equal(catalogGameRequiresSession('tcgcsv-category-23', [], { access_token: 'test' }), false);
   assert.equal(catalogGameRequiresSession('pokemon'), false);
   assert.deepEqual(normalizePokemonSet({ id: 'swsh12', name: 'Silver Tempest', series: 'Sword & Shield', printedTotal: 195, releaseDate: '2022-11-11', ptcgoCode: 'SIT' }), {
@@ -101,6 +102,9 @@ test('TCGCSV mapping retains source games, finishes, raw price fields, and unava
     publicationId: 'c'.repeat(64), sourceUpdatedAt: '2026-08-15T20:05:57.000Z'
   });
   assert.equal(product.price, 15);
+  assert.equal(product.image, 'https://tcgplayer-cdn.tcgplayer.com/product/1_in_1000x1000.jpg');
+  assert.equal(product.imageSmall, 'https://tcgplayer-cdn.tcgplayer.com/product/1_in_400x400.jpg');
+  assert.equal(product.pricingEntitlement, 'community-free-access');
   assert.equal(product.category, 'tcgcsv-category-3');
   assert.equal(product.game, 'Pokémon');
   assert.equal(product.priceOptions.length, 2);
@@ -115,6 +119,17 @@ test('TCGCSV mapping retains source games, finishes, raw price fields, and unava
   assert.equal(unavailable.price, null);
   assert.deepEqual(unavailable.priceOptions, []);
   assert.equal(unavailable.pricingStatus, 'unavailable');
+  assert.equal(unavailable.image, 'https://tcgplayer-cdn.tcgplayer.com/product/2_in_1000x1000.jpg');
+  const extendedImage = normalizeTCGCSVProduct({
+    categoryId: 3, groupId: 604, productId: 3, name: 'Pictured card',
+    extendedData: [{ name: 'Image', value: 'https://images.example/card-3.png' }]
+  }, { category: { categoryId: 3 }, group });
+  assert.equal(extendedImage.image, 'https://images.example/card-3.png');
+  assert.equal(extendedImage.imageSmall, 'https://images.example/card-3.png');
+  assert.equal(tcgcsvProductImageUrl(670598), 'https://tcgplayer-cdn.tcgplayer.com/product/670598_in_400x400.jpg');
+  assert.equal(tcgcsvProductImageUrl(670598, 200), 'https://tcgplayer-cdn.tcgplayer.com/product/670598_in_200x200.jpg');
+  assert.equal(tcgcsvProductImageUrl(670598, 999), 'https://tcgplayer-cdn.tcgplayer.com/product/670598_in_400x400.jpg');
+  assert.equal(tcgcsvProductImageUrl('bogus'), '');
 });
 
 test('TCGCSV requests use the signed-in bearer token and preserve query filters', async () => {
@@ -149,7 +164,7 @@ test('TCGCSV requests use the signed-in bearer token and preserve query filters'
         status: 401,
         headers: { 'content-type': 'application/json' }
       })
-    }), /Sign in to use the TCGCSV test catalog/);
+    }), /This TCGCSV catalog deployment still requires sign-in/);
   } finally {
     if (priorWindow === undefined) delete globalThis.window;
     else globalThis.window = priorWindow;

@@ -1,5 +1,15 @@
 export const PRICING_POLICY_VERSION = 'rights-aware-v2-private-test';
 export const TCGCSV_PRIVATE_TEST_ENTITLEMENT = 'authenticated-private-test';
+export const TCGCSV_FREE_ACCESS_ENTITLEMENT = 'community-free-access';
+
+// TCGCSV data rides TCGplayer's community "blind eye" tolerance: it stays
+// acceptable while access remains free and non-commercial. Both the current
+// free-access entitlement and the legacy private-test entitlement (still
+// present on holdings saved before the free-access move) unlock display.
+const TCGCSV_DISPLAY_ENTITLEMENTS = new Set([
+  TCGCSV_FREE_ACCESS_ENTITLEMENT,
+  TCGCSV_PRIVATE_TEST_ENTITLEMENT
+]);
 
 const SUPPORTED_PRICING_POLICY_VERSIONS = new Set([
   'rights-aware-v1',
@@ -26,7 +36,7 @@ export function isRestrictedCatalogPrice(item = {}) {
   const hasPrice = finitePrice(value.price) !== null || options.some((entry) => finitePrice(entry?.price) !== null);
   if (!hasPrice) return false;
   const provider = String(value.provider || '').trim().toLowerCase();
-  if (provider === 'tcgcsv' && value.pricingEntitlement === TCGCSV_PRIVATE_TEST_ENTITLEMENT) return false;
+  if (provider === 'tcgcsv' && TCGCSV_DISPLAY_ENTITLEMENTS.has(value.pricingEntitlement)) return false;
   const sources = [value.priceSource, ...options.map((entry) => entry?.source)]
     .map((value) => String(value || '').trim().toLowerCase());
   return RESTRICTED_PROVIDERS.has(provider) || sources.some((source) =>

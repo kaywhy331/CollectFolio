@@ -53,7 +53,7 @@ export function catalogGamesFromTCGCSVCategories(categories = []) {
       provider: 'tcgcsv',
       categoryId,
       isCardCategory: category?.isCardCategory !== false,
-      description: `Authenticated personal catalog · TCGCSV category ${categoryId}`
+      description: `Free community catalog · TCGCSV category ${categoryId}`
     });
   }).filter(Boolean).sort((left, right) => left.categoryId - right.categoryId);
 }
@@ -86,12 +86,14 @@ export function catalogGame(gameId, games = []) {
     shortName: `TCGCSV category ${categoryId}`,
     provider: 'tcgcsv',
     categoryId,
-    description: 'Authenticated private test'
+    description: 'Free community catalog'
   };
 }
 
-export function catalogGameRequiresSession(gameId, games = [], session = null) {
-  return catalogGame(gameId, games)?.provider === 'tcgcsv' && !session;
+// All catalog games are free to browse — the TCGCSV catalog no longer gates
+// behind a signed-in session (community free access).
+export function catalogGameRequiresSession() {
+  return false;
 }
 
 export function scopedTCGCSVGroups(groups = [], gameId) {
