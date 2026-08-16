@@ -3,7 +3,7 @@ import { catalogPriceOptionsForDisplay } from '../core/pricing-policy.js';
 import { searchResultViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForCatalogItem } from '../core/market-series.js';
-import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames } from '../services/catalog-browse.js';
+import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames, catalogSetYears, groupCatalogSets } from '../services/catalog-browse.js';
 import { findWatchedItem } from '../services/watchlist.js';
 
 export const DISCOVER_VIEWS = Object.freeze(['gallery', 'list']);
@@ -188,27 +188,63 @@ function setTile(set, games) {
   </button>`;
 }
 
+function browseGroupBy(browse) {
+  const modes = browse.game === 'all' ? ['game', 'year', 'none'] : ['family', 'year', 'none'];
+  const requested = String(browse.groupBy || '');
+  return { modes, groupBy: modes.includes(requested) ? requested : modes[0] };
+}
+
+const GROUP_MODE_LABELS = Object.freeze({ family: 'Set family', game: 'Game', year: 'Year', none: 'No grouping' });
+
+function browseYearFilter(browse) {
+  const years = catalogSetYears(browse.sets || []);
+  if (!years.length) return '';
+  const selected = new Set((browse.years || []).map(String));
+  return `<details class="browse-year-filter" ${selected.size ? 'open' : ''}><summary>Years${selected.size ? ` · ${selected.size} selected` : ''}</summary>
+    <div class="browse-year-options" role="group" aria-label="Filter sets by year">${years.map((year) => `<label><input type="checkbox" data-browse-year value="${escapeAttribute(year)}" ${selected.has(year) ? 'checked' : ''}><span>${escapeHTML(year)}</span></label>`).join('')}</div>
+  </details>`;
+}
+
+function browseGameHeader(browse, games) {
+  const game = catalogGame(browse.game, games);
+  const name = game?.name || browse.game;
+  const eyebrow = game?.provider === 'tcgcsv' ? `TCGCSV category ${game.categoryId}` : 'Catalog';
+  return `<nav class="browse-breadcrumbs" aria-label="Browse path"><button type="button" data-action="browse-all-games">Discover</button><span>/</span><strong>${escapeHTML(name)}</strong></nav>
+    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h2>${escapeHTML(name)}</h2></div><button class="button ghost small" type="button" data-action="browse-all-games">All games</button></div>`;
+}
+
+function browseSetSections(visible, games, groupBy) {
+  const grid = (sets) => `<div class="browse-set-grid">${sets.map((set) => setTile(set, games)).join('')}</div>`;
+  if (groupBy === 'none') return grid(visible);
+  const groups = groupCatalogSets(visible, groupBy);
+  if (groups.length <= 1) return grid(visible);
+  return groups.map((group) => `<details class="browse-set-group" open><summary><strong>${escapeHTML(group.name)}</strong><span>${group.sets.length.toLocaleString()} ${group.sets.length === 1 ? 'set' : 'sets'}</span></summary>${grid(group.sets)}</details>`).join('');
+}
+
 function renderBrowseSets(state, browse) {
   const games = mergeCatalogGames(browse.games);
-  const sets = filterCatalogSets(browse.sets || [], { query: browse.query, sort: browse.sort, scope: browse.scope });
+  const sets = filterCatalogSets(browse.sets || [], { query: browse.query, sort: browse.sort, scope: browse.scope, years: browse.years });
   const limit = Math.max(BROWSE_SETS_PAGE_SIZE, Number(browse.setLimit) || BROWSE_SETS_PAGE_SIZE);
   const visible = sets.slice(0, limit);
   const remaining = sets.length - visible.length;
+  const { modes, groupBy } = browseGroupBy(browse);
   const resultLabel = browse.loading
     ? 'Loading complete set indexes…'
     : remaining > 0
       ? `Showing ${visible.length.toLocaleString()} of ${sets.length.toLocaleString()} sets`
       : `${sets.length.toLocaleString()} ${sets.length === 1 ? 'set' : 'sets'}`;
   const rightsNote = 'All 90 imported TCGCSV categories are free to browse for the whole community. Groups, products, finishes, and prices stay category-scoped and non-commercial.';
-  return `${gameChooser(state, browse, games)}
+  return `${browse.game === 'all' ? gameChooser(state, browse, games) : browseGameHeader(browse, games)}
     <div class="browse-controls">
       <label class="browse-query"><span class="sr-only">Search sets</span><input type="search" data-browse-set-query value="${escapeAttribute(browse.query || '')}" placeholder="Search sets or codes…" autocomplete="off"></label>
       <label><span class="sr-only">Set type</span><select data-browse-set-scope><option value="all" ${browse.scope === 'all' ? 'selected' : ''}>All sets</option><option value="main" ${browse.scope === 'main' ? 'selected' : ''}>Main sets</option><option value="supplemental" ${browse.scope === 'supplemental' ? 'selected' : ''}>Supplemental</option></select></label>
       <label><span class="sr-only">Sort sets</span><select data-browse-set-sort><option value="newest" ${browse.sort === 'newest' ? 'selected' : ''}>Newest</option><option value="alpha" ${browse.sort === 'alpha' ? 'selected' : ''}>A–Z</option><option value="largest" ${browse.sort === 'largest' ? 'selected' : ''}>Largest</option></select></label>
+      <label><span class="sr-only">Group sets</span><select data-browse-set-group>${modes.map((mode) => `<option value="${mode}" ${groupBy === mode ? 'selected' : ''}>${GROUP_MODE_LABELS[mode]}</option>`).join('')}</select></label>
+      ${browseYearFilter(browse)}
     </div>
     ${browseWarnings(browse)}
     <div class="browse-results-head"><strong>${escapeHTML(resultLabel)}</strong><span>Every matching set remains reachable.</span></div>
-    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `<div class="browse-set-grid">${visible.map((set) => setTile(set, games)).join('')}</div>${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-sets">Show ${Math.min(BROWSE_SETS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-sets">Show all ${sets.length}</button></div>` : ''}` : emptyState('No matching sets', 'Try another name, code, game, or set type.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
+    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `${browseSetSections(visible, games, groupBy)}${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-sets">Show ${Math.min(BROWSE_SETS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-sets">Show all ${sets.length}</button></div>` : ''}` : emptyState('No matching sets', 'Try another name, code, game, set type, or year.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
     <p class="fine-print browse-rights-note">${escapeHTML(rightsNote)}</p>`;
 }
 
@@ -233,7 +269,7 @@ function renderBrowseProducts(state, browse) {
 }
 
 function renderBrowse(state) {
-  const browse = { game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setLimit: BROWSE_SETS_PAGE_SIZE, productQuery: '', productSort: 'number', sets: [], products: [], warnings: [], ...state.discover };
+  const browse = { game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE, productQuery: '', productSort: 'number', sets: [], products: [], warnings: [], ...state.discover };
   return `${discoverHeader(state, 'browse')}${browse.setId ? renderBrowseProducts(state, browse) : renderBrowseSets(state, browse)}`;
 }
 

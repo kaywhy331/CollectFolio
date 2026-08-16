@@ -6,7 +6,9 @@ import {
   catalogGameRequiresSession,
   catalogGamesFromTCGCSVCategories,
   filterCatalogProducts,
+  catalogSetYears,
   filterCatalogSets,
+  groupCatalogSets,
   mergeCatalogGames,
   scopedTCGCSVGroups
 } from '../app/assets/js/services/catalog-browse.js';
@@ -259,6 +261,39 @@ test('set browsing keeps every match while relevance and explicit sorts only cha
   assert.deepEqual(filterCatalogSets(sets, { sort: 'newest' }).map((set) => set.id), ['pokemon:new', 'pokemon:sit', 'pokemon:old']);
   assert.deepEqual(filterCatalogSets(sets, { sort: 'largest' }).map((set) => set.id), ['pokemon:old', 'pokemon:sit', 'pokemon:new']);
   assert.deepEqual(filterCatalogSets(sets, { scope: 'main' }).map((set) => set.id), ['pokemon:new', 'pokemon:sit']);
+});
+
+test('year multi-select narrows sets and grouping organizes them into scannable sections', () => {
+  const sets = [
+    { id: 'a', gameId: 'magic', game: 'Magic', name: 'Foundations', year: '2026', releasedAt: '2026-01-01', supplemental: false },
+    { id: 'b', gameId: 'magic', game: 'Magic', name: 'Commander Legends', year: '2025', releasedAt: '2025-06-01', supplemental: true },
+    { id: 'c', gameId: 'magic', game: 'Magic', name: 'Secret Lair Drop Series', year: '2025', releasedAt: '2025-03-01', supplemental: true },
+    { id: 'd', gameId: 'magic', game: 'Magic', name: 'Judge Promos', year: '2020', releasedAt: '2020-01-01', supplemental: true },
+    { id: 'e', gameId: 'magic', game: 'Magic', name: 'Weird Sideline', year: '', releasedAt: '', supplemental: true },
+    { id: 'f', gameId: 'pokemon', game: 'Pokémon', name: 'Silver Tempest', year: '2022', releasedAt: '2022-11-11', supplemental: false }
+  ];
+  assert.deepEqual(catalogSetYears(sets), ['2026', '2025', '2022', '2020']);
+  assert.deepEqual(filterCatalogSets(sets, { years: ['2026', '2025'] }).map((set) => set.id), ['a', 'b', 'c']);
+  assert.deepEqual(filterCatalogSets(sets, { years: [] }).length, 6);
+  assert.deepEqual(filterCatalogSets(sets, { years: ['2025'], scope: 'main' }), []);
+
+  const families = groupCatalogSets(sets, 'family');
+  assert.deepEqual(families.map((group) => [group.name, group.sets.map((set) => set.id)]), [
+    ['Main expansions', ['a', 'f']],
+    ['Commander', ['b']],
+    ['Secret Lair', ['c']],
+    ['Promos & prerelease', ['d']],
+    ['Other supplemental', ['e']]
+  ]);
+
+  const byYear = groupCatalogSets(sets, 'year');
+  assert.deepEqual(byYear.map((group) => group.name), ['2026', '2025', '2022', '2020', 'Undated']);
+
+  const byGame = groupCatalogSets(sets, 'game');
+  assert.deepEqual(byGame.map((group) => [group.name, group.sets.length]), [['Magic', 5], ['Pokémon', 1]]);
+
+  assert.deepEqual(groupCatalogSets(sets, 'none').map((group) => group.sets.length), [6]);
+  assert.deepEqual(groupCatalogSets([], 'family'), []);
 });
 
 test('set products use natural collector-number ordering without dropping unpriced cards', () => {

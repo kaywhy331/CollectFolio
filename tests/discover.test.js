@@ -90,7 +90,7 @@ test('Discover retains a complete result set while rendering large catalogs in b
 test('Discover browse exposes all 90 source categories with free community access signed out', () => {
   const html = renderSearch(state({
     discover: {
-      mode: 'browse', game: 'pokemon', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
+      mode: 'browse', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
       sets: [{ id: 'pokemon:swsh12', externalId: 'swsh12', gameId: 'pokemon', game: 'Pokémon', name: 'Silver Tempest', code: 'SIT', year: '2022', releasedAt: '2022-11-11', cardCount: 195, series: 'Sword & Shield', supplemental: false }],
       products: []
     }
@@ -110,6 +110,21 @@ test('Discover browse exposes all 90 source categories with free community acces
   assert.match(html, /free to browse for the whole community/);
   assert.doesNotMatch(html, /Data source/);
   assert.doesNotMatch(html, /catalog-search/);
+
+  const drilled = renderSearch(state({
+    discover: {
+      mode: 'browse', game: 'pokemon', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
+      sets: [{ id: 'pokemon:swsh12', externalId: 'swsh12', gameId: 'pokemon', game: 'Pokémon', name: 'Silver Tempest', code: 'SIT', year: '2022', releasedAt: '2022-11-11', cardCount: 195, series: 'Sword & Shield', supplemental: false }],
+      products: []
+    }
+  }));
+  assert.match(drilled, /class="browse-breadcrumbs"/);
+  assert.match(drilled, /data-action="browse-all-games">Discover</);
+  assert.match(drilled, /<h2>Pokémon<\/h2>/);
+  assert.match(drilled, /data-action="browse-all-games">All games</);
+  assert.doesNotMatch(drilled, /All TCGCSV games and categories/);
+  assert.equal((drilled.match(/data-game-search-text=/g) || []).length, 0);
+  assert.match(drilled, /data-set-id="swsh12"/);
 });
 
 test('Discover maps TCGCSV categories to their source game titles in browse and search', () => {
@@ -125,10 +140,12 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
       products: []
     }
   }));
-  assert.match(browse, /data-game="tcgcsv-category-3"/);
-  assert.match(browse, /data-game="tcgcsv-category-68"[^>]*aria-pressed="true"[^>]*><span>One Piece Card Game/);
-  assert.equal((browse.match(/<small>Active<\/small>/g) || []).length, 90);
-  assert.match(browse, /90 TCGCSV categories mapped · free community access/);
+  assert.match(browse, /class="browse-breadcrumbs"/);
+  assert.match(browse, /<h2>One Piece Card Game<\/h2>/);
+  assert.match(browse, /TCGCSV category 68/);
+  assert.match(browse, /data-action="browse-all-games">All games</);
+  assert.doesNotMatch(browse, /All TCGCSV games and categories/);
+  assert.equal((browse.match(/data-game-search-text=/g) || []).length, 0);
   assert.match(browse, /One Piece Card Game[\s\S]*Romance Dawn/);
   assert.doesNotMatch(browse, /Full catalog|Full TCGCSV catalog/);
 

@@ -453,6 +453,14 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .browse-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2); margin-bottom: var(--space-4); }
 .browse-controls .browse-query { grid-column: 1 / -1; }
 .browse-controls input, .browse-controls select { min-height: 44px; }
+.browse-year-filter { grid-column: 1 / -1; padding: var(--space-2) var(--space-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-2, 10px); }
+.browse-year-filter summary { min-height: 32px; display: flex; align-items: center; color: var(--muted); font-size: .8rem; cursor: pointer; }
+.browse-year-options { display: flex; flex-wrap: wrap; gap: var(--space-2); padding-top: var(--space-2); }
+.browse-year-options label { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .6rem; font-size: .8rem; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.browse-year-options label:has(input:checked) { color: var(--accent-contrast, var(--text)); border-color: var(--accent); }
+.browse-set-group { margin-bottom: var(--space-4); }
+.browse-set-group > summary { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 40px; margin-bottom: var(--space-2); padding: 0 var(--space-2); border-bottom: 1px solid var(--border); cursor: pointer; }
+.browse-set-group > summary span { color: var(--muted); font-size: .75rem; }
 .browse-results-head { display: flex; align-items: end; justify-content: space-between; gap: var(--space-3); margin: var(--space-4) 0 var(--space-3); }
 .browse-results-head strong { font-size: .92rem; }
 .browse-results-head span { color: var(--muted); font-size: .68rem; text-align: right; }

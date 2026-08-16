@@ -1317,15 +1317,15 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'select-browse-game') {
     const game = action.dataset.game || 'all';
     const requiresSession = catalogGameRequiresSession(game, getState().discover.games, getState().auth.session);
-    navigateBrowse({ game, setId: '' });
+    navigateBrowse({ game, setId: '', years: [], groupBy: '' });
     if (requiresSession) openAuth();
     return;
   }
-  if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '' });
+  if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '', years: [], groupBy: '' });
   if (action.dataset.action === 'open-browse-set') navigateBrowse({ game: action.dataset.game, setId: action.dataset.setId });
   if (action.dataset.action === 'browse-back-sets') navigateBrowse({ setId: '' });
   if (action.dataset.action === 'retry-browse') hydrateBrowseRoute(activeRoute, { bypassCache: true });
-  if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE } });
   if (action.dataset.action === 'load-more-browse-sets') setState({ discover: { ...getState().discover, setLimit: (Number(getState().discover.setLimit) || BROWSE_SETS_PAGE_SIZE) + BROWSE_SETS_PAGE_SIZE } });
   if (action.dataset.action === 'show-all-browse-sets') setState({ discover: { ...getState().discover, setLimit: getState().discover.sets.length } });
   if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
@@ -1726,6 +1726,13 @@ root.addEventListener('change', async (event) => {
   }
   if (event.target.matches('[data-browse-set-sort]')) setState({ discover: { ...getState().discover, sort: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
   if (event.target.matches('[data-browse-set-scope]')) setState({ discover: { ...getState().discover, scope: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-set-group]')) setState({ discover: { ...getState().discover, groupBy: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-year]')) {
+    const selected = new Set((getState().discover.years || []).map(String));
+    if (event.target.checked) selected.add(event.target.value);
+    else selected.delete(event.target.value);
+    setState({ discover: { ...getState().discover, years: [...selected], setLimit: BROWSE_SETS_PAGE_SIZE } });
+  }
   if (event.target.matches('[data-browse-product-sort]')) setState({ discover: { ...getState().discover, productSort: event.target.value, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (event.target.matches('[data-portfolio-query]')) setState({ portfolio: { ...getState().portfolio, query: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-category]')) setState({ portfolio: { ...getState().portfolio, category: event.target.value, limit: 100 } });
