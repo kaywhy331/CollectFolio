@@ -40,9 +40,12 @@ function categoryOption(value, label, selected) {
 
 function categoryOptions(selected, games = []) {
   const mergedGames = mergeCatalogGames(games);
-  const tcgcsvGames = mergedGames.filter((game) => game.provider === 'tcgcsv');
+  // Flagship games (Pokémon/Magic/Yu-Gi-Oh!) are already listed in `standard`
+  // below via CATALOG_GAMES -- exclude them here so catalog-v2 B1 doesn't
+  // duplicate them into the TCGCSV optgroup too.
+  const tcgcsvGames = mergedGames.filter((game) => game.provider === 'tcgcsv' && !game.flagship);
   const selectedGame = catalogGame(selected, mergedGames);
-  if (selectedGame?.provider === 'tcgcsv' && !tcgcsvGames.some((game) => game.id === selectedGame.id)) {
+  if (selectedGame?.provider === 'tcgcsv' && !selectedGame.flagship && !tcgcsvGames.some((game) => game.id === selectedGame.id)) {
     tcgcsvGames.push(selectedGame);
   }
   const standard = [
@@ -178,11 +181,16 @@ function browseGameButton(game, browse, { directory = false } = {}) {
 }
 
 function gameChooser(state, browse, catalogGames) {
-  const tcgcsvGames = catalogGames.filter((game) => game.provider === 'tcgcsv');
-  const publicGames = catalogGames.filter((game) => game.provider !== 'tcgcsv');
+  // catalog-v2 B1: flagship games (Pokémon/Magic/Yu-Gi-Oh!) are provider
+  // 'tcgcsv' too now, so the primary/directory split can no longer use
+  // provider alone -- `flagship` marks the fixed CATALOG_GAMES entries that
+  // always stay in the quick-chip row, everything else is the searchable
+  // TCGCSV category directory.
+  const tcgcsvGames = catalogGames.filter((game) => game.provider === 'tcgcsv' && !game.flagship);
+  const publicGames = catalogGames.filter((game) => game.flagship);
   const selected = catalogGame(browse.game, catalogGames);
   const quickGames = [{ id: 'all', name: 'All games', shortName: 'All games' }, ...publicGames];
-  if (selected?.provider === 'tcgcsv') quickGames.push(selected);
+  if (selected?.provider === 'tcgcsv' && !selected.flagship) quickGames.push(selected);
   const status = `${tcgcsvGames.length} TCGCSV categories mapped · free community access`;
   return `<section class="browse-game-chooser" aria-labelledby="browse-game-heading">
     <div class="browse-game-chips" role="group" aria-label="Primary card games">${quickGames.map((game) => browseGameButton(game, browse)).join('')}</div>

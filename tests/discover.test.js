@@ -87,7 +87,7 @@ test('Discover retains a complete result set while rendering large catalogs in b
   assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
 });
 
-test('Discover browse exposes all 90 source categories with free community access signed out', () => {
+test('Discover browse exposes all 87 non-flagship source categories with free community access signed out', () => {
   const html = renderSearch(state({
     discover: {
       mode: 'browse', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
@@ -101,9 +101,19 @@ test('Discover browse exposes all 90 source categories with free community acces
   assert.match(html, /Silver Tempest/);
   assert.match(html, /SIT · 2022 · 195 cards/);
   assert.match(html, /All TCGCSV games and categories/);
-  assert.match(html, /90 TCGCSV categories mapped · free community access/);
-  assert.equal((html.match(/data-game-search-text=/g) || []).length, 90);
+  assert.match(html, /87 TCGCSV categories mapped · free community access/);
+  assert.equal((html.match(/data-game-search-text=/g) || []).length, 87);
   assert.equal((html.match(/data-catalog-locked="true"/g) || []).length, 0);
+  // catalog-v2 B1: flagship games are pinned as quick chips, not the
+  // searchable directory -- they must not appear twice.
+  const chipsSection = html.match(/class="browse-game-chips"[^>]*>([\s\S]*?)<\/div>\s*<div class="browse-game-directory"/)?.[1] || '';
+  assert.match(chipsSection, /data-game="pokemon"/);
+  assert.match(chipsSection, /data-game="magic"/);
+  assert.match(chipsSection, /data-game="yugioh"/);
+  const directorySection = html.match(/id="browse-game-options"[^>]*>([\s\S]*?)<p class="browse-game-empty"/)?.[1] || '';
+  assert.doesNotMatch(directorySection, /data-game="pokemon"/);
+  assert.doesNotMatch(directorySection, /data-game="magic"/);
+  assert.doesNotMatch(directorySection, /data-game="yugioh"/);
   assert.match(html, /data-game="tcgcsv-category-23"[^>]*>[\s\S]*?Dragon Ball Z TCG/);
   assert.match(html, /data-game="tcgcsv-category-68"[^>]*>[\s\S]*?One Piece Card Game/);
   assert.match(html, /data-game="tcgcsv-category-90"[^>]*>[\s\S]*?CookieRun: Braverse TCG/);
@@ -179,7 +189,7 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
       results: [{ ...item, provider: 'tcgcsv', externalId: '68:1000:2000', category: 'tcgcsv-category-68', game: 'One Piece Card Game', name: 'Monkey.D.Luffy' }]
     }
   }));
-  assert.match(search, /<optgroup label="TCGCSV games and categories \(90\)">/);
+  assert.match(search, /<optgroup label="TCGCSV games and categories \(87\)">/);
   assert.match(search, /value="tcgcsv-category-68" selected>One Piece Card Game/);
   assert.match(search, /class="result-facts"><span>One Piece Card Game<\/span>/);
   assert.doesNotMatch(search, /Full catalog|Full TCGCSV catalog/);

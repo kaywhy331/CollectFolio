@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   CATALOG_GAMES,
   TCGCSV_CATALOG_GAMES,
+  catalogGame,
   catalogGameRequiresSession,
   catalogGamesFromTCGCSVCategories,
   catalogProductKind,
@@ -40,7 +41,11 @@ test('browse catalog exposes provider-neutral games and normalized set identity'
   assert.equal(TCGCSV_CATEGORY_DIRECTORY.find((category) => category.categoryId === 23)?.displayName, 'Dragon Ball Z TCG');
   assert.equal(TCGCSV_CATEGORY_DIRECTORY.find((category) => category.categoryId === 68)?.displayName, 'One Piece Card Game');
   assert.equal(TCGCSV_CATEGORY_DIRECTORY.find((category) => category.categoryId === 90)?.displayName, 'CookieRun: Braverse TCG');
-  assert.equal(TCGCSV_CATALOG_GAMES.length, 90);
+  // catalog-v2 B1: the 87 non-flagship categories (90 total minus the 3
+  // flagship categoryIds 1/2/3, already represented by their fixed
+  // CATALOG_GAMES entry) -- flagship categories never appear twice.
+  assert.equal(TCGCSV_CATALOG_GAMES.length, 87);
+  assert.equal(TCGCSV_CATALOG_GAMES.some((game) => [1, 2, 3].includes(game.categoryId)), false);
   const tcgcsvGames = catalogGamesFromTCGCSVCategories([
     { categoryId: 3, displayName: 'Pokemon' },
     { categoryId: 68, displayName: 'One Piece Card Game' }
@@ -49,8 +54,11 @@ test('browse catalog exposes provider-neutral games and normalized set identity'
     { id: 'tcgcsv-category-3', name: 'Pokemon' },
     { id: 'tcgcsv-category-68', name: 'One Piece Card Game' }
   ]);
+  // categoryId 3 (flagship Pokémon) is dropped by the merge -- it must not
+  // duplicate the fixed 'pokemon' entry under a 'tcgcsv-category-3' id.
   const mergedGames = mergeCatalogGames(tcgcsvGames);
-  assert.equal(mergedGames.length, 93);
+  assert.equal(mergedGames.length, 90);
+  assert.equal(mergedGames.some((game) => game.id === 'tcgcsv-category-3'), false);
   assert.deepEqual(mergedGames.slice(0, 3).map((game) => game.id), ['pokemon', 'magic', 'yugioh']);
   assert.equal(mergedGames.find((game) => game.id === 'tcgcsv-category-68')?.name, 'One Piece Card Game');
   assert.equal(mergedGames.at(-1)?.id, 'tcgcsv-category-90');
@@ -70,6 +78,27 @@ test('browse catalog exposes provider-neutral games and normalized set identity'
   assert.equal(normalizeYGOSet({ set_code: 'LOB', set_name: 'Legend of Blue Eyes', set_image: 'https://images.ygoprodeck.com/images/sets/LOB.jpg' }).image, 'https://images.ygoprodeck.com/images/sets/LOB.jpg');
   assert.equal(normalizeScryfallSet({ code: 'mkm', name: 'Murders at Karlov Manor', set_type: 'expansion', card_count: 286, released_at: '2024-02-09' }).id, 'magic:mkm');
   assert.equal(normalizeYGOSet({ set_code: 'LOB', set_name: 'Legend of Blue Eyes', num_of_cards: 126, tcg_date: '2002-03-08' }).cardCount, 126);
+});
+
+test('catalog-v2 B1: flagship games resolve to TCGCSV categories with no duplicate game-list entries', () => {
+  assert.deepEqual(CATALOG_GAMES.map((game) => ({ id: game.id, provider: game.provider, categoryId: game.categoryId })), [
+    { id: 'pokemon', provider: 'tcgcsv', categoryId: 3 },
+    { id: 'magic', provider: 'tcgcsv', categoryId: 1 },
+    { id: 'yugioh', provider: 'tcgcsv', categoryId: 2 }
+  ]);
+  assert.deepEqual(catalogGame('pokemon'), CATALOG_GAMES[0]);
+  assert.equal(catalogGame('magic').categoryId, 1);
+  assert.equal(catalogGame('yugioh').categoryId, 2);
+  // Pokémon Japan (85) stays its own separate game entry, never merged
+  // into the flagship 'pokemon' id.
+  const japan = catalogGame('tcgcsv-category-85');
+  assert.equal(japan.categoryId, 85);
+  assert.notEqual(japan.id, 'pokemon');
+  const allGames = mergeCatalogGames();
+  assert.equal(allGames.filter((game) => game.categoryId === 3).length, 1);
+  assert.equal(allGames.filter((game) => game.categoryId === 1).length, 1);
+  assert.equal(allGames.filter((game) => game.categoryId === 2).length, 1);
+  assert.equal(allGames.length, 90);
 });
 
 test('TCGCSV mapping retains source games, finishes, raw price fields, and unavailable products', () => {
