@@ -26,6 +26,7 @@ import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refres
 import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets, loadCatalogGames, loadCatalogSetProducts, loadCatalogSets, loadTCGCSVSetCoverImage, mergeCatalogGames } from './services/catalog-browse.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
+import { getTrajectoryForecastForItem, trajectoryKeyForItem } from './services/forecast-trajectory.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
 import { fetchTcgcsvRefreshStatus } from './services/tcgcsv-refresh-status.js';
 import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
@@ -281,10 +282,47 @@ async function loadFeatureFlags() {
 }
 
 let intelligenceHydrationId = 0;
+let trajectoryHydrationId = 0;
+
+// Trajectory-v1 (T6): prefetches published forecast packets for TCGCSV
+// catalog items currently on screen, gated on the same
+// publicPriceIntelligence flag as cloud-published intelligence (T6
+// point 5). Deliberately best-effort and non-blocking -- a trajectory
+// fetch failure for one item never blocks the rest of hydration, and this
+// runs alongside (not instead of) hydrateIntelligence's own cloud-published path.
+async function hydrateTrajectoryForecasts() {
+  const hydrationId = ++trajectoryHydrationId;
+  const state = getState();
+  if (!state.featureFlags.publicPriceIntelligence) {
+    setState({ trajectoryForecasts: { byKey: {}, loading: false, error: '' } });
+    return;
+  }
+  const items = [...(state.search?.results || []), ...(state.discover?.products || [])];
+  const byKey = new Map();
+  for (const item of items) {
+    const key = trajectoryKeyForItem(item);
+    if (key && !byKey.has(key)) byKey.set(key, item);
+  }
+  if (!byKey.size) {
+    setState({ trajectoryForecasts: { byKey: {}, loading: false, error: '' } });
+    return;
+  }
+  setState({ trajectoryForecasts: { ...getState().trajectoryForecasts, loading: true, error: '' } });
+  const entries = await Promise.all([...byKey.entries()].map(async ([key, item]) => {
+    try {
+      return [key, await getTrajectoryForecastForItem(item, { session: state.auth?.session })];
+    } catch (error) {
+      return [key, { eligibility: 'unknown', packet: null, error: error.message || 'Trajectory forecast unavailable.' }];
+    }
+  }));
+  if (hydrationId !== trajectoryHydrationId) return;
+  setState({ trajectoryForecasts: { byKey: Object.fromEntries(entries), loading: false, error: '' } });
+}
 
 async function hydrateIntelligence() {
   const hydrationId = ++intelligenceHydrationId;
   const state = getState();
+  hydrateTrajectoryForecasts().catch(() => {});
   const variantIds = intelligenceVariantIds(
     state.holdings,
     state.watchlistItems,

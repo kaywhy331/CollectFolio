@@ -70,7 +70,17 @@ export function forecastViewModels(publication = {}, { holdingId = '' } = {}) {
   }));
 }
 
-export function searchResultViewModel(item = {}, { publication = null, currency = 'USD' } = {}) {
+// `trajectoryEstimates` is the plain {30: estimate|undefined, 90:
+// estimate|undefined} shape produced by
+// services/forecast-trajectory.js's trajectoryForecastEstimates(packet).
+// It is passed in already computed (rather than fetched in here) so this
+// module stays synchronous and doesn't reach up into services/ -- core/
+// is depended on by services/, never the other way around. Cloud-published
+// published intelligence, where present for a horizon, always wins over a
+// trajectory-v1 estimate for the same horizon; trajectory-v1 only fills a
+// horizon the cloud-published forecast doesn't cover, and trajectory-v1 never
+// produces 180d/365d, so those horizons are untouched by this fallback.
+export function searchResultViewModel(item = {}, { publication = null, currency = 'USD', trajectoryEstimates = null } = {}) {
   const reference = catalogReferenceForItem(item);
   const price = catalogPriceForValuation(item);
   const selected = selectPublicationForCatalogItem(publication, item, currency);
@@ -82,18 +92,33 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
     : pricingStatusFor(item);
   const forecastFor = (horizon) => {
     const forecast = intelligence?.forecasts?.[horizon];
-    if (!forecast) return null;
+    if (forecast) {
+      return {
+        horizon,
+        estimatedValue: forecast.q50,
+        lowerBound: forecast.q10,
+        upperBound: forecast.q90,
+        estimatedChange: forecastBasis > 0 ? forecast.q50 / forecastBasis - 1 : null,
+        probabilityUp: forecast.probabilityUp,
+        confidence: forecast.confidence,
+        status: forecast.forecastStatus,
+        maturesAt: forecast.maturesAt,
+        modelVersion: forecast.modelVersion
+      };
+    }
+    const trajectory = trajectoryEstimates?.[horizon];
+    if (!trajectory) return null;
     return {
       horizon,
-      estimatedValue: forecast.q50,
-      lowerBound: forecast.q10,
-      upperBound: forecast.q90,
-      estimatedChange: forecastBasis > 0 ? forecast.q50 / forecastBasis - 1 : null,
-      probabilityUp: forecast.probabilityUp,
-      confidence: forecast.confidence,
-      status: forecast.forecastStatus,
-      maturesAt: forecast.maturesAt,
-      modelVersion: forecast.modelVersion
+      estimatedValue: trajectory.estimatedValue,
+      lowerBound: trajectory.lowerBound,
+      upperBound: trajectory.upperBound,
+      estimatedChange: trajectory.estimatedChange,
+      probabilityUp: null,
+      confidence: trajectory.confidence,
+      status: trajectory.confidence === 'cold-start' ? 'cold-start' : 'trajectory',
+      maturesAt: null,
+      modelVersion: trajectory.modelVersion
     };
   };
   const forecast30d = forecastFor(30);
@@ -128,7 +153,7 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
     priceUpdatedAt: price === null && forecastBasis !== null
       ? intelligence.observed.observedAt
       : reference.priceUpdatedAt,
-    forecastStatus: intelligence && Object.keys(intelligence.forecasts).length ? 'available' : 'unavailable',
+    forecastStatus: (intelligence && Object.keys(intelligence.forecasts).length) || forecast30d || forecast90d ? 'available' : 'unavailable',
     forecast30d,
     forecast90d,
     forecast180d,

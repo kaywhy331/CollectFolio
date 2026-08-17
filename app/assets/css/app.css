@@ -411,6 +411,20 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .forecast-band-50-dot { background: color-mix(in srgb, var(--blue) 55%, var(--surface)); }
 .forecast-band-80-dot { background: color-mix(in srgb, var(--blue) 25%, var(--surface)); }
 .empty-chart { display: grid; min-height: 150px; place-items: center; color: var(--muted); text-align: center; border: 1px dashed var(--border); border-radius: 12px; }
+.trajectory-chart-labels { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.trajectory-chart-labels .support-badge { margin: 0; }
+.trajectory-band { stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.trajectory-band-80 { stroke: var(--blue); stroke-width: 7; opacity: .2; }
+.trajectory-band-50 { stroke: var(--blue); stroke-width: 7; opacity: .4; }
+.trajectory-chart .forecast-median { stroke: var(--blue); }
+.trajectory-chart .forecast-point { fill: var(--blue); }
+.trajectory-cold-start .trajectory-band-80, .trajectory-cold-start .trajectory-band-50 { stroke: var(--warning); }
+.trajectory-cold-start .forecast-median { stroke: var(--warning); }
+.trajectory-cold-start .forecast-point { fill: var(--warning); }
+.support-badge.unsupported { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.trajectory-insufficient { padding: 2rem 1.25rem; text-align: center; background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); }
+.trajectory-insufficient h2 { margin: .3rem 0 .35rem; }
+.trajectory-insufficient p.muted { max-width: 32rem; margin: 0 auto; }
 
 .allocation { display: grid; grid-template-columns: 128px 1fr; align-items: center; gap: 1rem; }
 .allocation svg { width: 128px; transform: rotate(-90deg); }
@@ -551,6 +565,8 @@ span.browse-set-art.placeholder { display: flex; align-items: center; justify-co
 .result-market-outlook small { overflow: hidden; color: var(--muted); font-size: .54rem; text-overflow: ellipsis; white-space: nowrap; }
 .result-market-outlook .positive { color: var(--positive); }
 .result-market-outlook .negative { color: var(--danger); }
+.result-outlook-note { grid-column: 1 / -1; padding: .4rem .5rem; color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border)); border-radius: 8px; }
+.result-outlook-note small { display: block; overflow: visible; color: inherit; font-size: .62rem; font-weight: 650; line-height: 1.35; white-space: normal; }
 .result-facts { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
 .result-facts span { padding: .15rem .38rem; color: var(--muted); font-size: .6rem; background: var(--surface-2); border-radius: 999px; }
 .result-actions { display: grid; grid-template-columns: 1fr; gap: var(--space-2); margin-top: auto; }
@@ -665,6 +681,7 @@ span.browse-set-art.placeholder { display: flex; align-items: center; justify-co
 .support-badge.partial { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .forecast-list { display: grid; gap: 1rem; }
 .forecast-card { padding: 1.25rem; }
+.trajectory-section { border-color: color-mix(in srgb, var(--blue) 28%, var(--border)); }
 .forecast-card .section-heading { align-items: start; margin: 0 0 1rem; }
 .forecast-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
 .forecast-grid div { display: grid; gap: .2rem; padding: .72rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 11px; }

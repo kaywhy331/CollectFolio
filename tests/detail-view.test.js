@@ -69,14 +69,33 @@ test('detail abstains instead of choosing the first ambiguous holding series', (
   assert.match(html, /Market condition<\/dt><dd>Not confirmed/);
 });
 
-test('owned card detail renders a local scenario even when public intelligence is disabled', () => {
+test('owned catalog card detail no longer renders local-scenario-v1, deferring to a published trajectory forecast', () => {
+  // local-scenario-v1 is demoted to manual/custom items only (T6): this
+  // holding is catalog-linked (item.provider 'pokemon'), so its detail
+  // must show the demotion reason instead of a modeled manual-scenario
+  // range, even though it carries a manual price override.
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const holding = {
     id: 'owned-local', canonicalVariantId: variantId, item, quantity: 1,
     condition: 'Near Mint', manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
   };
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef, holding }, baseState({ holdings: [holding] }));
-  assert.match(html, /Local scenario outlook/);
+  assert.match(html, /Manual scenario outlook/);
+  assert.match(html, /does not apply to catalog-linked items/);
+  assert.doesNotMatch(html, /local-scenario-chart/);
+  assert.match(html, /No forecast published/);
+  assert.doesNotMatch(html, /Approved forecast projection/);
+});
+
+test('owned manual/custom card detail still renders a manual scenario when public intelligence is disabled', () => {
+  const manualItem = { ...item, provider: 'custom' };
+  const catalogRef = catalogReferenceForItem(manualItem, { canonicalVariantId: variantId });
+  const holding = {
+    id: 'owned-manual', canonicalVariantId: variantId, item: manualItem, quantity: 1,
+    condition: 'Near Mint', manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
+  };
+  const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item: manualItem, catalogRef, holding }, baseState({ holdings: [holding] }));
+  assert.match(html, /Manual scenario outlook/);
   assert.match(html, /Your estimate/);
   assert.match(html, /local-scenario-chart/);
   assert.match(html, /No forecast published/);

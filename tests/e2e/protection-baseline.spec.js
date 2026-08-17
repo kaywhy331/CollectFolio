@@ -440,10 +440,54 @@ test('Phase 3 collection tools stay selection-scoped and Watchlist removal is co
 
 test('local scenarios work while published forecast presentation remains fail closed', async ({ page }) => {
   await seedLegacyIndexedDB(page);
+
+  // T6 demoted local-scenario-v1 to manual/custom items only: the two
+  // catalog-linked holdings in this fixture (scryfall, pokemon) now defer
+  // to the honest "insufficient evidence" state instead of a modeled
+  // local-scenario range, and the fixture's only manual/custom holding
+  // (id ...003) carries no manual value of its own. Give it one here,
+  // scoped to this test only (not the shared fixture file), so the
+  // original protection intent -- manual scenarios still work while
+  // published forecasts stay fail-closed -- remains provable.
+  await page.evaluate(async ({ databaseName }) => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open(databaseName);
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(['holdings'], 'readwrite');
+      const store = transaction.objectStore('holdings');
+      const getRequest = store.get('10000000-0000-4000-8000-000000000003');
+      getRequest.addEventListener('success', () => {
+        const holding = getRequest.result;
+        holding.manualMarketPrice = 18;
+        holding.manualMarketCurrency = 'USD';
+        store.put(holding);
+      }, { once: true });
+      transaction.addEventListener('complete', resolve, { once: true });
+      transaction.addEventListener('abort', () => reject(transaction.error), { once: true });
+      transaction.addEventListener('error', () => reject(transaction.error), { once: true });
+    });
+    database.close();
+  }, legacyBackup);
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Insights' }).click();
   await expect(page.getByRole('heading', { name: '90-day portfolio range' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Published market forecasts remain gated' })).toBeVisible();
+
+  // Manual/custom holding: local-scenario-v1 still works and still
+  // presents as a "Manual scenario" projection.
   await expect(page.getByRole('img', { name: /Local scenario projection/ }).first()).toBeVisible();
+  await expect(page.getByText('Manual scenario').first()).toBeVisible();
+
+  // Catalog-linked holdings (scryfall, pokemon): no modeled local
+  // scenario, no fabricated band -- the honest demotion reason instead.
+  await expect(page.getByText(/does not apply to catalog-linked items/).first()).toBeVisible();
+
+  // Published forecasts remain fail-closed regardless.
   await expect(page.getByRole('img', { name: /Approved forecast projection/ })).toHaveCount(0);
 });
 
