@@ -282,28 +282,46 @@ function renderBrowseSets(state, browse) {
     <p class="fine-print browse-rights-note">${escapeHTML(rightsNote)}</p>`;
 }
 
+function browseProductKindTabs(browse, counts) {
+  if (!counts.sealed || !counts.cards) return '';
+  const tabs = [
+    ['cards', 'Cards', counts.cards],
+    ['sealed', 'Sealed & other', counts.sealed],
+    ['all', 'All', counts.cards + counts.sealed]
+  ];
+  return `<div class="browse-product-tabs" role="group" aria-label="Product type">${tabs.map(([kind, label, count]) =>
+    `<button type="button" data-action="set-browse-product-kind" data-kind="${kind}" aria-pressed="${browse.productKind === kind}">${label}<small>${count.toLocaleString()}</small></button>`).join('')}</div>`;
+}
+
 function renderBrowseProducts(state, browse) {
   const selectedSet = browse.selectedSet || (browse.sets || []).find((set) => set.externalId === browse.setId && set.gameId === browse.game);
-  const filtered = filterCatalogProducts(browse.products || [], { query: browse.productQuery, sort: browse.productSort });
-  const indexed = filtered.map((item) => ({ item, index: (browse.products || []).indexOf(item) }));
+  const products = browse.products || [];
+  const counts = { sealed: products.filter((product) => product.productKind === 'sealed').length };
+  counts.cards = products.length - counts.sealed;
+  const kind = counts.sealed && counts.cards ? browse.productKind || 'cards' : 'all';
+  const filtered = filterCatalogProducts(products, { query: browse.productQuery, sort: browse.productSort, kind });
+  const indexed = filtered.map((item) => ({ item, index: products.indexOf(item) }));
   const limit = Math.max(BROWSE_PRODUCTS_PAGE_SIZE, Number(browse.limit) || BROWSE_PRODUCTS_PAGE_SIZE);
   const visible = indexed.slice(0, limit);
   const remaining = indexed.length - visible.length;
   const title = selectedSet?.name || browse.setId;
   const game = catalogGame(browse.game, browse.games);
+  const noun = kind === 'sealed'
+    ? ['sealed product', 'sealed products']
+    : kind === 'cards' || !counts.sealed ? ['card', 'cards'] : ['item', 'items'];
   return `<nav class="browse-breadcrumbs" aria-label="Browse path"><button type="button" data-action="browse-all-games">Discover</button><span>/</span><button type="button" data-action="select-browse-game" data-game="${escapeAttribute(browse.game)}">${escapeHTML(game?.shortName || browse.game)}</button><span>/</span><strong>${escapeHTML(title)}</strong></nav>
-    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading every card printing…' : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'card' : 'cards'}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
-    <div class="browse-product-tabs" role="group" aria-label="Product type"><button type="button" aria-pressed="true">Cards</button><span>Sealed &amp; other will activate with the approved public baseline.</span></div>
+    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading every card printing…' : `${filtered.length.toLocaleString()} ${escapeHTML(filtered.length === 1 ? noun[0] : noun[1])}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
+    ${browseProductKindTabs({ ...browse, productKind: kind }, counts)}
     <div class="browse-controls products">
       <label class="browse-query"><span class="sr-only">Search this set</span><input type="search" data-browse-product-query value="${escapeAttribute(browse.productQuery || '')}" placeholder="Search this set…" autocomplete="off"></label>
       <label><span class="sr-only">Sort cards</span><select data-browse-product-sort><option value="price-desc" ${browse.productSort === 'price-desc' ? 'selected' : ''}>Price &#8593;</option><option value="price-asc" ${browse.productSort === 'price-asc' ? 'selected' : ''}>Price &#8595;</option><option value="number" ${browse.productSort === 'number' ? 'selected' : ''}>Collector # &#8593;</option><option value="number-desc" ${browse.productSort === 'number-desc' ? 'selected' : ''}>Collector # &#8595;</option><option value="name" ${browse.productSort === 'name' ? 'selected' : ''}>Name &#8593;</option><option value="name-desc" ${browse.productSort === 'name-desc' ? 'selected' : ''}>Name &#8595;</option></select></label>
     </div>
     ${browseWarnings(browse)}
-    ${browse.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading cards</span></div>' : visible.length ? `<div class="result-list gallery browse-product-grid">${visible.map(({ item, index }) => resultCard(item, index, state, 'gallery', { scope: 'browse', matchBadge: false })).join('')}</div>${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-products">Show ${Math.min(BROWSE_PRODUCTS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-products">Show all ${indexed.length}</button></div>` : ''}` : emptyState('No matching cards', browse.error ? 'Retry the catalog request.' : 'Try another name, collector number, or rarity.', browse.error ? '<button class="button" type="button" data-action="retry-browse">Retry</button>' : '<button class="button ghost" type="button" data-action="clear-browse-product-query">Clear search</button>')}`;
+    ${browse.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading cards</span></div>' : visible.length ? `<div class="result-list gallery browse-product-grid">${visible.map(({ item, index }) => resultCard(item, index, state, 'gallery', { scope: 'browse', matchBadge: false })).join('')}</div>${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-products">Show ${Math.min(BROWSE_PRODUCTS_PAGE_SIZE, remaining)} more</button><button class="button ghost" type="button" data-action="show-all-browse-products">Show all ${indexed.length}</button></div>` : ''}` : emptyState(`No matching ${noun[1]}`, browse.error ? 'Retry the catalog request.' : 'Try another name, collector number, or rarity.', browse.error ? '<button class="button" type="button" data-action="retry-browse">Retry</button>' : '<button class="button ghost" type="button" data-action="clear-browse-product-query">Clear search</button>')}`;
 }
 
 function renderBrowse(state) {
-  const browse = { game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE, productQuery: '', productSort: 'price-desc', sets: [], products: [], warnings: [], ...state.discover };
+  const browse = { game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE, productQuery: '', productSort: 'price-desc', productKind: 'cards', sets: [], products: [], warnings: [], ...state.discover };
   return `${discoverHeader(state, 'browse')}${browse.setId ? renderBrowseProducts(state, browse) : renderBrowseSets(state, browse)}`;
 }
 

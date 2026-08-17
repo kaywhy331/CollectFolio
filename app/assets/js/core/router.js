@@ -8,6 +8,7 @@ const DISCOVER_MODES = new Set(['search', 'browse']);
 const BROWSE_SET_SORTS = new Set(['newest', 'alpha', 'largest']);
 const BROWSE_SET_SCOPES = new Set(['all', 'main', 'supplemental']);
 const BROWSE_PRODUCT_SORTS = new Set(['price-desc', 'price-asc', 'number', 'number-desc', 'name', 'name-desc']);
+const BROWSE_PRODUCT_KINDS = new Set(['cards', 'sealed', 'all']);
 const TCGCSV_CATEGORY = /^tcgcsv-category-\d+$/;
 
 function asURL(input = '/') {
@@ -56,9 +57,11 @@ function browsePath(browse = {}) {
   const setSort = BROWSE_SET_SORTS.has(browse.sort) ? browse.sort : 'newest';
   const setScope = BROWSE_SET_SCOPES.has(browse.scope) ? browse.scope : 'all';
   const productSort = BROWSE_PRODUCT_SORTS.has(browse.productSort) ? browse.productSort : 'price-desc';
+  const productKind = BROWSE_PRODUCT_KINDS.has(browse.productKind) ? browse.productKind : 'cards';
   if (!setId && setSort !== 'newest') params.set('sort', setSort);
   if (!setId && setScope !== 'all') params.set('scope', setScope);
   if (setId && productSort !== 'price-desc') params.set('sort', productSort);
+  if (setId && productKind !== 'cards') params.set('type', productKind);
   return `${base}${params.size ? `?${params}` : ''}`;
 }
 
@@ -75,11 +78,13 @@ function discoverRoute(url, pathname = '/discover') {
     const setId = game === 'all' ? '' : pathSet || browseSegment(url.searchParams.get('set'));
     const requestedSort = bounded(url.searchParams.get('sort'), 30);
     const requestedScope = bounded(url.searchParams.get('scope'), 30);
+    const requestedType = bounded(url.searchParams.get('type'), 20);
     const sort = setId
       ? (BROWSE_PRODUCT_SORTS.has(requestedSort) ? requestedSort : 'price-desc')
       : (BROWSE_SET_SORTS.has(requestedSort) ? requestedSort : 'newest');
     const scope = BROWSE_SET_SCOPES.has(requestedScope) ? requestedScope : 'all';
-    const browse = { game, setId, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'price-desc' };
+    const productKind = setId && BROWSE_PRODUCT_KINDS.has(requestedType) ? requestedType : 'cards';
+    const browse = { game, setId, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'price-desc', productKind };
     return route('discover', 'search', browsePath(browse), {
       mode: 'browse',
       browse,

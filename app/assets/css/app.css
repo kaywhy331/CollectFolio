@@ -501,9 +501,11 @@ span.browse-set-art.placeholder { display: flex; align-items: center; justify-co
 .browse-set-heading { display: flex; align-items: start; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-4); }
 .browse-set-heading h2 { margin: .1rem 0; font-size: clamp(1.35rem, 4vw, 2rem); }
 .browse-set-heading p:not(.eyebrow) { margin: 0; color: var(--muted); font-size: .75rem; }
-.browse-product-tabs { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
-.browse-product-tabs button { min-height: 34px; padding: .35rem .7rem; color: var(--text); font: inherit; font-size: .72rem; font-weight: 800; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px; }
-.browse-product-tabs span { color: var(--faint); font-size: .64rem; }
+.browse-product-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+.browse-product-tabs button { display: inline-flex; align-items: center; gap: .4rem; min-height: 34px; padding: .35rem .7rem; color: var(--text); font: inherit; font-size: .72rem; font-weight: 800; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer; }
+.browse-product-tabs button small { color: var(--muted); font-size: .64rem; font-weight: 700; }
+.browse-product-tabs button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.browse-product-tabs button[aria-pressed="true"] small { color: inherit; }
 .browse-product-grid { margin-top: var(--space-5); }
 .discover-search { position: relative; z-index: 2; margin-bottom: var(--space-4); }
 .search-command { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 17px; }

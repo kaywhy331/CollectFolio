@@ -1408,6 +1408,7 @@ root.addEventListener('click', async (event) => {
     hydrateBrowseSetCovers();
   }
   if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
+  if (action.dataset.action === 'set-browse-product-kind') setState({ discover: { ...getState().discover, productKind: action.dataset.kind, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (action.dataset.action === 'load-more-browse-products') setState({ discover: { ...getState().discover, limit: (Number(getState().discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE } });
   if (action.dataset.action === 'show-all-browse-products') setState({ discover: { ...getState().discover, limit: getState().discover.products.length } });
   if (action.dataset.action === 'view-set-holdings') {
