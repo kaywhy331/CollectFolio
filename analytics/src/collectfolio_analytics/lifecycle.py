@@ -149,32 +149,71 @@ def load_or_fetch_groups_metadata(
     force_refresh: bool = False,
     **fetch_kwargs: object,
 ) -> tuple[dict[tuple[int, int], dict[str, object]], str]:
-    """Reuse a cached groups-metadata file when present; else fetch + cache it.
+    """Reuse a cached groups-metadata file when it covers every requested
+    category; else fetch (only) the missing categories and merge them in.
+
+    Correctness note: an earlier version of this function treated "the
+    cache file exists" as sufficient to skip fetching entirely, regardless
+    of which categories ``category_ids`` actually asked for. That let a
+    cache first written for a narrow scope (e.g. one category, from a
+    smoke test) silently starve a later broader-scope caller (e.g. all
+    four trajectory-v1 categories) of every other category's groups
+    metadata -- discovered during T3 when categories 1/2/3's release-age
+    features were unexpectedly always the fallback value. This version
+    tracks which categories are actually present in the cached payload's
+    ``categoryIds`` and only reuses the cache as-is when that set already
+    covers every requested id; otherwise it fetches just the missing
+    categories (or, under ``force_refresh``, every requested category) and
+    merges the result with whatever was already cached for OTHER
+    categories, so scope only ever grows and previously-fetched categories
+    are never silently dropped.
 
     Returns ``(metadata, sha256_of_cached_json)`` for receipts.
     """
 
     cache_path = Path(cache_path)
-    if not force_refresh and cache_path.is_file():
+    requested = {int(c) for c in category_ids}
+    cached_metadata: dict[tuple[int, int], dict[str, object]] = {}
+    cached_category_ids: set[int] = set()
+    if cache_path.is_file():
         with gzip.open(cache_path, "rt", encoding="utf-8") as handle:
             raw = json.load(handle)
-        metadata = {
+        cached_category_ids = {int(c) for c in raw.get("categoryIds", [])}
+        cached_metadata = {
             (int(row["category_id"]), int(row["group_id"])): row
             for row in raw.get("groups", [])
         }
-        return metadata, _content_sha256(raw)
 
-    metadata = fetch_groups_metadata(category_ids, **fetch_kwargs)  # type: ignore[arg-type]
+    missing = requested - cached_category_ids
+    if not force_refresh and not missing:
+        payload = {
+            "categoryIds": sorted(cached_category_ids),
+            "groups": [cached_metadata[key] for key in sorted(cached_metadata)],
+        }
+        return cached_metadata, _content_sha256(payload)
+
+    to_fetch = sorted(requested) if force_refresh else sorted(missing)
+    fetched = fetch_groups_metadata(to_fetch, **fetch_kwargs)  # type: ignore[arg-type]
+    if force_refresh:
+        merged = dict(fetched)
+        for key, row in cached_metadata.items():
+            if key[0] not in requested:  # keep categories outside this call's scope
+                merged.setdefault(key, row)
+    else:
+        merged = dict(cached_metadata)
+        merged.update(fetched)
+
+    all_category_ids = sorted({key[0] for key in merged} | requested)
     payload = {
-        "categoryIds": sorted({int(c) for c in category_ids}),
-        "groups": [metadata[key] for key in sorted(metadata)],
+        "categoryIds": all_category_ids,
+        "groups": [merged[key] for key in sorted(merged)],
     }
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = cache_path.with_suffix(cache_path.suffix + ".part")
     with gzip.open(tmp_path, "wt", encoding="utf-8") as handle:
         handle.write(_canonical_json(payload))
     tmp_path.replace(cache_path)
-    return metadata, _content_sha256(payload)
+    return merged, _content_sha256(payload)
 
 
 def release_age_weeks(published_on: str | None, archive_date: date) -> int | None:

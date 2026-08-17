@@ -1,0 +1,52 @@
+{
+  "ablation": {
+    "categoryId": 2,
+    "coefficients": {
+      "desirabilityProxy": 0.000845,
+      "intercept": -0.318205,
+      "scarcityProxy": 0.100004
+    },
+    "metrics": {
+      "foldsUsedFallback": [],
+      "holdoutCovered": 61113,
+      "holdoutR2": 0.029602,
+      "holdoutRmse": 1.715216,
+      "nFeatures": 3,
+      "nFolds": 5,
+      "nGroups": 615,
+      "nObservations": 61113
+    },
+    "modelKey": "video_model_v0_ablation_form",
+    "proxyNotes": "video_model_v0's original two features (pull_cost, desirability) cannot be reconstructed from available data (PRD/CollectFolio-Price-Intelligence-PRD.md, Executive decision section: video_model_v0's surviving workbook has hidden/manual desirability inputs and only 22 observations with no out-of-sample validation, so desirability specifically is not recoverable, and this pipeline separately has no per-product pack-odds/EV data for a genuine pull_cost). Substituted here, both proxies research-only: pull-cost proxy = structural_scarcity_proxy(group_variant_count) = -log(group_variant_count), monotonic in the same scarcer-is-costlier direction as the original dollar pull_cost but not on the same scale; desirability proxy = release_age_weeks at asOf, an approximate, non-genuine substitute. Coefficients are freshly fit on this panel via the same ridge-OLS machinery as the main hedonic model, not video_model_v0's literal legacy coefficients.",
+    "researchOnly": true,
+    "usedInterceptOnlyFallback": false
+  },
+  "categoryId": 2,
+  "coldStart": {
+    "candidateCount": 213
+  },
+  "generatedAt": "2026-08-17T12:54:57.992162+00:00",
+  "mainModel": {
+    "featureCount": 37,
+    "metrics": {
+      "foldsUsedFallback": [],
+      "holdoutCovered": 61113,
+      "holdoutR2": 0.558333,
+      "holdoutRmse": 1.157155,
+      "nFeatures": 37,
+      "nFolds": 5,
+      "nGroups": 615,
+      "nObservations": 61113
+    },
+    "usedInterceptOnlyFallback": false
+  },
+  "modelVersion": "trajectory-v1",
+  "nRows": 61113,
+  "peakRssBytes": 346836992,
+  "predictionsCacheContentHash": "02018bf2111343711cd63998f21a98e2317fd79819a6ca3689a6262cbe9dec97",
+  "predictionsCachePath": "analytics/data/trajectory/hedonic/hedonic_predictions_category_2.json.gz",
+  "productsCachePath": "analytics/data/hedonic/products_metadata.json.gz",
+  "productsMetadataAvailable": true,
+  "rarityCoverage": 0.981673,
+  "wallClockSeconds": 78.047
+}

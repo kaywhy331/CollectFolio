@@ -2,14 +2,16 @@
   "categories": [
     {
       "categoryId": 1,
-      "contentHash": "9b84a3b8b8af268238769b02dc04529d4af6a7fc85ccc59b2ea2cd1ecc165890",
+      "coldStartPacketCount": 4710,
+      "contentHash": "e6302f8a318df2692199552e3525edf2969deca67bb99eba68e10171bc1f374d",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T04:56:37.023284+00:00",
+      "generatedAt": "2026-08-17T13:00:08.800443+00:00",
+      "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-1/packets.jsonl.gz",
-      "packetBytes": 32294837,
-      "packetRowCount": 161852,
-      "peakRssBytes": 389062656,
+      "packetBytes": 32791426,
+      "packetRowCount": 166562,
+      "peakRssBytes": 438566912,
       "poolSizes": {
         "high:13": 229766,
         "high:4": 233771,
@@ -22,19 +24,21 @@
         "crossed_quantiles_rearranged": 0,
         "no_history": 0
       },
-      "variantCount": 161852,
-      "wallClockSeconds": 161.814
+      "variantCount": 166562,
+      "wallClockSeconds": 183.274
     },
     {
       "categoryId": 2,
-      "contentHash": "b41099b6be0fd6dac0c1f15ced0d1f6c3e40a818a9a395b972f9bef3deb4d39f",
+      "coldStartPacketCount": 213,
+      "contentHash": "ec8681388e025ed580ad92297414e276fa8f87b9708eba64c234b4809012dd17",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T04:57:38.402333+00:00",
+      "generatedAt": "2026-08-17T13:01:19.254275+00:00",
+      "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-2/packets.jsonl.gz",
-      "packetBytes": 12079137,
-      "packetRowCount": 61113,
-      "peakRssBytes": 168599552,
+      "packetBytes": 12222150,
+      "packetRowCount": 61326,
+      "peakRssBytes": 187256832,
       "poolSizes": {
         "high:13": 91115,
         "high:4": 92111,
@@ -47,19 +51,21 @@
         "crossed_quantiles_rearranged": 0,
         "no_history": 0
       },
-      "variantCount": 61113,
-      "wallClockSeconds": 61.002
+      "variantCount": 61326,
+      "wallClockSeconds": 69.827
     },
     {
       "categoryId": 3,
-      "contentHash": "fbf03e04224f260f29697f1f29c0a3a5d2d8f7c3d4b440819b65c9576f699659",
+      "coldStartPacketCount": 561,
+      "contentHash": "af059e35ec9fa198be49fa58e5371140f4e994a62df48a3a08d69dcb89c81564",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T04:58:26.485706+00:00",
+      "generatedAt": "2026-08-17T13:02:14.162438+00:00",
+      "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-3/packets.jsonl.gz",
-      "packetBytes": 9549498,
-      "packetRowCount": 46331,
-      "peakRssBytes": 133046272,
+      "packetBytes": 9733505,
+      "packetRowCount": 46892,
+      "peakRssBytes": 149405696,
       "poolSizes": {
         "high:13": 67537,
         "high:4": 68498,
@@ -72,19 +78,21 @@
         "crossed_quantiles_rearranged": 0,
         "no_history": 0
       },
-      "variantCount": 46331,
-      "wallClockSeconds": 47.719
+      "variantCount": 46892,
+      "wallClockSeconds": 54.361
     },
     {
       "categoryId": 85,
-      "contentHash": "8c4a0acdf99f50a3f74f8f1b442915c382bfaae4483ecafca104362b9ccf7355",
+      "coldStartPacketCount": 2128,
+      "contentHash": "5cb0f6db97f83e1e3ba150b827f9fe64e565f0e8e604bfad5d04b74b1f35b1c8",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T04:58:55.591035+00:00",
+      "generatedAt": "2026-08-17T13:02:46.183455+00:00",
+      "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-85/packets.jsonl.gz",
-      "packetBytes": 6615897,
-      "packetRowCount": 32365,
-      "peakRssBytes": 92327936,
+      "packetBytes": 6821152,
+      "packetRowCount": 34493,
+      "peakRssBytes": 102821888,
       "poolSizes": {
         "high:13": 42733,
         "high:4": 43905,
@@ -97,8 +105,8 @@
         "crossed_quantiles_rearranged": 0,
         "no_history": 0
       },
-      "variantCount": 32365,
-      "wallClockSeconds": 28.766
+      "variantCount": 34493,
+      "wallClockSeconds": 31.478
     }
   ],
   "categoryIds": [
@@ -107,10 +115,10 @@
     3,
     85
   ],
-  "generatedAt": "2026-08-17T04:58:55.837041+00:00",
+  "generatedAt": "2026-08-17T13:02:46.558985+00:00",
   "modelVersion": "trajectory-v1",
-  "peakRssBytesAcrossCategories": 389062656,
-  "totalPacketBytes": 60539369,
-  "totalPacketRows": 301661,
-  "totalWallClockSeconds": 299.301
+  "peakRssBytesAcrossCategories": 438566912,
+  "totalPacketBytes": 61568233,
+  "totalPacketRows": 309273,
+  "totalWallClockSeconds": 338.94
 }

@@ -48,6 +48,7 @@ import gzip
 import io
 import json
 
+from .hedonic import COLD_START_BAND_WIDEN_FACTOR, N0_HEDONIC, hedonic_level_weight
 from .indices import IndexSet, _iter_category_date_rows, trimmed_mean
 from .lifecycle import (
     LifecycleCurve,
@@ -377,6 +378,54 @@ def volatility_bucket(mad: float, low_cut: float, high_cut: float) -> str:
     return "high"
 
 
+def _widest_offsets(
+    conformal_offsets: Mapping[tuple[str, int], Mapping[float, float]],
+    h_steps: int,
+    default_offsets: Mapping[float, float],
+    bucket_mad: Mapping[str, float],
+    fallback_mad: float,
+) -> tuple[Mapping[float, float], float]:
+    """The single (bucket, h_steps) calibrated pool with the largest
+    EFFECTIVE (i.e. absolute log-price-space) quantile spread, for the
+    given horizon -- "the widest calibrated pool for the category" a T3
+    cold-start packet's bands are built from (then scaled further by
+    ``COLD_START_BAND_WIDEN_FACTOR``). Returns ``(offsets, mad_scale)``:
+    ``mad_scale`` MUST be used as that packet's ``mad_for_band`` multiplier
+    (not an unrelated constant like ``fallback_mad``).
+
+    Correctness note: each (bucket, h_steps) pool's *raw* offsets are
+    standardized residuals -- ``(actual - forecast) / own_mad`` -- so a
+    "low"-volatility bucket's raw offsets are calibrated against own_mad
+    values near ``VOLATILITY_FLOOR`` and are consequently enormous in raw
+    units (e.g. a q90 offset of several thousand), while a "high"-bucket
+    pool's raw offsets are calibrated against a much larger own_mad and so
+    look far smaller in raw units despite representing a wider *actual*
+    band. Comparing raw offset spreads directly (an earlier version of this
+    function did exactly that) therefore almost always "wins" on the low
+    bucket for the wrong reason, and multiplying that pool's raw offsets by
+    an unrelated MAD (``fallback_mad``, a category-wide average) produces
+    nonsensical, unbounded-looking prices. This version compares each
+    pool's *effective* width (``raw_spread * that_bucket's_own_representative
+    MAD``) and returns the winning pool's own representative MAD alongside
+    it, so the caller multiplies like-for-like.
+    """
+
+    candidates = [
+        (bucket, offs) for (bucket, h), offs in conformal_offsets.items() if h == h_steps
+    ]
+    if not candidates:
+        return default_offsets, fallback_mad
+
+    def _effective_width(item: tuple[str, Mapping[float, float]]) -> float:
+        bucket, offs = item
+        values = list(offs.values())
+        raw_spread = (max(values) - min(values)) if values else 0.0
+        return raw_spread * bucket_mad.get(bucket, fallback_mad)
+
+    winning_bucket, winning_offsets = max(candidates, key=_effective_width)
+    return winning_offsets, bucket_mad.get(winning_bucket, fallback_mad)
+
+
 def tercile_cutoffs(values: Sequence[float]) -> tuple[float, float]:
     cleaned = sorted(v for v in values if not isnan(v))
     if not cleaned:
@@ -457,7 +506,48 @@ def process_category(
     *,
     horizons_days: Sequence[int] = HORIZONS_DAYS,
     as_of: datetime | None = None,
+    hedonic_log_price: Mapping[tuple[int, str], float] | None = None,
+    cold_start_variants: Mapping[tuple[int, str], int] | None = None,
 ) -> CategoryRunResult:
+    """... (see module docstring for the model). ``hedonic_log_price`` is an
+    optional, purely-additive T3 input: ``{(product_id, subTypeName): predicted
+    log price}`` from a per-category hedonic fit (hedonic.py +
+    hedonic_features.py). When ``None`` (the default), behavior is byte-for-byte
+    identical to the pre-T3 engine. When provided:
+
+    - Variants with ``li >= 0`` (an observed last price) blend their own
+      last-known-price ANCHOR with the hedonic prediction via
+      ``weight = hedonic_level_weight(final_n[i])`` -- ``n/(n+N0_HEDONIC)``,
+      the same empirical-Bayes shrinkage form already used for card drift.
+      At high ``n`` this weight -> 1, so the blended anchor -> the
+      variant's own price and packet output is unchanged within floating
+      point noise (see ZeroVolatilityLowBucketCalibrationTests-style
+      regression tests / HighNInvarianceTests in test_trajectory.py).
+    - Variants with ``li < 0`` (zero price observations ever --
+      ``rejects["no_history"]``) previously received no packet row at
+      all. If a hedonic prediction is available for such a variant, it
+      now gets a pure-prior packet: confidence ``"cold-start"``, anchor =
+      the hedonic log price, conformal bands = the category's single
+      widest calibrated (bucket, horizon) pool, widened further by
+      ``COLD_START_BAND_WIDEN_FACTOR``. Variants with no hedonic
+      prediction available keep the original reject-and-skip behavior.
+
+    ``cold_start_variants`` is a second, separate optional T3 input:
+    ``{(product_id, subTypeName): groupId}`` for products that have NEVER
+    appeared in ``panel_dir`` with a valid price at all (so they are not,
+    and structurally cannot be, present in ``variant_index`` -- see
+    ``_load_category_prices``, which only ever creates an entry from an
+    already-observed valid price). Without this parameter, ``li < 0`` is
+    unreachable on real data today (confirmed empirically: every current
+    category's ``rejects["no_history"]`` is 0), so the cold-start branch
+    above would otherwise be exercised only by synthetic unit tests. Each
+    key present here but absent from the panel is folded into the same
+    emission loop with a synthetic ``li = -1``, so it becomes a real
+    cold-start candidate: it still only emits a packet if
+    ``hedonic_log_price`` also has a prediction for that key (see
+    ``hedonic_features.cold_start_candidates``, which is the intended
+    source of both maps together).
+    """
     dates = index_set.dates
     n = len(dates)
     horizon_steps_list = tuple(sorted({horizon_steps_for(h) for h in horizons_days}))
@@ -547,6 +637,20 @@ def process_category(
     fallback_mad = trimmed_mean([v for v in own_mad if not isnan(v)]) if any(not isnan(v) for v in own_mad) else VOLATILITY_FLOOR
     fallback_mad = max(fallback_mad, VOLATILITY_FLOOR)
 
+    # Each volatility bucket's own representative own_mad -- needed so a T3
+    # cold-start packet that borrows a bucket's raw conformal offsets (see
+    # _widest_offsets) multiplies them by a like-for-like MAD scale instead
+    # of the unrelated category-wide fallback_mad.
+    bucket_mad_samples: dict[str, list[float]] = {}
+    for v in own_mad:
+        if isnan(v):
+            continue
+        bucket_mad_samples.setdefault(volatility_bucket(v, low_cut, high_cut), []).append(v)
+    bucket_mad = {
+        bucket: max(median(values), VOLATILITY_FLOOR)
+        for bucket, values in bucket_mad_samples.items()
+    }
+
     pools: dict[tuple[str, int], list[float]] = {}
     for variant_idx, h_steps, standardized in raw_pool:
         bucket = volatility_bucket(own_mad[variant_idx], low_cut, high_cut)
@@ -574,44 +678,122 @@ def process_category(
     row_count = 0
     content_digest = sha256()
 
+    # Extra candidates supplied only via `cold_start_variants` (never in the
+    # panel at all -- see the docstring above); folded into the same sorted
+    # key space as `variant_index` so both are emitted by one loop.
+    extra_cold_start = {
+        key: group_id
+        for key, group_id in (cold_start_variants or {}).items()
+        if key not in variant_index
+    }
+    all_keys = sorted(set(variant_index) | set(extra_cold_start))
+
     raw_handle = open(tmp_path, "wb")
     gzip_handle = gzip.GzipFile(filename="", mode="wb", fileobj=raw_handle, mtime=0)
     with raw_handle, gzip_handle, io.TextIOWrapper(gzip_handle, encoding="utf-8", newline="\n") as handle:
-        for (product_id, subtype), i in sorted(variant_index.items()):
-            li = last_index_arr[i]
-            if li < 0:
+        for product_id, subtype in all_keys:
+            i = variant_index.get((product_id, subtype))
+            hedonic_pred = hedonic_log_price.get((product_id, subtype)) if hedonic_log_price else None
+
+            if i is not None:
+                li = last_index_arr[i]
+                mad_i = own_mad[i]
+                group_id = variant_group[i]
+            else:
+                li = -1
+                mad_i = nan
+                group_id = extra_cold_start[(product_id, subtype)]
+
+            is_cold_start = li < 0
+            if is_cold_start and hedonic_pred is None:
+                # Unchanged pre-T3 behavior: no observed price ever, and no
+                # hedonic prior available either -- nothing to anchor a
+                # forecast on.
                 rejects["no_history"] += 1
                 continue
-            lp = last_price_arr[i]
-            mad_i = own_mad[i]
-            mad_for_band = mad_i if (not isnan(mad_i) and mad_i >= VOLATILITY_FLOOR) else fallback_mad
-            bucket = volatility_bucket(mad_i, low_cut, high_cut)
-            group_id = variant_group[i]
+
             first, gfit = group_fits.get(group_id, (0, None))
             published_on = groups_metadata.get((category_id, group_id), {}).get("published_on")
-            n_i = final_n[i]
-            drift_i = final_drift[i]
+
+            if is_cold_start:
+                # T3: zero price observations ever, but a hedonic prior is
+                # available -- emit a pure-prior packet instead of
+                # rejecting. Forecast forward from "now" (the most recent
+                # indexed date), anchored entirely on the hedonic
+                # prediction, with the category's single widest calibrated
+                # (bucket, horizon) conformal pool widened further by
+                # COLD_START_BAND_WIDEN_FACTOR (this variant has no own
+                # residual history to calibrate bands from at all).
+                origin_index = n - 1
+                origin_date = dates[origin_index]
+                anchor_log = hedonic_pred
+                n_i = 0
+                drift_i = 0.0
+                bucket = "unknown"
+                band_widen = COLD_START_BAND_WIDEN_FACTOR
+                confidence = "cold-start"
+                last_known_date_out: str | None = None
+                last_known_price_out: float | None = None
+            else:
+                origin_index = li
+                origin_date = dates[li]
+                lp = last_price_arr[i]
+                own_log = log(lp)
+                n_i = final_n[i]
+                drift_i = final_drift[i]
+                if hedonic_pred is not None:
+                    # T3 blend: shrink the forecast ANCHOR (not the drift,
+                    # which already has its own n/(n+N0_DRIFT) shrinkage)
+                    # toward the hedonic prior by the same empirical-Bayes
+                    # form, weighted by the card's own drift-fit sample
+                    # size. weight -> 1 as n grows, so this is a no-op
+                    # (within floating point noise) for well-observed
+                    # variants -- see HighNInvarianceTests.
+                    weight = hedonic_level_weight(n_i)
+                    anchor_log = weight * own_log + (1.0 - weight) * hedonic_pred
+                else:
+                    anchor_log = own_log
+                mad_for_band = mad_i if (not isnan(mad_i) and mad_i >= VOLATILITY_FLOOR) else fallback_mad
+                bucket = volatility_bucket(mad_i, low_cut, high_cut)
+                band_widen = 1.0
+                confidence = "standard"
+                if isnan(mad_i):
+                    confidence = "insufficient-history"
+                elif n_i < MIN_HISTORY_FOR_STANDARD:
+                    confidence = "low-history"
+                last_known_date_out = dates[li].isoformat()
+                last_known_price_out = round(lp, 6)
 
             horizons_out: dict[str, dict[str, float]] = {}
             for h_days, h_steps in steps_by_days.items():
                 index_delta = (
-                    damped_forecast_delta(market_fit, li, h_steps)
-                    + damped_forecast_delta(category_fit, li, h_steps)
+                    damped_forecast_delta(market_fit, origin_index, h_steps)
+                    + damped_forecast_delta(category_fit, origin_index, h_steps)
                     + group_component_delta(
                         group_fit=gfit,
                         group_first_index=first,
-                        origin_index=li,
+                        origin_index=origin_index,
                         horizon_steps=h_steps,
                         horizon_days=h_days,
                         lifecycle_curve=lifecycle_curve,
                         published_on=str(published_on) if published_on else None,
-                        origin_date=dates[li],
+                        origin_date=origin_date,
                     )
                 )
-                predicted_log = log(lp) + index_delta + drift_i * h_steps
-                offsets = conformal_offsets.get((bucket, h_steps)) or default_offsets
+                predicted_log = anchor_log + index_delta + drift_i * h_steps
+                if is_cold_start:
+                    # The widest EFFECTIVE (bucket, h_steps) pool can differ
+                    # per horizon, so both the offsets and their paired MAD
+                    # scale are resolved fresh for each h_steps here (see
+                    # _widest_offsets's docstring for why mad_for_band must
+                    # come from the SAME pool as offsets, not fallback_mad).
+                    offsets, mad_for_band = _widest_offsets(
+                        conformal_offsets, h_steps, default_offsets, bucket_mad, fallback_mad,
+                    )
+                else:
+                    offsets = conformal_offsets.get((bucket, h_steps)) or default_offsets
                 quantile_values = {
-                    q: exp(predicted_log + offsets.get(q, 0.0) * mad_for_band)
+                    q: exp(predicted_log + offsets.get(q, 0.0) * mad_for_band * band_widen)
                     for q in REQUIRED_QUANTILES
                 }
                 try:
@@ -627,33 +809,27 @@ def process_category(
             path_len = min(MAX_PATH_POINTS, max_steps + 1)
             for k in range(path_len):
                 delta = (
-                    damped_forecast_delta(market_fit, li, k)
-                    + damped_forecast_delta(category_fit, li, k)
+                    damped_forecast_delta(market_fit, origin_index, k)
+                    + damped_forecast_delta(category_fit, origin_index, k)
                     + group_component_delta(
                         group_fit=gfit,
                         group_first_index=first,
-                        origin_index=li,
+                        origin_index=origin_index,
                         horizon_steps=k,
                         horizon_days=k * WEEK_DAYS,
                         lifecycle_curve=lifecycle_curve,
                         published_on=str(published_on) if published_on else None,
-                        origin_date=dates[li],
+                        origin_date=origin_date,
                     )
                     + drift_i * k
                     if k > 0
                     else 0.0
                 )
-                point_date = dates[li] + timedelta(days=WEEK_DAYS * k)
+                point_date = origin_date + timedelta(days=WEEK_DAYS * k)
                 path_points.append({
                     "date": point_date.isoformat(),
-                    "price": round(exp(log(lp) + delta), 6),
+                    "price": round(exp(anchor_log + delta), 6),
                 })
-
-            confidence = "standard"
-            if isnan(mad_i):
-                confidence = "insufficient-history"
-            elif n_i < MIN_HISTORY_FOR_STANDARD:
-                confidence = "low-history"
 
             row = {
                 "modelVersion": MODEL_VERSION,
@@ -662,8 +838,8 @@ def process_category(
                 "productId": product_id,
                 "subTypeName": subtype,
                 "asOf": as_of.isoformat(),
-                "lastKnownDate": dates[li].isoformat(),
-                "lastKnownPrice": round(lp, 6),
+                "lastKnownDate": last_known_date_out,
+                "lastKnownPrice": last_known_price_out,
                 "confidence": confidence,
                 "volatilityBucket": bucket,
                 "sampleSize": n_i,
@@ -678,7 +854,7 @@ def process_category(
 
     return CategoryRunResult(
         category_id=category_id,
-        variant_count=num_variants,
+        variant_count=num_variants + len(extra_cold_start),
         packet_row_count=row_count,
         dates_covered=n,
         pool_sizes=pool_sizes,

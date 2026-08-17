@@ -102,6 +102,59 @@ class LoadOrFetchGroupsMetadataTests(unittest.TestCase):
             load_or_fetch_groups_metadata(cache_path, [5], fetch_json=fake_fetch, force_refresh=True)
             self.assertEqual(calls, [5, 5])
 
+    def test_broader_scope_does_not_starve_categories_missing_from_a_narrow_cache(self):
+        """Regression test (found during T3): a cache first written for one
+        category must not cause a later, broader request to silently skip
+        fetching the other categories just because *some* cache file
+        exists on disk.
+        """
+
+        calls = []
+
+        def fake_fetch(base_url, category_id):
+            calls.append(category_id)
+            return {
+                "success": True,
+                "results": [{"groupId": 100 + category_id, "name": f"Set {category_id}", "publishedOn": "2024-01-01"}],
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "groups_metadata.json.gz"
+            # Narrow-scope smoke test writes the cache for category 85 only.
+            narrow, _hash = load_or_fetch_groups_metadata(cache_path, [85], fetch_json=fake_fetch)
+            self.assertEqual(calls, [85])
+            self.assertEqual(set(narrow), {(85, 185)})
+
+            # A later, broader request for [1, 2, 3, 85] must fetch the
+            # three missing categories (not re-fetch 85) and must return
+            # every requested category's groups, not just 85's.
+            broad, _hash2 = load_or_fetch_groups_metadata(cache_path, [1, 2, 3, 85], fetch_json=fake_fetch)
+            self.assertEqual(calls, [85, 1, 2, 3])
+            self.assertEqual(set(broad), {(1, 101), (2, 102), (3, 103), (85, 185)})
+
+            # And the cache file on disk now durably covers all four, so a
+            # third call for the same broad scope makes no new requests.
+            broad_again, _hash3 = load_or_fetch_groups_metadata(cache_path, [1, 2, 3, 85], fetch_json=fake_fetch)
+            self.assertEqual(calls, [85, 1, 2, 3])
+            self.assertEqual(broad, broad_again)
+
+    def test_force_refresh_preserves_categories_outside_current_scope(self):
+        calls = []
+
+        def fake_fetch(base_url, category_id):
+            calls.append(category_id)
+            return {
+                "success": True,
+                "results": [{"groupId": 100 + category_id, "name": f"Set {category_id}", "publishedOn": "2024-01-01"}],
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "groups_metadata.json.gz"
+            load_or_fetch_groups_metadata(cache_path, [1, 85], fetch_json=fake_fetch)
+            refreshed, _hash = load_or_fetch_groups_metadata(cache_path, [85], fetch_json=fake_fetch, force_refresh=True)
+            # category 1 was outside this call's scope -- still present afterward.
+            self.assertEqual(set(refreshed), {(1, 101), (85, 185)})
+
 
 def _index_set_with_group_returns(
     category_id: int, group_id: int, dates: list[date], step_returns: list[float], first_index: int = 0

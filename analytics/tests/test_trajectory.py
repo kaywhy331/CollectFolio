@@ -441,3 +441,235 @@ class ZeroVolatilityLowBucketCalibrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HedonicColdStartPacketEmissionTests(unittest.TestCase):
+    """T3: cold-start packets for products that never appear in the panel
+    at all (see process_category's `cold_start_variants` docstring -- `li
+    < 0` is otherwise structurally unreachable through `variant_index`).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.panel_dir = Path(self.tmp.name) / "panel"
+        self.category_id = 8100
+        self.dates, self.groups_metadata = _build_synthetic_panel(self.panel_dir, self.category_id)
+        self.index_set = build_indices(self.panel_dir, [self.category_id])
+        self.curve = build_lifecycle_curve(self.index_set, self.groups_metadata)
+        self.out_dir = Path(self.tmp.name) / "out"
+        # A product id disjoint from _build_synthetic_panel's own id space
+        # (gid*10..gid*10+5 for gid in {101, 102}), belonging to an
+        # existing group so group-level components (published_on etc.)
+        # resolve normally.
+        self.cold_key = (999001, "Normal")
+        self.cold_start_variants = {self.cold_key: 101}
+        self.hedonic_log_price = {self.cold_key: math.log(12.5)}
+
+    def _run(self, **kwargs):
+        return process_category(
+            self.panel_dir, self.category_id, self.index_set, self.curve,
+            self.groups_metadata, self.out_dir, **kwargs,
+        )
+
+    def _rows(self, result):
+        with gzip.open(result.output_path, "rt", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle]
+
+    def test_without_cold_start_inputs_the_never_priced_key_is_absent(self):
+        result = self._run()
+        rows = self._rows(result)
+        keys = {(r["productId"], r["subTypeName"]) for r in rows}
+        self.assertNotIn(self.cold_key, keys)
+        self.assertEqual(result.rejects["no_history"], 0)
+
+    def test_cold_start_variants_without_hedonic_price_is_still_skipped(self):
+        # Supplying the candidate mapping alone (no hedonic prediction)
+        # must not emit a packet -- graceful degradation, not a crash.
+        result = self._run(cold_start_variants=self.cold_start_variants)
+        rows = self._rows(result)
+        keys = {(r["productId"], r["subTypeName"]) for r in rows}
+        self.assertNotIn(self.cold_key, keys)
+        self.assertEqual(result.rejects["no_history"], 1)
+
+    def test_cold_start_packet_is_emitted_with_expected_shape(self):
+        result = self._run(
+            cold_start_variants=self.cold_start_variants,
+            hedonic_log_price=self.hedonic_log_price,
+        )
+        rows = self._rows(result)
+        cold_rows = [r for r in rows if (r["productId"], r["subTypeName"]) == self.cold_key]
+        self.assertEqual(len(cold_rows), 1)
+        row = cold_rows[0]
+        self.assertEqual(row["confidence"], "cold-start")
+        self.assertEqual(row["sampleSize"], 0)
+        self.assertIsNone(row["lastKnownDate"])
+        self.assertIsNone(row["lastKnownPrice"])
+        self.assertEqual(row["groupId"], 101)
+        self.assertEqual(result.rejects["no_history"], 0)
+        self.assertEqual(result.variant_count, result.packet_row_count)
+
+        # Anchor is the hedonic prediction: at horizon 0-ish (shortest
+        # available horizon) the median path's first point should sit
+        # close to exp(hedonic_log_price), before any index drift compounds.
+        first_point_price = row["medianPath"][0]["price"]
+        self.assertAlmostEqual(first_point_price, math.exp(self.hedonic_log_price[self.cold_key]), places=4)
+
+    def test_cold_start_quantiles_are_noncrossing_and_finite(self):
+        result = self._run(
+            cold_start_variants=self.cold_start_variants,
+            hedonic_log_price=self.hedonic_log_price,
+        )
+        rows = self._rows(result)
+        row = next(r for r in rows if (r["productId"], r["subTypeName"]) == self.cold_key)
+        for horizon in row["horizons"].values():
+            ordered = [horizon[f"q{int(round(p * 100)):02d}"] for p in REQUIRED_QUANTILES]
+            self.assertEqual(ordered, sorted(ordered))
+            self.assertTrue(all(math.isfinite(v) and v > 0 for v in ordered))
+
+    def test_cold_start_bands_are_wider_than_a_comparable_standard_packet(self):
+        # A cold-start packet's band (q90/q10 ratio at a shared horizon)
+        # must be wider than an ordinary packet in the same category,
+        # reflecting COLD_START_BAND_WIDEN_FACTOR.
+        result = self._run(
+            cold_start_variants=self.cold_start_variants,
+            hedonic_log_price=self.hedonic_log_price,
+        )
+        rows = self._rows(result)
+        cold_row = next(r for r in rows if (r["productId"], r["subTypeName"]) == self.cold_key)
+        standard_row = next(r for r in rows if r["confidence"] != "cold-start")
+        horizon_key = sorted(cold_row["horizons"], key=int)[0]
+        cold_ratio = cold_row["horizons"][horizon_key]["q90"] / cold_row["horizons"][horizon_key]["q10"]
+        standard_ratio = (
+            standard_row["horizons"][horizon_key]["q90"] / standard_row["horizons"][horizon_key]["q10"]
+        )
+        self.assertGreater(cold_ratio, standard_ratio)
+
+
+class HedonicHighNInvarianceTests(unittest.TestCase):
+    """T3: a variant with a rich own price history must not change
+    materially when a hedonic prediction is also supplied -- at high `n`,
+    hedonic_level_weight(n) -> 1, so the blended anchor collapses back to
+    the variant's own observed price (within floating point noise).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.panel_dir = Path(self.tmp.name) / "panel"
+        self.category_id = 8200
+        # Long, densely-observed history (~2 years weekly) so every
+        # variant's final_n is comfortably >> N0_HEDONIC (8.0).
+        self.dates, self.groups_metadata = _build_synthetic_panel(self.panel_dir, self.category_id, n_dates=104)
+        self.index_set = build_indices(self.panel_dir, [self.category_id])
+        self.curve = build_lifecycle_curve(self.index_set, self.groups_metadata)
+
+    def _rows(self, out_dir, **kwargs):
+        result = process_category(
+            self.panel_dir, self.category_id, self.index_set, self.curve,
+            self.groups_metadata, out_dir, **kwargs,
+        )
+        with gzip.open(result.output_path, "rt", encoding="utf-8") as handle:
+            return {
+                (row["productId"], row["subTypeName"]): row for row in (json.loads(line) for line in handle)
+            }
+
+    def test_high_n_packets_change_by_at_most_epsilon(self):
+        baseline = self._rows(Path(self.tmp.name) / "out-baseline")
+
+        # A modest but genuinely-wrong hedonic prior (~5% off in price
+        # space -- a plausible hedonic-model residual, unlike an
+        # implausibly huge offset) must barely move a high-n variant's
+        # packet, because hedonic_level_weight(n) is close to 1 at this n:
+        # blended_log - own_log = (1 - weight) * PRIOR_LOG_OFFSET, and
+        # (1 - weight) = N0_HEDONIC / (n + N0_HEDONIC) is small whenever n
+        # is comfortably above N0_HEDONIC (8.0).
+        PRIOR_LOG_OFFSET = 0.05
+        hedonic_log_price = {
+            key: math.log(row["lastKnownPrice"]) + PRIOR_LOG_OFFSET
+            for key, row in baseline.items()
+            if row["lastKnownPrice"] is not None
+        }
+        blended = self._rows(Path(self.tmp.name) / "out-blended", hedonic_log_price=hedonic_log_price)
+
+        self.assertEqual(set(baseline), set(blended))
+        checked = 0
+        for key, base_row in baseline.items():
+            if base_row["sampleSize"] < 50:
+                continue  # only the "high-n" subset is under test here
+            blend_row = blended[key]
+            self.assertEqual(blend_row["confidence"], base_row["confidence"])
+            for horizon_key, base_horizon in base_row["horizons"].items():
+                blend_horizon = blend_row["horizons"][horizon_key]
+                for q_key, base_value in base_horizon.items():
+                    rel_diff = abs(blend_horizon[q_key] - base_value) / max(abs(base_value), 1e-9)
+                    self.assertLess(rel_diff, 0.01, msg=f"{key} {horizon_key} {q_key} moved too much")
+            checked += 1
+        self.assertGreater(checked, 0)
+
+    def test_no_hedonic_input_is_byte_identical_to_pre_t3_defaults(self):
+        # Calling with every T3 parameter at its default must reproduce
+        # exactly the same content hash as calling with no T3 parameters
+        # supplied at all -- the omission itself is the backward
+        # compatibility contract (see process_category's docstring).
+        result_implicit = process_category(
+            self.panel_dir, self.category_id, self.index_set, self.curve,
+            self.groups_metadata, Path(self.tmp.name) / "out-implicit",
+        )
+        result_explicit = process_category(
+            self.panel_dir, self.category_id, self.index_set, self.curve,
+            self.groups_metadata, Path(self.tmp.name) / "out-explicit",
+            hedonic_log_price=None, cold_start_variants=None,
+        )
+        self.assertEqual(result_implicit.content_hash, result_explicit.content_hash)
+
+
+_STATE_DIR = Path(__file__).resolve().parents[2] / "analytics" / "data" / "trajectory"
+
+
+@unittest.skipUnless(
+    (Path(__file__).resolve().parents[2] / "analytics" / "data" / "panel" / "category-85").is_dir()
+    and (_STATE_DIR / "indices.json.gz").is_file()
+    and (_STATE_DIR / "lifecycle_curve.json.gz").is_file()
+    and (_STATE_DIR / "groups_metadata.json.gz").is_file(),
+    "real category-85 panel + build-indices state cache not present on disk",
+)
+class RealCategory85BackwardCompatibilityRegressionTests(unittest.TestCase):
+    """Pins the ad hoc T3 finding: with every hedonic parameter at its
+    default, process_category on the real, already-fetched category-85
+    panel reproduces the exact packet content hash committed in T2's
+    receipt (docs/receipts/trajectory-v1/trajectory-category-85.json).
+
+    Deliberately loads the *cached* shared-state files
+    (indices.json.gz/lifecycle_curve.json.gz/groups_metadata.json.gz --
+    exactly what `run-category` itself reads via
+    `trajectory_cli._load_shared_inputs`) rather than recomputing
+    build_indices/build_lifecycle_curve fresh: recomputation is not
+    guaranteed byte-identical to whatever categories/trim-fraction the
+    original `build-indices` invocation actually used (e.g. a narrower
+    category scope), whereas the cached state is exactly what produced
+    the committed T2 receipt. Network-free; skipped automatically
+    wherever that local cache is absent (e.g. a fresh checkout without
+    analytics/data populated).
+    """
+
+    COMMITTED_T2_HASH = "8c4a0acdf99f50a3f74f8f1b442915c382bfaae4483ecafca104362b9ccf7355"
+
+    def test_reproduces_committed_t2_content_hash(self):
+        from collectfolio_analytics.trajectory_cli import _load_shared_inputs
+
+        repo_root = Path(__file__).resolve().parents[2]
+        panel_dir = repo_root / "analytics" / "data" / "panel"
+        category_id = 85
+
+        index_set, curve, groups_metadata = _load_shared_inputs(_STATE_DIR)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # as_of intentionally omitted: process_category's own default
+            # (dates[-1] + 1 day, UTC midnight) is what the committed T2
+            # receipt was generated with; passing anything else here would
+            # change every row's "asOf" field and therefore the hash.
+            result = process_category(
+                panel_dir, category_id, index_set, curve, groups_metadata, Path(tmp) / "out",
+            )
+        self.assertEqual(result.content_hash, self.COMMITTED_T2_HASH)

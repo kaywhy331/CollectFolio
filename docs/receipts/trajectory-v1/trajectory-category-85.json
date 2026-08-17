@@ -1,13 +1,15 @@
 {
   "categoryId": 85,
-  "contentHash": "8c4a0acdf99f50a3f74f8f1b442915c382bfaae4483ecafca104362b9ccf7355",
+  "coldStartPacketCount": 2128,
+  "contentHash": "5cb0f6db97f83e1e3ba150b827f9fe64e565f0e8e604bfad5d04b74b1f35b1c8",
   "datesCovered": 80,
-  "generatedAt": "2026-08-17T04:58:55.591035+00:00",
+  "generatedAt": "2026-08-17T13:02:46.183455+00:00",
+  "hedonicBlendApplied": true,
   "modelVersion": "trajectory-v1",
   "outputPath": "analytics/data/trajectory/packets/category-85/packets.jsonl.gz",
-  "packetBytes": 6615897,
-  "packetRowCount": 32365,
-  "peakRssBytes": 92327936,
+  "packetBytes": 6821152,
+  "packetRowCount": 34493,
+  "peakRssBytes": 102821888,
   "poolSizes": {
     "high:13": 42733,
     "high:4": 43905,
@@ -20,6 +22,6 @@
     "crossed_quantiles_rearranged": 0,
     "no_history": 0
   },
-  "variantCount": 32365,
-  "wallClockSeconds": 28.766
+  "variantCount": 34493,
+  "wallClockSeconds": 31.478
 }
