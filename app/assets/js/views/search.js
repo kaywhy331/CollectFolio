@@ -10,7 +10,7 @@ import { trajectoryForecastEstimates, trajectoryKeyForItem } from '../services/f
 // Trajectory-v1 (T6): looks up a prefetched forecast packet for a TCGCSV
 // catalog item (see app.js's hydrateTrajectoryForecasts) and shapes it
 // into the {30, 90} estimate map searchResultViewModel already knows how
-// to merge alongside Supabase-published intelligence. Only an explicitly
+// to merge alongside cloud-published intelligence. Only an explicitly
 // "published"-eligibility packet ever produces an estimate here -- a
 // cold-start-confidence packet still counts as published (T6 requires it
 // display, just labeled distinctly), while "excluded"/"unknown" never do.

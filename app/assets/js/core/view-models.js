@@ -75,10 +75,10 @@ export function forecastViewModels(publication = {}, { holdingId = '' } = {}) {
 // services/forecast-trajectory.js's trajectoryForecastEstimates(packet).
 // It is passed in already computed (rather than fetched in here) so this
 // module stays synchronous and doesn't reach up into services/ -- core/
-// is depended on by services/, never the other way around. Supabase
+// is depended on by services/, never the other way around. Cloud-published
 // published intelligence, where present for a horizon, always wins over a
 // trajectory-v1 estimate for the same horizon; trajectory-v1 only fills a
-// horizon Supabase's forecast doesn't cover, and trajectory-v1 never
+// horizon the cloud-published forecast doesn't cover, and trajectory-v1 never
 // produces 180d/365d, so those horizons are untouched by this fallback.
 export function searchResultViewModel(item = {}, { publication = null, currency = 'USD', trajectoryEstimates = null } = {}) {
   const reference = catalogReferenceForItem(item);

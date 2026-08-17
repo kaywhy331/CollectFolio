@@ -75,7 +75,7 @@ export function renderPriceIntelligenceDetail(detail, state) {
   const localScenario = holding
     ? buildHoldingLocalScenario(holding, state.localValueObservations || [], scenarioHorizon)
     : null;
-  // Trajectory-v1 (T6): only ever a fallback when there is no Supabase-
+  // Trajectory-v1 (T6): only ever a fallback when there is no cloud-$
   // published forecast to defer to (see forecastSection/unsupportedSection
   // above, which only use this when their own "no forecast" branch fires).
   const trajectoryItem = holding?.item || detail.item || null;
@@ -192,7 +192,7 @@ function forecastSection(intelligence, currency, hasLocalScenario = false, traje
 }
 
 // Trajectory-v1 (T6): the detail-page analog of forecastSection, but for
-// TCGCSV-identity items with no Supabase-published forecast. Fail-closed
+// TCGCSV-identity items with no cloud-published forecast. Fail-closed
 // per the manifest eligibility map -- only an explicit "published" entry
 // with a resolved packet ever produces the full chart; "excluded" and
 // "unknown" both collapse to the same honest "insufficient evidence"

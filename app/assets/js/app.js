@@ -286,10 +286,10 @@ let trajectoryHydrationId = 0;
 
 // Trajectory-v1 (T6): prefetches published forecast packets for TCGCSV
 // catalog items currently on screen, gated on the same
-// publicPriceIntelligence flag as Supabase-published intelligence (T6
+// publicPriceIntelligence flag as cloud-published intelligence (T6
 // point 5). Deliberately best-effort and non-blocking -- a trajectory
 // fetch failure for one item never blocks the rest of hydration, and this
-// runs alongside (not instead of) hydrateIntelligence's own Supabase path.
+// runs alongside (not instead of) hydrateIntelligence's own cloud-published path.
 async function hydrateTrajectoryForecasts() {
   const hydrationId = ++trajectoryHydrationId;
   const state = getState();
