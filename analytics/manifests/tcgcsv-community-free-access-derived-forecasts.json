@@ -1,0 +1,25 @@
+{
+  "mode": "community_free_access_derived_forecasts",
+  "_deviationNote": "TRACKED DEVIATION from T1 (see analytics/manifests/tcgcsv-surging-sparks-current-v2.json / assert_tcgcsv_research_terms, which remain unchanged and still bar ALL public/commercial use of TCGCSV's raw ingested data for the research-ingestion pipeline). This is a SEPARATE, narrower SourceTerms review scoped only to T5 derived-forecast publication (trajectory-v1 component-weight predictions -- never TCGCSV raw price data or catalog metadata). Gated by assert_tcgcsv_community_free_access_terms (analytics/src/collectfolio_analytics/tcgcsv.py) and, at publish time, by the T4 walk-forward-honest holdout serving-eligibility gate in docs/receipts/trajectory-v1/evaluation-summary.md -- only passing cohorts are served, plus cold-start everywhere with explicit labeling per PRD Sec4 hard criterion 3b.",
+  "_rationale": "CollectFolio community-free-access derived-forecast publication rationale (T5, tracked deviation from T1). Decision owner: Kevin Yang. T1's TCGCSV research-only review (analytics/manifests/tcgcsv-surging-sparks-current-v2.json, assert_tcgcsv_research_terms) intentionally bars ALL public/commercial use of TCGCSV's raw ingested data -- that review and that assertion are UNCHANGED by this record. Separately, Kevin decided CollectFolio's OWN derived forecast statistics (trajectory-v1 component-weight predictions computed on top of TCGCSV pricing -- quantile paths, medianPath, confidence tiers -- never TCGCSV's raw per-observation price data itself) may be published publicly and free of community access, gated strictly by the T4 walk-forward-honest holdout serving-eligibility gate (docs/receipts/trajectory-v1/evaluation-summary.md): only cohorts that pass are served, and cold-start forecasts are served everywhere with explicit labeling per PRD Sec4 hard criterion 3b. No TCGCSV raw price display and no TCGCSV catalog metadata are published under this record -- those permissions remain False. This document_hash is a placeholder computed from this rationale note pending an official written community-free-access policy artifact from Kevin; flagged here so the deviation and its provisional nature are visible in review, not silently assumed.",
+  "_documentHashSource": "sha256 of the exact _rationale string above, computed at review time -- NOT an externally-issued legal document hash. Replace both this record and documentHash once Kevin issues a formal written community-free-access policy artifact.",
+  "source": {
+    "id": "f24c78f8-d4b9-55a3-a8f7-b05d484c052e",
+    "termsReviewId": "0f1a5b8c-2e3d-4f6a-9b7c-1d2e3f4a5b6c",
+    "currentTermsReviewId": "0f1a5b8c-2e3d-4f6a-9b7c-1d2e3f4a5b6c",
+    "code": "tcgcsv-community-free-access-derived",
+    "name": "TCGCSV-derived forecast publication (community free access)",
+    "termsUrl": "https://tcgcsv.com/docs",
+    "decision": "approved",
+    "active": true,
+    "commercialUseAllowed": true,
+    "catalogMetadataAllowed": false,
+    "publicRawDisplayAllowed": false,
+    "publicDerivedDisplayAllowed": true,
+    "attributionRequired": true,
+    "attributionText": "Price forecasts derived from TCGCSV pricing archives via CollectFolio's trajectory-v1 model. Not affiliated with or endorsed by TCGCSV.",
+    "documentHash": "afde76720b29688eb8d88c03d794b6ee040dbdf04a35d96791818783b215c685",
+    "reviewedAt": "2026-08-17T00:00:00+00:00",
+    "expiresAt": null
+  }
+}

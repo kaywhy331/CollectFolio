@@ -60,6 +60,7 @@ from .hedonic_features import (
     cold_start_candidates,
     load_or_fetch_products_metadata,
 )
+from .forecast_publisher import DEFAULT_MAX_OBJECT_BYTES, publish_forecasts
 from .indices import IndexSet, build_indices
 from .lifecycle import (
     GROUPS_CACHE_FILENAME,
@@ -915,6 +916,81 @@ def _render_eval_summary_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_forecasts_command(args: argparse.Namespace) -> int:
+    """T5: slice every eligible packet (T4 fail-closed serving-eligibility
+    gate + cold-start-everywhere) into <=--max-object-bytes gzip objects
+    under --out-dir, plus forecasts/manifest.json. Gated on an explicit,
+    separately-reviewed community-free-access SourceTerms record (tracked
+    deviation from T1's research-only assert_tcgcsv_research_terms -- see
+    forecast_publisher.py's module docstring); refuses to write anything if
+    that gate fails."""
+
+    packets_dir = Path(args.packets_dir)
+    if not packets_dir.is_dir():
+        print(f"trajectory-cli: packets dir not found: {packets_dir}", file=sys.stderr)
+        return 2
+    evaluation_summary_path = Path(args.evaluation_summary_path)
+    if not evaluation_summary_path.is_file():
+        print(f"trajectory-cli: evaluation summary not found: {evaluation_summary_path}", file=sys.stderr)
+        return 2
+    source_terms_path = Path(args.source_terms_path)
+    if not source_terms_path.is_file():
+        print(f"trajectory-cli: source terms manifest not found: {source_terms_path}", file=sys.stderr)
+        return 2
+
+    category_ids = None
+    if args.category_ids:
+        category_ids = sorted({int(part) for part in args.category_ids.split(",") if part.strip()})
+
+    started = time.monotonic()
+    manifest = publish_forecasts(
+        packets_dir,
+        evaluation_summary_path,
+        source_terms_path,
+        Path(args.out_dir),
+        category_ids=category_ids,
+        max_object_bytes=args.max_object_bytes,
+    )
+    elapsed_seconds = time.monotonic() - started
+
+    receipts_dir = Path(args.receipts_dir)
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "task": "T5-publish-forecasts",
+        "modelVersion": MODEL_VERSION,
+        "generatedAt": manifest["generatedAt"],
+        "elapsedSeconds": round(elapsed_seconds, 3),
+        "maxObjectBytes": manifest["maxObjectBytes"],
+        "manifestContentHash": manifest["manifestContentHash"],
+        "sourceTerms": manifest["sourceTerms"],
+        "categories": {
+            category_id: {
+                "totalVariants": row["totalVariants"],
+                "eligibleVariants": row["eligibleVariants"],
+                "totalGroups": row["totalGroups"],
+                "publishedGroups": row["publishedGroups"],
+                "excludedGroups": row["excludedGroups"],
+                "excludedByCohort": row["excludedByCohort"],
+                "objectsWritten": row["objectsWritten"],
+                "lastKnownDateRange": row["lastKnownDateRange"],
+            }
+            for category_id, row in manifest["categories"].items()
+        },
+    }
+    receipt_path = receipts_dir / "publish-forecasts-receipt.json"
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    total_objects = sum(row["objectsWritten"] for row in manifest["categories"].values())
+    total_eligible = sum(row["eligibleVariants"] for row in manifest["categories"].values())
+    print(
+        f"published {total_objects} object(s) covering {total_eligible} eligible variant(s) "
+        f"across {len(manifest['categories'])} categor(y/ies) in {elapsed_seconds:.1f}s"
+    )
+    print(f"wrote {Path(args.out_dir) / 'forecasts' / 'manifest.json'}")
+    print(f"wrote {receipt_path}")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1066,6 +1142,29 @@ def _parser() -> argparse.ArgumentParser:
     )
     report.add_argument("--receipts-dir", default="docs/receipts/trajectory-v1")
     report.set_defaults(handler=_report_command)
+
+    publish = subparsers.add_parser(
+        "publish-forecasts",
+        help=(
+            "T5: slice T4's eligible packets (fail-closed serving-eligibility gate + "
+            "cold-start-everywhere) into <=128KiB gzip objects + forecasts/manifest.json "
+            "under --out-dir, gated on an explicit community-free-access SourceTerms record"
+        ),
+    )
+    publish.add_argument("--packets-dir", default="analytics/data/trajectory/packets")
+    publish.add_argument("--evaluation-summary-path", default="docs/receipts/trajectory-v1/evaluation-summary.json")
+    publish.add_argument(
+        "--source-terms-path",
+        default="analytics/manifests/tcgcsv-community-free-access-derived-forecasts.json",
+    )
+    publish.add_argument("--out-dir", default="analytics/data/publish")
+    publish.add_argument("--receipts-dir", default="docs/receipts/trajectory-v1")
+    publish.add_argument(
+        "--category-ids", default=None,
+        help="comma-separated category ids to publish; defaults to every category-<id> dir found",
+    )
+    publish.add_argument("--max-object-bytes", type=int, default=DEFAULT_MAX_OBJECT_BYTES)
+    publish.set_defaults(handler=_publish_forecasts_command)
 
     return parser
 
