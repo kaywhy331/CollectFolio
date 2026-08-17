@@ -46,6 +46,7 @@ import json
 import resource
 import sys
 import time
+from dataclasses import asdict
 from array import array
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -68,7 +69,8 @@ from .lifecycle import (
     load_or_fetch_groups_metadata,
 )
 from .tcgcsv_panel import DEFAULT_CATEGORY_IDS
-from .trajectory import HORIZONS_DAYS, MODEL_VERSION, content_sha256, process_category
+from .trajectory import HORIZONS_DAYS, MODEL_VERSION, content_sha256, horizon_steps_for, process_category
+from .trajectory_eval import DEFAULT_MAX_VARIANTS_PER_CATEGORY, run_component_weight_remediation
 
 INDICES_CACHE_FILENAME = "indices.json.gz"
 LIFECYCLE_CACHE_FILENAME = "lifecycle_curve.json.gz"
@@ -445,6 +447,33 @@ def _load_hedonic_predictions(
     return _hedonic_payload_to_maps(payload)
 
 
+def _load_component_weights(
+    path: Path, category_id: int
+) -> dict[int, tuple[float, float]] | None:
+    """Load a ``component-weights.json`` receipt (T4 remediation) and
+    return this category's selected weights keyed by ``horizon_steps`` (the
+    key ``process_category``'s ``component_weights`` parameter expects).
+
+    Expected schema (written by the remediation's weight-selection step,
+    see ``trajectory_eval.select_component_weights``):
+    ``{"<categoryId>": {"<horizonDays>": {"weightA": a, "weightB": b, ...}, ...}, ...}``.
+    Returns ``None`` (implicit ``(1.0, 1.0)`` everywhere -- pre-remediation
+    behavior) when the file is absent or has no entry for this category.
+    """
+
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    category_payload = payload.get(str(category_id))
+    if not category_payload:
+        return None
+    weights: dict[int, tuple[float, float]] = {}
+    for horizon_days_str, entry in category_payload.items():
+        h_steps = horizon_steps_for(int(horizon_days_str))
+        weights[h_steps] = (float(entry["weightA"]), float(entry["weightB"]))
+    return weights or None
+
+
 def _run_category_command(args: argparse.Namespace) -> int:
     category_id = args.category_id
     panel_dir = Path(args.panel_dir)
@@ -476,11 +505,19 @@ def _run_category_command(args: argparse.Namespace) -> int:
             hedonic_log_price, cold_start_variants = _load_hedonic_predictions(state_dir, category_id)
         hedonic_applied = hedonic_log_price is not None
 
+    weights_path = (
+        Path(args.component_weights_path)
+        if args.component_weights_path
+        else Path(args.receipts_dir) / "component-weights.json"
+    )
+    component_weights = _load_component_weights(weights_path, category_id)
+
     started = time.monotonic()
     result = process_category(
         panel_dir, category_id, index_set, curve, groups_metadata,
         Path(args.packets_dir), horizons_days=HORIZONS_DAYS,
         hedonic_log_price=hedonic_log_price, cold_start_variants=cold_start_variants,
+        component_weights=component_weights,
     )
     elapsed = time.monotonic() - started
     packet_bytes = Path(result.output_path).stat().st_size
@@ -501,6 +538,11 @@ def _run_category_command(args: argparse.Namespace) -> int:
         "rejects": result.rejects,
         "hedonicBlendApplied": hedonic_applied,
         "coldStartPacketCount": len(cold_start_variants) if cold_start_variants else 0,
+        "componentWeightsApplied": component_weights is not None,
+        "componentWeights": (
+            {str(h_steps): list(ab) for h_steps, ab in component_weights.items()}
+            if component_weights else None
+        ),
     }
     receipts_dir = Path(args.receipts_dir)
     receipts_dir.mkdir(parents=True, exist_ok=True)
@@ -560,6 +602,319 @@ def _report_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_component_weights_summary_markdown(category_rows: list[dict]) -> str:
+    lines = [
+        "# trajectory-v1 -- T4 remediation: component-weight selection + honest holdout gate",
+        "",
+        "Per (category x horizon): weights `(a, b)` selected by grid search on TRAINING",
+        "origins only (minimizing standard-cohort MAE), then gated on HOLDOUT origins only",
+        "with conformal offsets calibrated from TRAINING origins only -- see",
+        "`trajectory_eval.select_component_weights` / `gate_holdout_evaluation`.",
+        "",
+        "## Selected weights",
+        "",
+        "| Category | Horizon (d) | a | b | Train lift | Train n | Train origins | Holdout origins |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for row in category_rows:
+        for h_days, sel in sorted(row["selection"].items()):
+            lines.append(
+                f"| {row['categoryId']} | {h_days} | {sel['weightA']} | {sel['weightB']} | "
+                f"{sel['trainMaeLiftOverNoChange']} | {sel['trainNCases']} | "
+                f"{len(sel['trainOrigins'])} | {len(sel['holdoutOrigins'])} |"
+            )
+    lines += [
+        "",
+        "## Holdout gate: pass/fail per (category x cohort x horizon)",
+        "",
+        "| Category | Cohort | Horizon (d) | n | MAE lift | Direction acc (>=5% movers) | "
+        "Coverage80 | Pinball beats no-change | Pass | Serving eligible |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row in category_rows:
+        for result in row["gate"]["results"]:
+            dir_acc = (
+                f"{result['directionAccuracyMovers']:.4f}"
+                if result["directionAccuracyMovers"] is not None else "n/a"
+            )
+            lift = f"{result['maeLiftOverNoChange']:.6f}" if result["nCases"] else "n/a"
+            cov = f"{result['coverage80']:.4f}" if result["nCases"] else "n/a"
+            lines.append(
+                f"| {row['categoryId']} | {result['cohort']} | {result['horizonDays']} | "
+                f"{result['nCases']} | {lift} | {dir_acc} | {cov} | "
+                f"{result['pinballBeatsNoChange']} | {result['passes']} | {result['servingEligible']} |"
+            )
+    lines += [
+        "",
+        "## Serving-eligibility conclusions",
+        "",
+        "| Category | Cohort | Serving eligible |",
+        "|---|---|---|",
+    ]
+    for row in category_rows:
+        for cohort, eligible in sorted(row["gate"]["servingEligibleByCohort"].items()):
+            lines.append(f"| {row['categoryId']} | {cohort} | {eligible} |")
+    lines += [
+        "",
+        "## Variant sampling (no silent caps)",
+        "",
+        "| Category | Total variants | Sampled variants | Sampling applied |",
+        "|---|---|---|---|",
+    ]
+    for row in category_rows:
+        lines.append(
+            f"| {row['categoryId']} | {row['totalVariants']} | {row['sampledVariants']} | "
+            f"{row['samplingApplied']} |"
+        )
+    for row in category_rows:
+        if row["samplingApplied"]:
+            lines.append(
+                f"- Category {row['categoryId']}: metrics are computed on a deterministic "
+                f"{row['sampledVariants']}-of-{row['totalVariants']} variant sample "
+                f"({row['samplingRule']})."
+            )
+        else:
+            lines.append(
+                f"- Category {row['categoryId']}: no sampling applied -- metrics are computed "
+                f"on the full {row['totalVariants']}-variant universe."
+            )
+
+    near_miss_lines = _near_miss_notes(category_rows)
+    lines += [
+        "",
+        "## Near-miss notes (informational -- not enabled)",
+        "",
+    ]
+    if near_miss_lines:
+        lines += near_miss_lines
+    else:
+        lines.append("- none")
+
+    lines += [
+        "",
+        "cold-start: unevaluable by construction (no walk-forward truth exists for variants",
+        "with zero observed prices anywhere in the panel) -- serve only with explicit",
+        "cold-start labeling per PRD Sec4 hard criterion 3b.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _near_miss_notes(category_rows: list[dict]) -> list[str]:
+    """Flag (category, cohort) pairs where a later horizon passes the
+    holdout gate but an earlier one does not -- informational only, not a
+    serving decision. E.g. standard cohort passes 90d but not 30d: surfaced
+    for Kevin as a possible future 90d-only serving mode, NOT enabled."""
+
+    notes = []
+    for row in category_rows:
+        by_cohort: dict[str, dict[int, dict]] = {}
+        for result in row["gate"]["results"]:
+            by_cohort.setdefault(result["cohort"], {})[result["horizonDays"]] = result
+        for cohort, by_horizon in sorted(by_cohort.items()):
+            horizons = sorted(by_horizon)
+            if len(horizons) < 2:
+                continue
+            earliest = horizons[0]
+            passing_later = [h for h in horizons[1:] if by_horizon[h]["passes"]]
+            if passing_later and not by_horizon[earliest]["passes"]:
+                later_label = "/".join(f"{h}d" for h in passing_later)
+                notes.append(
+                    f"- Category {row['categoryId']}, {cohort} cohort: passes {later_label} only "
+                    f"({earliest}d fails) -- flagged for Kevin as a possible future "
+                    f"{later_label}-only serving mode; NOT enabled."
+                )
+    return notes
+
+
+def _category_row_from_receipt(receipt: dict) -> dict:
+    """Reconstruct the summary-renderer's category_rows shape from a
+    persisted evaluation-category-<id>.json receipt (selection + gridScores
+    are stored split across two receipt keys; this re-merges them keyed by
+    horizonDays, matching what _eval_component_weights_command builds
+    in-memory for the invocation it just ran)."""
+
+    selection = {}
+    for h_steps_str, sel in receipt["selection"].items():
+        merged = dict(sel)
+        merged["gridScores"] = receipt["gridScores"][h_steps_str]
+        selection[sel["horizonDays"]] = merged
+    return {
+        "categoryId": receipt["categoryId"],
+        "selection": selection,
+        "gate": receipt["gate"],
+        "totalVariants": receipt.get("totalVariants"),
+        "sampledVariants": receipt.get("sampledVariants"),
+        "samplingApplied": receipt.get("samplingApplied"),
+        "samplingRule": receipt.get("samplingRule"),
+    }
+
+
+def _merged_category_rows(receipts_dir: Path) -> list[dict]:
+    """Every evaluation-category-*.json currently present in receipts_dir,
+    parsed back into category_rows shape and sorted by categoryId -- the
+    summary is a MERGE over all per-category receipts on disk, not just
+    whatever categories the current invocation happened to (re-)evaluate,
+    so per-category invocations (e.g. one category per process/receipt)
+    don't clobber each other's contribution to evaluation-summary.md/json."""
+
+    rows = []
+    for path in sorted(receipts_dir.glob("evaluation-category-*.json")):
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        rows.append(_category_row_from_receipt(receipt))
+    rows.sort(key=lambda row: row["categoryId"])
+    return rows
+
+
+def _eval_component_weights_command(args: argparse.Namespace) -> int:
+    panel_dir = Path(args.panel_dir)
+    state_dir = Path(args.state_dir)
+    receipts_dir = Path(args.receipts_dir)
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    category_ids = [int(c) for c in args.category_ids.split(",") if c.strip()]
+
+    try:
+        index_set, curve, groups_metadata = _load_shared_inputs(state_dir)
+    except RuntimeError as exc:
+        print(f"trajectory-cli: {exc}", file=sys.stderr)
+        return 2
+
+    weights_path = receipts_dir / "component-weights.json"
+    combined_weights: dict = json.loads(weights_path.read_text(encoding="utf-8")) if weights_path.is_file() else {}
+
+    category_rows = []
+    for category_id in category_ids:
+        if category_id not in index_set.category_ids:
+            print(
+                f"trajectory-cli: category {category_id} was not in the cached index set "
+                f"{list(index_set.category_ids)}; rerun build-indices with --category-id {category_id}",
+                file=sys.stderr,
+            )
+            return 2
+
+        started = time.monotonic()
+        out = run_component_weight_remediation(
+            panel_dir, category_id, index_set, curve, groups_metadata,
+            max_variants_per_category=args.max_variants_per_category,
+        )
+        elapsed = time.monotonic() - started
+
+        selection_json = {
+            h_steps: {k: v for k, v in sel.items()}
+            for h_steps, sel in out["selection"].items()
+        }
+        gate = out["gate"]
+        gate_json = {
+            "categoryId": gate["categoryId"],
+            "componentWeights": {str(h): list(ab) for h, ab in gate["componentWeights"].items()},
+            "results": [
+                {
+                    "categoryId": r.category_id,
+                    "cohort": r.cohort,
+                    "horizonDays": r.horizon_days,
+                    "nCases": r.n_cases,
+                    "maeEngine": r.mae_engine,
+                    "maeNoChange": r.mae_no_change,
+                    "maeLiftOverNoChange": r.mae_lift_over_no_change,
+                    "nMovers": r.n_movers,
+                    "directionAccuracyMovers": r.direction_accuracy_movers,
+                    "coverage80": r.coverage_80,
+                    "pinballQ50Engine": r.pinball_q50_engine,
+                    "pinballQ50NoChange": r.pinball_q50_no_change,
+                    "pinballBeatsNoChange": r.pinball_beats_no_change,
+                    "baselineMae": r.baseline_mae,
+                    "passes": r.passes,
+                    "failReasons": r.fail_reasons,
+                    "servingEligible": r.serving_eligible,
+                }
+                for r in gate["results"]
+            ],
+            "servingEligibleByCohort": gate["servingEligibleByCohort"],
+            "coldStart": gate["coldStart"],
+            "anyCohortServingEligible": gate["anyCohortServingEligible"],
+        }
+
+        receipt = {
+            "modelVersion": MODEL_VERSION,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "categoryId": category_id,
+            "wallClockSeconds": round(elapsed, 3),
+            "peakRssBytes": _peak_rss_bytes(),
+            "selection": {
+                str(h_steps): {k: v for k, v in sel.items() if k != "gridScores"}
+                for h_steps, sel in selection_json.items()
+            },
+            "gridScores": {str(h_steps): sel["gridScores"] for h_steps, sel in selection_json.items()},
+            "gate": gate_json,
+            "totalVariants": out["totalVariants"],
+            "sampledVariants": out["sampledVariants"],
+            "samplingApplied": out["samplingApplied"],
+            "samplingRule": out["samplingRule"],
+        }
+        (receipts_dir / f"evaluation-category-{category_id}.json").write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+        )
+
+        combined_weights[str(category_id)] = {
+            str(sel["horizonDays"]): {"weightA": sel["weightA"], "weightB": sel["weightB"]}
+            for sel in selection_json.values()
+        }
+
+        category_rows.append({
+            "categoryId": category_id,
+            "selection": {sel["horizonDays"]: sel for sel in selection_json.values()},
+            "gate": gate_json,
+            "totalVariants": out["totalVariants"],
+            "sampledVariants": out["sampledVariants"],
+            "samplingApplied": out["samplingApplied"],
+            "samplingRule": out["samplingRule"],
+        })
+        print(
+            f"category {category_id}: done in {elapsed:.1f}s, "
+            f"anyCohortServingEligible={gate['anyCohortServingEligible']}",
+            flush=True,
+        )
+
+    weights_path.write_text(json.dumps(combined_weights, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    # Merge from every evaluation-category-*.json present in receipts_dir
+    # (not just the categories this invocation just (re-)evaluated) --
+    # per-category invocations must not clobber each other's contribution
+    # to evaluation-summary.md/json.
+    merged_category_rows = _merged_category_rows(receipts_dir)
+    summary_md = _render_component_weights_summary_markdown(merged_category_rows)
+    (receipts_dir / "evaluation-summary.md").write_text(summary_md, encoding="utf-8")
+    (receipts_dir / "evaluation-summary.json").write_text(
+        json.dumps({"categories": merged_category_rows}, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+    )
+    print(f"wrote {weights_path}")
+    print(f"wrote {receipts_dir / 'evaluation-summary.md'} ({len(merged_category_rows)} categor{'y' if len(merged_category_rows) == 1 else 'ies'})")
+    return 0
+
+
+def _render_eval_summary_command(args: argparse.Namespace) -> int:
+    """Regenerate evaluation-summary.md/json by merging every
+    evaluation-category-*.json currently in --receipts-dir. Cheap: no eval
+    re-run, just reads existing receipts and re-renders the summary."""
+
+    receipts_dir = Path(args.receipts_dir)
+    if not receipts_dir.is_dir():
+        print(f"trajectory-cli: receipts dir not found: {receipts_dir}", file=sys.stderr)
+        return 2
+    category_rows = _merged_category_rows(receipts_dir)
+    if not category_rows:
+        print(f"trajectory-cli: no evaluation-category-*.json receipts found in {receipts_dir}", file=sys.stderr)
+        return 2
+    summary_md = _render_component_weights_summary_markdown(category_rows)
+    (receipts_dir / "evaluation-summary.md").write_text(summary_md, encoding="utf-8")
+    (receipts_dir / "evaluation-summary.json").write_text(
+        json.dumps({"categories": category_rows}, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+    )
+    print(f"wrote {receipts_dir / 'evaluation-summary.md'} ({len(category_rows)} categories)")
+    print(f"wrote {receipts_dir / 'evaluation-summary.json'}")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -610,7 +965,53 @@ def _parser() -> argparse.ArgumentParser:
         "--no-hedonic", action="store_true",
         help="skip loading any cached hedonic predictions even if present (pre-T3 behavior)",
     )
+    run.add_argument(
+        "--component-weights-path", default=None,
+        help=(
+            "path to a component-weights.json receipt (T4 remediation) with this "
+            "category's selected per-horizon (a, b); defaults to "
+            "<receipts-dir>/component-weights.json. When absent or missing this "
+            "category, every horizon implicitly uses (1.0, 1.0) -- byte-identical "
+            "to pre-remediation output."
+        ),
+    )
     run.set_defaults(handler=_run_category_command)
+
+    eval_weights = subparsers.add_parser(
+        "eval-component-weights",
+        help=(
+            "T4 remediation: per (category, horizon) walk-forward-honest component-weight "
+            "grid search on training origins, gated on holdout origins, writing "
+            "component-weights.json + evaluation-category-<id>.json + evaluation-summary.md/json"
+        ),
+    )
+    eval_weights.add_argument(
+        "--category-ids", required=True,
+        help="comma-separated category ids to evaluate, e.g. 1,2,3,85",
+    )
+    eval_weights.add_argument("--panel-dir", default="analytics/data/panel")
+    eval_weights.add_argument("--state-dir", default="analytics/data/trajectory")
+    eval_weights.add_argument("--receipts-dir", default="docs/receipts/trajectory-v1")
+    eval_weights.add_argument(
+        "--max-variants-per-category", type=int, default=DEFAULT_MAX_VARIANTS_PER_CATEGORY,
+        help=(
+            "deterministic cap on variants considered per category (sha256-ranked N-of-M "
+            "sample, no-op when the category has fewer variants); bounds raw-case-collection "
+            "RSS on categories with very large variant counts"
+        ),
+    )
+    eval_weights.set_defaults(handler=_eval_component_weights_command)
+
+    render_eval_summary = subparsers.add_parser(
+        "render-eval-summary",
+        help=(
+            "Regenerate evaluation-summary.md/json by merging every "
+            "evaluation-category-*.json present in --receipts-dir. Cheap: reads "
+            "existing receipts only, no eval re-run."
+        ),
+    )
+    render_eval_summary.add_argument("--receipts-dir", default="docs/receipts/trajectory-v1")
+    render_eval_summary.set_defaults(handler=_render_eval_summary_command)
 
     fetch_products = subparsers.add_parser(
         "fetch-products",

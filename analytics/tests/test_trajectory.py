@@ -12,14 +12,19 @@ from pathlib import Path
 from collectfolio_analytics.indices import build_indices
 from collectfolio_analytics.lifecycle import build_lifecycle_curve
 from collectfolio_analytics.trajectory import (
+    MAX_HEDONIC_BLEND_LOG_SHIFT,
+    MIN_HISTORY_FOR_STANDARD,
     N0_DRIFT,
     REQUIRED_QUANTILES,
+    STALE_WEEKS_THRESHOLD,
     ThetaDriftFit,
+    confidence_tier,
     content_sha256,
     damped_forecast_delta,
     empirical_quantile,
     fit_damped_trend,
     fit_theta_drift,
+    hedonic_blend_anchor_log,
     horizon_steps_for,
     mad_volatility,
     process_category,
@@ -651,9 +656,20 @@ class RealCategory85BackwardCompatibilityRegressionTests(unittest.TestCase):
     the committed T2 receipt. Network-free; skipped automatically
     wherever that local cache is absent (e.g. a fresh checkout without
     analytics/data populated).
+
+    T4 note: the pinned hash below was updated from the original T2 value
+    (``8c4a0acdf99f50a3f74f8f1b442915c382bfaae4483ecafca104362b9ccf7355``)
+    because T4's staleness-based confidence degradation (PRD Sec4 hard
+    criterion 3a, ``confidence_tier``/``STALE_WEEKS_THRESHOLD`` in
+    trajectory.py) intentionally changes the ``confidence`` field of any
+    real category-85 variant whose last-known price is more than 8 weeks
+    old from "standard" to "low-history" -- an engine behavior change, not
+    a regression. Prices/bands are unaffected by this change (it only
+    downgrades a tier), so this is still a meaningful reproducibility pin
+    on prices+bands going forward, just anchored to the post-T4 baseline.
     """
 
-    COMMITTED_T2_HASH = "8c4a0acdf99f50a3f74f8f1b442915c382bfaae4483ecafca104362b9ccf7355"
+    COMMITTED_T2_HASH = "14089cf4a663fee7d044797243b3e74db19ecebfe4c849a872585506a2b638b1"
 
     def test_reproduces_committed_t2_content_hash(self):
         from collectfolio_analytics.trajectory_cli import _load_shared_inputs
@@ -673,3 +689,173 @@ class RealCategory85BackwardCompatibilityRegressionTests(unittest.TestCase):
                 panel_dir, category_id, index_set, curve, groups_metadata, Path(tmp) / "out",
             )
         self.assertEqual(result.content_hash, self.COMMITTED_T2_HASH)
+
+
+class ConfidenceTierTests(unittest.TestCase):
+    """T4 (PRD Sec4 hard criterion 3a): staleness-based confidence degradation."""
+
+    def test_insufficient_history_wins_regardless_of_staleness(self):
+        self.assertEqual(
+            confidence_tier(n_i=0, mad_i=float("nan"), weeks_stale=0.0),
+            "insufficient-history",
+        )
+        self.assertEqual(
+            confidence_tier(n_i=0, mad_i=float("nan"), weeks_stale=100.0),
+            "insufficient-history",
+        )
+
+    def test_low_history_below_min_sample_size(self):
+        self.assertEqual(
+            confidence_tier(n_i=MIN_HISTORY_FOR_STANDARD - 1, mad_i=0.01, weeks_stale=0.0),
+            "low-history",
+        )
+
+    def test_standard_when_well_sampled_and_fresh(self):
+        self.assertEqual(
+            confidence_tier(n_i=MIN_HISTORY_FOR_STANDARD, mad_i=0.01, weeks_stale=0.0),
+            "standard",
+        )
+        self.assertEqual(
+            confidence_tier(
+                n_i=MIN_HISTORY_FOR_STANDARD, mad_i=0.01, weeks_stale=STALE_WEEKS_THRESHOLD,
+            ),
+            "standard",
+        )
+
+    def test_staleness_degrades_standard_to_low_history(self):
+        self.assertEqual(
+            confidence_tier(
+                n_i=100, mad_i=0.01, weeks_stale=STALE_WEEKS_THRESHOLD + 0.01,
+            ),
+            "low-history",
+        )
+
+    def test_staleness_never_upgrades_low_history(self):
+        # Already low-history on sample size alone -- staleness must not
+        # change the outcome (there's nothing worse than low-history for a
+        # non-cold-start variant except insufficient-history, which is
+        # governed purely by mad_i, not staleness).
+        self.assertEqual(
+            confidence_tier(n_i=1, mad_i=0.01, weeks_stale=0.0),
+            confidence_tier(n_i=1, mad_i=0.01, weeks_stale=1000.0),
+        )
+
+    def test_none_weeks_stale_is_treated_as_not_stale(self):
+        self.assertEqual(
+            confidence_tier(n_i=100, mad_i=0.01, weeks_stale=None),
+            "standard",
+        )
+
+
+class HedonicBlendAnchorCapTests(unittest.TestCase):
+    """T4 (PRD Sec4 hard criterion 3c): cap the hedonic level-blend shift."""
+
+    def test_unclamped_shift_within_cap_is_unaffected(self):
+        own_log = math.log(100.0)
+        hedonic_pred = math.log(120.0)
+        n_i = 4
+        anchor = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i)
+        weight = n_i / (n_i + 8.0)  # N0_HEDONIC
+        expected = weight * own_log + (1.0 - weight) * hedonic_pred
+        self.assertAlmostEqual(anchor, expected, places=9)
+
+    def test_extreme_low_n_shift_is_clamped_to_max_abs_shift(self):
+        # The sampled T3 packet: own last-known price $81,421, hedonic
+        # prediction implying a blended anchor around $111 unclamped.
+        own_log = math.log(81421.0)
+        hedonic_pred = math.log(100.0)
+        anchor = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i=0)
+        self.assertAlmostEqual(anchor, own_log - MAX_HEDONIC_BLEND_LOG_SHIFT, places=9)
+        # 3x below the own price, per the ln(3) cap -- not a ~660x swing.
+        self.assertAlmostEqual(math.exp(anchor), 81421.0 / 3.0, places=3)
+
+    def test_clamp_is_symmetric(self):
+        own_log = math.log(100.0)
+        hedonic_pred = math.log(100_000.0)
+        anchor = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i=0)
+        self.assertAlmostEqual(anchor, own_log + MAX_HEDONIC_BLEND_LOG_SHIFT, places=9)
+
+    def test_high_n_shift_is_far_inside_the_cap(self):
+        # HighNInvarianceTests companion: at high n the unclamped shift is
+        # already tiny, so the cap changes nothing (within float noise).
+        own_log = math.log(100.0)
+        hedonic_pred = math.log(50.0)
+        anchor = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i=100_000)
+        self.assertAlmostEqual(anchor, own_log, places=3)
+
+
+class ComponentWeightsApplicationTests(unittest.TestCase):
+    """T4 remediation: process_category's component_weights parameter."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.panel_dir = Path(self.tmp.name) / "panel"
+        self.category_id = 4242
+        self.dates, self.groups_metadata = _build_synthetic_panel(self.panel_dir, self.category_id)
+        self.index_set = build_indices(self.panel_dir, [self.category_id])
+        self.curve = build_lifecycle_curve(self.index_set, self.groups_metadata)
+        self.out_dir = Path(self.tmp.name) / "out"
+        self._run_count = 0
+
+    def _run(self, **kwargs):
+        # Each call gets its own output subdirectory: process_category
+        # writes to a fixed <out_dir>/category-<id>/packets.jsonl.gz path,
+        # so two calls sharing one out_dir would have the second silently
+        # overwrite the first's file on disk before a test gets a chance
+        # to read both.
+        self._run_count += 1
+        return process_category(
+            self.panel_dir, self.category_id, self.index_set, self.curve,
+            self.groups_metadata, self.out_dir / f"run-{self._run_count}", **kwargs,
+        )
+
+    def test_none_is_byte_identical_to_pre_remediation_default(self):
+        # component_weights=None must implicitly mean (1.0, 1.0) everywhere
+        # -- the exact pre-T3/T2 forecast_log formula -- so every existing
+        # regression-test hash (e.g.
+        # RealCategory85BackwardCompatibilityRegressionTests) stays valid
+        # without ever passing this new parameter.
+        baseline = self._run()
+        explicit_identity = self._run(component_weights={4: (1.0, 1.0), 13: (1.0, 1.0)})
+        self.assertEqual(baseline.content_hash, explicit_identity.content_hash)
+
+    def test_zero_weights_change_the_output_hash(self):
+        baseline = self._run()
+        zeroed = self._run(component_weights={4: (0.0, 0.0), 13: (0.0, 0.0)})
+        self.assertNotEqual(baseline.content_hash, zeroed.content_hash)
+
+    def test_zero_weights_flatten_median_path_to_the_anchor_price(self):
+        # With a=b=0 for every configured horizon, medianPath's own
+        # weight-lookup (nearest configured horizon_steps to each path
+        # step k) resolves to (0, 0) everywhere too, so every emitted
+        # medianPath point must equal lastKnownPrice exactly (medianPath
+        # carries no conformal offset, unlike the quantile horizons).
+        zeroed = self._run(component_weights={4: (0.0, 0.0), 13: (0.0, 0.0)})
+        with gzip.open(zeroed.output_path, "rt", encoding="utf-8") as handle:
+            rows = [json.loads(line) for line in handle]
+        self.assertTrue(rows)
+        for row in rows:
+            for point in row["medianPath"]:
+                self.assertAlmostEqual(point["price"], row["lastKnownPrice"], places=5)
+
+    def test_full_weights_move_the_path_away_from_the_anchor(self):
+        # Sanity companion: the default (1, 1) run's medianPath actually
+        # moves over the horizon on this synthetic panel (drift/index are
+        # non-trivial), so the zeroed test above is a meaningful contrast,
+        # not vacuously true because nothing ever moves.
+        full = self._run()
+        with gzip.open(full.output_path, "rt", encoding="utf-8") as handle:
+            rows = [json.loads(line) for line in handle]
+        self.assertTrue(any(
+            abs(point["price"] - row["lastKnownPrice"]) > 1e-6
+            for row in rows for point in row["medianPath"][1:]
+        ))
+
+    def test_missing_horizon_key_defaults_to_identity_for_that_horizon(self):
+        # A weights map that only covers one horizon must not KeyError or
+        # silently zero out the other -- the other horizon implicitly
+        # keeps (1.0, 1.0).
+        baseline = self._run()
+        partial = self._run(component_weights={4: (1.0, 1.0)})
+        self.assertEqual(baseline.content_hash, partial.content_hash)

@@ -73,6 +73,15 @@ VOLATILITY_FLOOR = 1e-4
 MAX_ORIGINS_PER_HORIZON = 5
 MIN_ORIGIN_INDEX = 15
 
+# T4 (PRD Sec4 walk-forward evaluation gate) hard criteria, from packet
+# sampling documented in docs/receipts/trajectory-v1/trajectory-hedonic-summary.md
+# "Tracked concerns":
+STALE_WEEKS_THRESHOLD = 8
+# ln(3): the T3 hedonic level-blend anchor shift is capped so the blended
+# anchor can move at most 3x above/below the card's own last-known price,
+# regardless of how small n (and therefore the empirical-Bayes weight) is.
+MAX_HEDONIC_BLEND_LOG_SHIFT = 1.0986122886681098
+
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -435,6 +444,131 @@ def tercile_cutoffs(values: Sequence[float]) -> tuple[float, float]:
     return (low, high)
 
 
+def _calibrate_conformal(
+    own_mad: Sequence[float],
+    raw_pool: Sequence[tuple[int, int, float]],
+) -> tuple[
+    float,
+    float,
+    float,
+    dict[str, float],
+    dict[tuple[str, int], dict[float, float]],
+    dict[float, float],
+    dict[str, int],
+]:
+    """Split-conformal (bucket x horizon) calibration from standardized
+    walk-forward residuals. Factored out of ``process_category`` so
+    ``trajectory_eval.py``'s walk-forward evaluator can build the exact
+    same conformal pools the production packet-emission path builds --
+    a single source of truth for both, rather than two copies that could
+    silently drift apart.
+
+    Returns ``(low_cut, high_cut, fallback_mad, bucket_mad,
+    conformal_offsets, default_offsets, pool_sizes)``.
+    """
+
+    low_cut, high_cut = tercile_cutoffs(own_mad)
+    fallback_mad = trimmed_mean([v for v in own_mad if not isnan(v)]) if any(not isnan(v) for v in own_mad) else VOLATILITY_FLOOR
+    fallback_mad = max(fallback_mad, VOLATILITY_FLOOR)
+
+    # Each volatility bucket's own representative own_mad -- needed so a T3
+    # cold-start packet that borrows a bucket's raw conformal offsets (see
+    # _widest_offsets) multiplies them by a like-for-like MAD scale instead
+    # of the unrelated category-wide fallback_mad.
+    bucket_mad_samples: dict[str, list[float]] = {}
+    for v in own_mad:
+        if isnan(v):
+            continue
+        bucket_mad_samples.setdefault(volatility_bucket(v, low_cut, high_cut), []).append(v)
+    bucket_mad = {
+        bucket: max(median(values), VOLATILITY_FLOOR)
+        for bucket, values in bucket_mad_samples.items()
+    }
+
+    pools: dict[tuple[str, int], list[float]] = {}
+    for variant_idx, h_steps, standardized in raw_pool:
+        bucket = volatility_bucket(own_mad[variant_idx], low_cut, high_cut)
+        pools.setdefault((bucket, h_steps), []).append(standardized)
+
+    conformal_offsets: dict[tuple[str, int], dict[float, float]] = {}
+    pool_sizes: dict[str, int] = {}
+    for key, values in pools.items():
+        values.sort()
+        conformal_offsets[key] = {q: empirical_quantile(values, q) for q in REQUIRED_QUANTILES}
+        pool_sizes[f"{key[0]}:{key[1]}"] = len(values)
+
+    default_offsets = {q: (q - 0.5) * 2.0 for q in REQUIRED_QUANTILES}  # wide symmetric fallback in MAD units
+
+    return low_cut, high_cut, fallback_mad, bucket_mad, conformal_offsets, default_offsets, pool_sizes
+
+
+# ---------------------------------------------------------------------------
+# T4: confidence-tier classification (with staleness degradation) and the
+# capped hedonic level-blend anchor. Factored out of process_category's
+# emission loop so trajectory_eval.py's walk-forward evaluator can reuse the
+# exact same rule the production packet-emission path applies -- a single
+# source of truth for both.
+# ---------------------------------------------------------------------------
+
+
+def confidence_tier(*, n_i: int, mad_i: float, weeks_stale: float | None) -> str:
+    """Confidence tier for an observed (non-cold-start) variant.
+
+    Base tier from own-history sample size / volatility (T2/T3 behavior,
+    unchanged): ``"insufficient-history"`` when ``mad_i`` is nan (the
+    variant never had two consecutive known prices to form even one
+    residual return), else ``"low-history"`` when ``n_i <
+    MIN_HISTORY_FOR_STANDARD`` drift-fit observations, else ``"standard"``.
+
+    T4 staleness rule (PRD Sec4 hard criterion 3a, from packet sampling):
+    a variant whose last-known price is more than ``STALE_WEEKS_THRESHOLD``
+    weeks old must not carry ``"standard"`` confidence even if it otherwise
+    qualifies on sample size/volatility alone -- an old last-known price is
+    not a reliable forecast anchor no matter how much history led up to
+    it. Staleness only ever *degrades* a tier (standard -> low-history);
+    it never upgrades a tier that was already worse than standard.
+    """
+
+    if isnan(mad_i):
+        return "insufficient-history"
+    if n_i < MIN_HISTORY_FOR_STANDARD:
+        return "low-history"
+    if weeks_stale is not None and weeks_stale > STALE_WEEKS_THRESHOLD:
+        return "low-history"
+    return "standard"
+
+
+def hedonic_blend_anchor_log(
+    own_log: float,
+    hedonic_pred: float,
+    n_i: int,
+    *,
+    max_abs_shift: float = MAX_HEDONIC_BLEND_LOG_SHIFT,
+) -> float:
+    """T3 empirical-Bayes anchor blend, T4-capped (PRD Sec4 hard criterion 3c).
+
+    The original T3 form is ``anchor = weight*own_log + (1-weight)*hedonic``
+    with ``weight = n/(n+N0_HEDONIC)`` -- algebraically a shift away from
+    the card's own log price: ``anchor = own_log + (1-weight)*(hedonic -
+    own_log)``. Walk-forward evaluation of the sampled low-n case (own
+    last-known price $81,421, raw blended anchor ~= $111 at n close to 0 --
+    a several-hundred-x level swing driven almost entirely by a single
+    hedonic point estimate) showed this unclamped shift is not a safe
+    MAE-improving anchor at low n. The shift is therefore clamped in log
+    space to ``max_abs_shift`` (default ``ln(3)``: the blended anchor can
+    move at most 3x above/below the card's own last-known price) -- the
+    empirical-Bayes weight still governs the *direction and unclamped
+    magnitude* the shift would have taken; this only bounds how far it is
+    allowed to move the anchor. At high n the unclamped shift is already
+    near zero, so the clamp is a no-op there (HighNInvarianceTests).
+    """
+
+    weight = hedonic_level_weight(n_i)
+    raw_shift = (1.0 - weight) * (hedonic_pred - own_log)
+    clamped_shift = max(-max_abs_shift, min(max_abs_shift, raw_shift))
+    return own_log + clamped_shift
+
+
 # ---------------------------------------------------------------------------
 # Per-category orchestration
 # ---------------------------------------------------------------------------
@@ -508,6 +642,7 @@ def process_category(
     as_of: datetime | None = None,
     hedonic_log_price: Mapping[tuple[int, str], float] | None = None,
     cold_start_variants: Mapping[tuple[int, str], int] | None = None,
+    component_weights: Mapping[int, tuple[float, float]] | None = None,
 ) -> CategoryRunResult:
     """... (see module docstring for the model). ``hedonic_log_price`` is an
     optional, purely-additive T3 input: ``{(product_id, subTypeName): predicted
@@ -547,11 +682,27 @@ def process_category(
     ``hedonic_log_price`` also has a prediction for that key (see
     ``hedonic_features.cold_start_candidates``, which is the intended
     source of both maps together).
+
+    ``component_weights`` (T4 remediation): optional ``{horizon_steps: (a,
+    b)}`` overriding the implicit ``(1.0, 1.0)`` in ``forecast_log =
+    anchor_log + a*index_delta + b*drift*horizon_steps``, applied
+    identically at both walk-forward calibration time (the ``raw_pool``
+    loop) and live packet-emission time -- selected per (category,
+    horizon) by ``trajectory_eval.select_component_weights`` on
+    training-only origins and persisted to
+    ``docs/receipts/trajectory-v1/component-weights.json``. When ``None``
+    (the default), every horizon implicitly uses ``(1.0, 1.0)`` and
+    packet output is byte-for-byte identical to the pre-remediation (T2/T3)
+    engine -- this parameter is purely additive.
     """
     dates = index_set.dates
     n = len(dates)
     horizon_steps_list = tuple(sorted({horizon_steps_for(h) for h in horizons_days}))
     steps_by_days = {h: horizon_steps_for(h) for h in horizons_days}
+    weights_by_h_steps = {
+        h_steps: (component_weights.get(h_steps, (1.0, 1.0)) if component_weights else (1.0, 1.0))
+        for h_steps in horizon_steps_list
+    }
 
     market_fit = fit_damped_trend(list(index_set.market))
     category_fit = fit_damped_trend(list(index_set.category[category_id]))
@@ -628,42 +779,15 @@ def process_category(
                     )
                 )
                 drift_o, _weight_o, _n_o = shrunk_drift_at(theta_fit, origin)
-                forecast_log = log(prices[i][origin]) + index_delta + drift_o * h_steps
+                weight_a, weight_b = weights_by_h_steps[h_steps]
+                forecast_log = log(prices[i][origin]) + weight_a * index_delta + weight_b * drift_o * h_steps
                 actual_log = log(prices[i][target])
                 standardized = (actual_log - forecast_log) / denom
                 raw_pool.append((i, h_steps, standardized))
 
-    low_cut, high_cut = tercile_cutoffs(own_mad)
-    fallback_mad = trimmed_mean([v for v in own_mad if not isnan(v)]) if any(not isnan(v) for v in own_mad) else VOLATILITY_FLOOR
-    fallback_mad = max(fallback_mad, VOLATILITY_FLOOR)
-
-    # Each volatility bucket's own representative own_mad -- needed so a T3
-    # cold-start packet that borrows a bucket's raw conformal offsets (see
-    # _widest_offsets) multiplies them by a like-for-like MAD scale instead
-    # of the unrelated category-wide fallback_mad.
-    bucket_mad_samples: dict[str, list[float]] = {}
-    for v in own_mad:
-        if isnan(v):
-            continue
-        bucket_mad_samples.setdefault(volatility_bucket(v, low_cut, high_cut), []).append(v)
-    bucket_mad = {
-        bucket: max(median(values), VOLATILITY_FLOOR)
-        for bucket, values in bucket_mad_samples.items()
-    }
-
-    pools: dict[tuple[str, int], list[float]] = {}
-    for variant_idx, h_steps, standardized in raw_pool:
-        bucket = volatility_bucket(own_mad[variant_idx], low_cut, high_cut)
-        pools.setdefault((bucket, h_steps), []).append(standardized)
-
-    conformal_offsets: dict[tuple[str, int], dict[float, float]] = {}
-    pool_sizes: dict[str, int] = {}
-    for key, values in pools.items():
-        values.sort()
-        conformal_offsets[key] = {q: empirical_quantile(values, q) for q in REQUIRED_QUANTILES}
-        pool_sizes[f"{key[0]}:{key[1]}"] = len(values)
-
-    default_offsets = {q: (q - 0.5) * 2.0 for q in REQUIRED_QUANTILES}  # wide symmetric fallback in MAD units
+    low_cut, high_cut, fallback_mad, bucket_mad, conformal_offsets, default_offsets, pool_sizes = (
+        _calibrate_conformal(own_mad, raw_pool)
+    )
 
     if as_of is None:
         as_of = datetime.combine(dates[-1], datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1)
@@ -742,25 +866,23 @@ def process_category(
                 n_i = final_n[i]
                 drift_i = final_drift[i]
                 if hedonic_pred is not None:
-                    # T3 blend: shrink the forecast ANCHOR (not the drift,
-                    # which already has its own n/(n+N0_DRIFT) shrinkage)
-                    # toward the hedonic prior by the same empirical-Bayes
-                    # form, weighted by the card's own drift-fit sample
-                    # size. weight -> 1 as n grows, so this is a no-op
-                    # (within floating point noise) for well-observed
-                    # variants -- see HighNInvarianceTests.
-                    weight = hedonic_level_weight(n_i)
-                    anchor_log = weight * own_log + (1.0 - weight) * hedonic_pred
+                    # T3 blend (T4-capped): shrink the forecast ANCHOR (not
+                    # the drift, which already has its own n/(n+N0_DRIFT)
+                    # shrinkage) toward the hedonic prior by the same
+                    # empirical-Bayes form, weighted by the card's own
+                    # drift-fit sample size, then clamp the resulting shift
+                    # -- see hedonic_blend_anchor_log's docstring. weight
+                    # -> 1 as n grows, so this is a no-op (within floating
+                    # point noise) for well-observed variants -- see
+                    # HighNInvarianceTests.
+                    anchor_log = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i)
                 else:
                     anchor_log = own_log
                 mad_for_band = mad_i if (not isnan(mad_i) and mad_i >= VOLATILITY_FLOOR) else fallback_mad
                 bucket = volatility_bucket(mad_i, low_cut, high_cut)
                 band_widen = 1.0
-                confidence = "standard"
-                if isnan(mad_i):
-                    confidence = "insufficient-history"
-                elif n_i < MIN_HISTORY_FOR_STANDARD:
-                    confidence = "low-history"
+                weeks_stale = (as_of.date() - dates[li]).days / WEEK_DAYS
+                confidence = confidence_tier(n_i=n_i, mad_i=mad_i, weeks_stale=weeks_stale)
                 last_known_date_out = dates[li].isoformat()
                 last_known_price_out = round(lp, 6)
 
@@ -780,7 +902,8 @@ def process_category(
                         origin_date=origin_date,
                     )
                 )
-                predicted_log = anchor_log + index_delta + drift_i * h_steps
+                weight_a, weight_b = weights_by_h_steps[h_steps]
+                predicted_log = anchor_log + weight_a * index_delta + weight_b * drift_i * h_steps
                 if is_cold_start:
                     # The widest EFFECTIVE (bucket, h_steps) pool can differ
                     # per horizon, so both the offsets and their paired MAD
@@ -807,24 +930,39 @@ def process_category(
             path_points = []
             max_steps = max(steps_by_days.values())
             path_len = min(MAX_PATH_POINTS, max_steps + 1)
+            # The path's own weight is resolved per step from the SAME
+            # weights_by_h_steps map the horizon quantiles use, keyed by
+            # whichever configured horizon step-count is closest to k --
+            # component_weights is only ever selected per (evaluated)
+            # horizon, not per arbitrary week, so intermediate path steps
+            # inherit the nearest evaluated horizon's weight rather than
+            # silently reverting to the pre-remediation (1.0, 1.0) implicit
+            # default (which would make the visualized path diverge from
+            # the horizon quantiles it is supposed to lead into).
+            path_weight_steps = sorted(weights_by_h_steps)
             for k in range(path_len):
-                delta = (
-                    damped_forecast_delta(market_fit, origin_index, k)
-                    + damped_forecast_delta(category_fit, origin_index, k)
-                    + group_component_delta(
-                        group_fit=gfit,
-                        group_first_index=first,
-                        origin_index=origin_index,
-                        horizon_steps=k,
-                        horizon_days=k * WEEK_DAYS,
-                        lifecycle_curve=lifecycle_curve,
-                        published_on=str(published_on) if published_on else None,
-                        origin_date=origin_date,
+                if k == 0:
+                    delta = 0.0
+                else:
+                    path_h_steps = min(path_weight_steps, key=lambda s: abs(s - k)) if path_weight_steps else k
+                    path_weight_a, path_weight_b = weights_by_h_steps.get(path_h_steps, (1.0, 1.0))
+                    delta = (
+                        path_weight_a * (
+                            damped_forecast_delta(market_fit, origin_index, k)
+                            + damped_forecast_delta(category_fit, origin_index, k)
+                            + group_component_delta(
+                                group_fit=gfit,
+                                group_first_index=first,
+                                origin_index=origin_index,
+                                horizon_steps=k,
+                                horizon_days=k * WEEK_DAYS,
+                                lifecycle_curve=lifecycle_curve,
+                                published_on=str(published_on) if published_on else None,
+                                origin_date=origin_date,
+                            )
+                        )
+                        + path_weight_b * drift_i * k
                     )
-                    + drift_i * k
-                    if k > 0
-                    else 0.0
-                )
                 point_date = origin_date + timedelta(days=WEEK_DAYS * k)
                 path_points.append({
                     "date": point_date.isoformat(),

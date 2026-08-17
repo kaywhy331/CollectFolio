@@ -3,15 +3,26 @@
     {
       "categoryId": 1,
       "coldStartPacketCount": 4710,
-      "contentHash": "e6302f8a318df2692199552e3525edf2969deca67bb99eba68e10171bc1f374d",
+      "componentWeights": {
+        "13": [
+          0.25,
+          0.0
+        ],
+        "4": [
+          0.0,
+          0.0
+        ]
+      },
+      "componentWeightsApplied": true,
+      "contentHash": "b658e91620aaca77e62b79b0572553769181a6680a76a55c7095464a25abfc38",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T13:00:08.800443+00:00",
+      "generatedAt": "2026-08-17T16:00:49.580388+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-1/packets.jsonl.gz",
-      "packetBytes": 32791426,
+      "packetBytes": 28837535,
       "packetRowCount": 166562,
-      "peakRssBytes": 438566912,
+      "peakRssBytes": 422350848,
       "poolSizes": {
         "high:13": 229766,
         "high:4": 233771,
@@ -25,20 +36,31 @@
         "no_history": 0
       },
       "variantCount": 166562,
-      "wallClockSeconds": 183.274
+      "wallClockSeconds": 192.662
     },
     {
       "categoryId": 2,
       "coldStartPacketCount": 213,
-      "contentHash": "ec8681388e025ed580ad92297414e276fa8f87b9708eba64c234b4809012dd17",
+      "componentWeights": {
+        "13": [
+          0.5,
+          0.0
+        ],
+        "4": [
+          0.25,
+          0.0
+        ]
+      },
+      "componentWeightsApplied": true,
+      "contentHash": "8e15b5e71922550070515d9dad9393b0c2b6a0374d5897264be83f9ad502e9c0",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T13:01:19.254275+00:00",
+      "generatedAt": "2026-08-17T16:02:02.178366+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-2/packets.jsonl.gz",
-      "packetBytes": 12222150,
+      "packetBytes": 11461991,
       "packetRowCount": 61326,
-      "peakRssBytes": 187256832,
+      "peakRssBytes": 182530048,
       "poolSizes": {
         "high:13": 91115,
         "high:4": 92111,
@@ -52,20 +74,31 @@
         "no_history": 0
       },
       "variantCount": 61326,
-      "wallClockSeconds": 69.827
+      "wallClockSeconds": 72.007
     },
     {
       "categoryId": 3,
       "coldStartPacketCount": 561,
-      "contentHash": "af059e35ec9fa198be49fa58e5371140f4e994a62df48a3a08d69dcb89c81564",
+      "componentWeights": {
+        "13": [
+          1.0,
+          0.0
+        ],
+        "4": [
+          0.0,
+          0.0
+        ]
+      },
+      "componentWeightsApplied": true,
+      "contentHash": "a7b9e7a8aae2c2ecf825e1ec3960490f17964e6dd7c34c5a14cbc5c17c00d858",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T13:02:14.162438+00:00",
+      "generatedAt": "2026-08-17T16:02:54.373802+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-3/packets.jsonl.gz",
-      "packetBytes": 9733505,
+      "packetBytes": 8621370,
       "packetRowCount": 46892,
-      "peakRssBytes": 149405696,
+      "peakRssBytes": 144564224,
       "poolSizes": {
         "high:13": 67537,
         "high:4": 68498,
@@ -79,20 +112,31 @@
         "no_history": 0
       },
       "variantCount": 46892,
-      "wallClockSeconds": 54.361
+      "wallClockSeconds": 51.71
     },
     {
       "categoryId": 85,
       "coldStartPacketCount": 2128,
-      "contentHash": "5cb0f6db97f83e1e3ba150b827f9fe64e565f0e8e604bfad5d04b74b1f35b1c8",
+      "componentWeights": {
+        "13": [
+          0.0,
+          0.0
+        ],
+        "4": [
+          0.0,
+          0.0
+        ]
+      },
+      "componentWeightsApplied": true,
+      "contentHash": "a11b093ccdbc8a57a8fe7fd59912ed6c71dd5c3a9f4df31de612c2cc6f28a2e3",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T13:02:46.183455+00:00",
+      "generatedAt": "2026-08-17T16:03:25.118095+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-85/packets.jsonl.gz",
-      "packetBytes": 6821152,
+      "packetBytes": 4853824,
       "packetRowCount": 34493,
-      "peakRssBytes": 102821888,
+      "peakRssBytes": 100499456,
       "poolSizes": {
         "high:13": 42733,
         "high:4": 43905,
@@ -106,7 +150,7 @@
         "no_history": 0
       },
       "variantCount": 34493,
-      "wallClockSeconds": 31.478
+      "wallClockSeconds": 30.241
     }
   ],
   "categoryIds": [
@@ -115,10 +159,10 @@
     3,
     85
   ],
-  "generatedAt": "2026-08-17T13:02:46.558985+00:00",
+  "generatedAt": "2026-08-17T16:03:25.410920+00:00",
   "modelVersion": "trajectory-v1",
-  "peakRssBytesAcrossCategories": 438566912,
-  "totalPacketBytes": 61568233,
+  "peakRssBytesAcrossCategories": 422350848,
+  "totalPacketBytes": 53774720,
   "totalPacketRows": 309273,
-  "totalWallClockSeconds": 338.94
+  "totalWallClockSeconds": 346.62
 }
