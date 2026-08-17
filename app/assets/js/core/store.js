@@ -24,6 +24,12 @@ let state = {
   compare: [],
   featureFlags: { watchlists: true, setBrowsing: true, publicPriceIntelligence: false, loaded: false },
   intelligence: { byVariant: {}, history: [], loading: false, error: '', lastRefresh: '' },
+  // Trajectory-v1 (T6): TCGCSV-identity-keyed forecast packets, keyed by
+  // `trajectoryKeyForItem(item)` (see services/forecast-trajectory.js).
+  // Separate from `intelligence` because trajectory-v1 identity
+  // (categoryId/groupId/productId/subTypeName) is TCGCSV's own, not the
+  // app's canonical variant UUID.
+  trajectoryForecasts: { byKey: {}, loading: false, error: '' },
   tcgcsvRefresh: {
     status: 'disabled', sourceUpdatedAt: '', lastSuccessfulSourceBuild: null,
     lastSuccessfulAt: null, error: ''

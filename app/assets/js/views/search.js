@@ -5,6 +5,22 @@ import { escapeAttribute, escapeHTML, formatCurrency, formatPercent, safeImageUr
 import { selectPublicationForCatalogItem } from '../core/market-series.js';
 import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames, catalogSetYears, groupCatalogSets } from '../services/catalog-browse.js';
 import { findWatchedItem } from '../services/watchlist.js';
+import { trajectoryForecastEstimates, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
+
+// Trajectory-v1 (T6): looks up a prefetched forecast packet for a TCGCSV
+// catalog item (see app.js's hydrateTrajectoryForecasts) and shapes it
+// into the {30, 90} estimate map searchResultViewModel already knows how
+// to merge alongside Supabase-published intelligence. Only an explicitly
+// "published"-eligibility packet ever produces an estimate here -- a
+// cold-start-confidence packet still counts as published (T6 requires it
+// display, just labeled distinctly), while "excluded"/"unknown" never do.
+function trajectoryEstimatesForItem(item, state) {
+  const key = trajectoryKeyForItem(item);
+  if (!key) return null;
+  const entry = state.trajectoryForecasts?.byKey?.[key];
+  if (!entry || entry.eligibility !== 'published' || !entry.packet) return null;
+  return trajectoryForecastEstimates(entry.packet);
+}
 
 export const DISCOVER_VIEWS = Object.freeze(['gallery', 'list']);
 export const DISCOVER_RESULTS_PAGE_SIZE = 200;
@@ -89,16 +105,18 @@ function marketOutlookMarkup(model) {
   ].filter(([forecast]) => forecast);
   if (model.change30d === null && !horizons.length) return '';
   const trendClass = model.change30d === null ? '' : model.change30d >= 0 ? 'positive' : 'negative';
+  const coldStart = horizons.some(([forecast]) => forecast.status === 'cold-start');
   return `<dl class="result-market-outlook" aria-label="Published market trend and forecast estimates">
     <div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}</dd><small>${model.change30d === null ? 'Not enough history' : model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></div>
-    ${horizons.map(([forecast, label]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, model.currency))}</dd><small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))} modeled</small></div>`).join('')}
+    ${horizons.map(([forecast, label]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, model.currency))}</dd><small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${forecast.status === 'cold-start' ? ' · cold start estimate' : ' modeled'}</small></div>`).join('')}
+    ${coldStart ? '<div class="result-outlook-note"><small>Cold start estimate: built without enough observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></div>' : ''}
   </dl>`;
 }
 
 function resultCard(item, index, state, view, { scope = 'search', matchBadge = true } = {}) {
   const rawPublication = item.canonicalVariantId ? state.intelligence?.byVariant?.[item.canonicalVariantId] : null;
   const publication = selectPublicationForCatalogItem(rawPublication, item, state.settings.currency);
-  const model = searchResultViewModel(item, { publication, currency: state.settings.currency });
+  const model = searchResultViewModel(item, { publication, currency: state.settings.currency, trajectoryEstimates: trajectoryEstimatesForItem(item, state) });
   const watching = Boolean(findWatchedItem(state.watchlistItems, item));
   const finishes = catalogPriceOptionsForDisplay(item);
   const watchLabel = finishes.length > 1 ? 'Choose finish' : watching ? 'Watching' : 'Watch';
