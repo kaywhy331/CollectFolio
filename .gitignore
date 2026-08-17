@@ -12,3 +12,4 @@ analytics/build/
 *.egg-info/
 .pytest_cache/
 .DS_Store
+analytics/data/
