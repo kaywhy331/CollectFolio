@@ -1,6 +1,39 @@
 import { catalogReferenceForItem } from '../core/catalog-identity.js';
 import { deleteRecordWithTombstone, getAll, putRecordClearingTombstone } from '../core/db.js';
 import { canonicalMarketIdentity, canonicalRawMarketCondition } from '../core/market-series.js';
+import { normalizeQuery } from '../core/utils.js';
+
+// catalog-v2 B3: search now returns TCGCSV identities for the flagship
+// games (services/catalog.js's FLAGSHIP_GAMES), so a card watched via the
+// OLD provider-scoped search (pokemon/scryfall/ygoprodeck externalId) has a
+// watchKey the new TCGCSV-identified result can never reproduce -- the
+// `provider`/`externalId` segments differ even though it's the same
+// physical card. This is a deliberate last-resort hop (after the exact and
+// legacy-market-condition lookups both miss): a name+set+number+condition
+// match against an existing watch that still carries one of the old
+// secondary provider identities, so re-watching (or a background sync) of
+// the same card via the new search doesn't create a duplicate/orphaned
+// entry. Requires both name AND number to agree -- loose enough to bridge
+// the provider swap, tight enough not to cross two different cards.
+const LEGACY_SEARCH_PROVIDERS = Object.freeze(['pokemon', 'scryfall', 'ygoprodeck']);
+const loose = (value) => normalizeQuery(String(value ?? ''));
+
+export function legacyProviderWatchMatch(items = [], item = {}, options = {}) {
+  if (item?.provider !== 'tcgcsv') return null;
+  const name = loose(item.name);
+  const number = loose(item.number);
+  if (!name || !number) return null;
+  const setName = loose(item.setName);
+  const conditionClass = loose(options.conditionClass || item.rawConditionClass || item.conditionClass || 'raw');
+  return items.find((entry) => {
+    const ref = entry?.catalogRef || {};
+    return LEGACY_SEARCH_PROVIDERS.includes(ref.provider)
+      && loose(ref.conditionClass || 'raw') === conditionClass
+      && loose(ref.name) === name
+      && loose(ref.number) === number
+      && loose(ref.setName) === setName;
+  }) || null;
+}
 
 const nonNegativeOrBlank = (value) => value === '' || value === null || value === undefined
   ? ''
@@ -84,7 +117,7 @@ export function findWatchedItem(items = [], item, options) {
     marketCondition: ''
   });
   const legacy = items.find((entry) => entry.watchKey === legacyReference.watchKey);
-  if (legacy || reference.marketCondition) return legacy || null;
+  if (legacy || reference.marketCondition) return legacy || legacyProviderWatchMatch(items, item, options);
 
   return items
     .filter((entry) => catalogReferenceForItem(entry.catalogRef || {}, {
@@ -93,7 +126,8 @@ export function findWatchedItem(items = [], item, options) {
       marketCondition: ''
     }).watchKey === legacyReference.watchKey)
     .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''))
-      || String(left.watchKey || '').localeCompare(String(right.watchKey || '')))[0] || null;
+      || String(left.watchKey || '').localeCompare(String(right.watchKey || '')))[0]
+    || legacyProviderWatchMatch(items, item, options);
 }
 
 export function mergeWatchlistTombstones(...sets) {

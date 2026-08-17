@@ -81,8 +81,12 @@ function contextualFilters(category, filters = {}) {
   return `<label>Set / series<input name="setName" value="${value('setName')}" placeholder="Optional"></label><label>Card number<input name="number" value="${value('number')}" placeholder="Optional"></label><label>Variant / finish<input name="variant" value="${value('variant')}" placeholder="Foil, holofoil…"></label>`;
 }
 
+// catalog-v2 B3: Pokémon/Magic/Yu-Gi-Oh! now search the TCGCSV catalog
+// exclusively (services/catalog.js's FLAGSHIP_GAMES) -- the old
+// provider-specific "market" options never return a result for those
+// games anymore, so they're removed rather than left as dead choices.
 function providerOptions(selected) {
-  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>TCGCSV games · signed-in test</option><option value="pokemon" ${selected === 'pokemon' ? 'selected' : ''}>Pokémon market</option><option value="scryfall" ${selected === 'scryfall' ? 'selected' : ''}>Magic market</option><option value="ygoprodeck" ${selected === 'ygoprodeck' ? 'selected' : ''}>Yu-Gi-Oh! market</option>`;
+  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>TCGCSV games · signed-in test</option>`;
 }
 
 function pricingMarkup(model) {
