@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import test from 'node:test';
 
 import worker from '../cloudflare/tcgcsv-refresh/src/index.js';
@@ -504,4 +505,103 @@ test('community free access opens catalog reads without a session but keeps /v1 
     env
   );
   assert.equal(control.status, 401);
+});
+
+function forecastPayload(overrides = {}) {
+  return JSON.stringify({
+    modelVersion: 'trajectory-v1',
+    categoryId: 3,
+    groupId: 604,
+    part: 1,
+    partsTotal: 1,
+    variants: [{ productId: 1, subTypeName: 'Normal', confidence: 'standard' }],
+    ...overrides
+  });
+}
+
+test('serves a published forecast object with gzip content-encoding and public cache headers', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const gz = gzipSync(Buffer.from(forecastPayload()));
+  await env.TCGCSV_CURRENT.put('forecasts/3/604.json.gz', gz, {
+    httpMetadata: { contentType: 'application/json' }
+  });
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/forecasts/3/604'),
+    env
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), 'gzip');
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.match(response.headers.get('cache-control') ?? '', /public/);
+  // worker.fetch() here is an in-process call, not a real network hop --
+  // Content-Encoding decompression normally happens in the browser/edge
+  // network layer, which this harness bypasses, so we decode manually to
+  // confirm the header is honest about what's on the wire.
+  const raw = new Uint8Array(await response.arrayBuffer());
+  const body = JSON.parse(gunzipSync(raw).toString('utf-8'));
+  assert.equal(body.groupId, 604);
+});
+
+test('serves a multi-part forecast object addressed by its .partN suffix', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const gz = gzipSync(Buffer.from(forecastPayload({ groupId: 2374, part: 2, partsTotal: 3 })));
+  await env.TCGCSV_CURRENT.put('forecasts/3/2374.part2.json.gz', gz);
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/forecasts/3/2374.part2'),
+    env
+  );
+  assert.equal(response.status, 200);
+  const raw = new Uint8Array(await response.arrayBuffer());
+  const body = JSON.parse(gunzipSync(raw).toString('utf-8'));
+  assert.equal(body.part, 2);
+  assert.equal(body.partsTotal, 3);
+});
+
+test('returns 404 for an excluded cohort or unknown group -- both are simply absent from R2', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/forecasts/1/999999'),
+    env
+  );
+  assert.equal(response.status, 404);
+});
+
+test('serves the forecasts manifest without content-encoding', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const manifest = JSON.stringify({ modelVersion: 'trajectory-v1', categories: {} });
+  await env.TCGCSV_CURRENT.put('forecasts/manifest.json', Buffer.from(manifest), {
+    httpMetadata: { contentType: 'application/json' }
+  });
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/forecasts/manifest'),
+    env
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), null);
+  const body = await response.json();
+  assert.equal(body.modelVersion, 'trajectory-v1');
+});
+
+test('returns 404 when the forecasts manifest has not been published yet', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/forecasts/manifest'),
+    env
+  );
+  assert.equal(response.status, 404);
+});
+
+test('forecast routes require a session when community free access is not enabled', async () => {
+  const env = environment();
+  const gz = gzipSync(Buffer.from(forecastPayload()));
+  await env.TCGCSV_CURRENT.put('forecasts/3/604.json.gz', gz);
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/forecasts/3/604'),
+    env
+  );
+  assert.equal(response.status, 401);
 });

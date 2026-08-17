@@ -201,11 +201,30 @@ test('Insights renders actual and forecast values separately with an accessible 
   assert.match(html, /never added to current portfolio value/);
 });
 
-test('Insights keeps published forecasts fail closed while local scenarios remain available', () => {
-  const html = renderInsights(state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } }));
-  assert.match(html, /Local scenario outlook/);
+test('Insights keeps published forecasts fail closed while manual scenarios remain available for manual/custom holdings', () => {
+  // local-scenario-v1 is demoted to manual/custom items only (T6): a
+  // catalog-linked holding (provider 'pokemon', as the shared `item`
+  // fixture is) must show "unavailable", not a modeled range -- so this
+  // holding is overridden to a manual/custom provider to exercise the
+  // manual-scenario-still-available path this test is actually about.
+  const base = state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } });
+  const manualHolding = { ...base.holdings[0], item: { ...item, provider: 'custom' } };
+  const html = renderInsights({ ...base, holdings: [manualHolding] });
+  assert.match(html, /Manual scenario outlook/);
   assert.match(html, /Published market forecasts remain gated/);
   assert.match(html, /local-scenario-chart/);
   assert.doesNotMatch(html, /Approved forecast projection/);
   assert.doesNotMatch(html, /Probability of gain/);
+});
+
+test('local-scenario-v1 no longer produces a per-holding range for a catalog-linked holding', () => {
+  // The portfolio-wide "Manual scenario outlook" summary section is a
+  // static heading that always renders in the forecasts tab (T6 doesn't
+  // remove it) -- what must change is that a catalog-linked holding's own
+  // card shows the demotion reason instead of a modeled range, and that no
+  // observation from it is folded into the portfolio-wide range.
+  const html = renderInsights(state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } }));
+  assert.match(html, /does not apply to catalog-linked items/);
+  assert.doesNotMatch(html, /local-scenario-card/);
+  assert.match(html, /0 of 1 holdings/);
 });

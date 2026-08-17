@@ -156,6 +156,7 @@ from .tcgcsv import (
     TCGCSVResearchClient,
     TCGCSVResearchPacket,
     TCGCSVSnapshot,
+    assert_tcgcsv_community_free_access_terms,
     assert_tcgcsv_research_terms,
     build_tcgcsv_research_packet,
 )
@@ -250,6 +251,7 @@ __all__ = [
     "assert_justtcg_production_terms",
     "assess_research_scorecard",
     "assess_operator_packet",
+    "assert_tcgcsv_community_free_access_terms",
     "assert_tcgcsv_research_terms",
     "aggregate_source_policy_hash",
     "build_trend_snapshot",

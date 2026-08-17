@@ -41,6 +41,17 @@ export function localScenarioSubject(holding = {}) {
   return String(holding.id || holding.catalogKey || holding.canonicalVariantId || holding.catalogId || '').trim();
 }
 
+// Kevin's explicit rejection of +/-% bands demotes local-scenario-v1 to
+// manual/custom items only (T6, PRD Sec4): it must never present as a
+// price forecast for a catalog-linked item, which now has a real
+// published trajectory-v1 outlook to defer to instead. "Manual/custom"
+// mirrors views/holding-form.js's own isCatalogItem check -- a holding
+// counts as catalog-linked once it carries a non-'custom' provider.
+export function isManualScenarioSubject(holding = {}) {
+  const provider = String(holding?.item?.provider || '').trim().toLowerCase();
+  return !provider || provider === 'custom';
+}
+
 export function normalizeLocalObservations(records = [], { asOf = new Date() } = {}) {
   const asOfTime = new Date(asOf).valueOf();
   if (!Number.isFinite(asOfTime)) return [];
@@ -211,6 +222,15 @@ export function buildLocalScenario(records = [], horizon = 90, {
 }
 
 export function buildHoldingLocalScenario(holding = {}, observations = [], horizon = 90, options = {}) {
+  if (!isManualScenarioSubject(holding)) {
+    return {
+      kind: 'local-scenario', status: 'unavailable',
+      horizon: LOCAL_SCENARIO_HORIZONS.includes(Number(horizon)) ? Number(horizon) : 90,
+      observationCount: 0,
+      reason: 'Manual scenario is a manual/custom-item model; it does not apply to catalog-linked items.',
+      nextAction: 'Check this item’s published trajectory forecast instead.'
+    };
+  }
   const subjectId = localScenarioSubject(holding);
   const records = (Array.isArray(observations) ? observations : []).filter((entry) => entry?.subjectId === subjectId);
   if (!records.length) {

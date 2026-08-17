@@ -1164,6 +1164,67 @@ async function catalogSearch(request, env) {
   };
 }
 
+// T5: trajectory-v1 derived-forecast publication (community-free-access,
+// see analytics/manifests/tcgcsv-community-free-access-derived-forecasts.json).
+// Objects under forecasts/ are pre-filtered by the analytics publisher to
+// exactly the eligible (categoryId, groupId[, part]) set -- an excluded
+// cohort or an unknown product was simply never uploaded, so a plain R2
+// miss already gives the required "404 for non-eligible/unknown" behavior
+// with no extra eligibility bookkeeping needed here.
+const FORECAST_MANIFEST_KEY = 'forecasts/manifest.json';
+const MAX_FORECAST_MANIFEST_BYTES = 8 * 1024 * 1024;
+// T5's publisher targets <=128KiB gzip objects per part; this leaves
+// headroom for the documented (flagged, never-truncated) single-variant
+// oversized-part case without inviting an unbounded read.
+const MAX_FORECAST_OBJECT_BYTES = 256 * 1024;
+const FORECAST_ROUTE = /^\/catalog\/forecasts\/(\d+)\/(\d+(?:\.part\d+)?)$/;
+
+function forecastRouteIdentity(pathname) {
+  const match = FORECAST_ROUTE.exec(pathname);
+  if (!match) return null;
+  const categoryId = Number.parseInt(match[1], 10);
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0) return null;
+  return { categoryId, objectId: match[2] };
+}
+
+function forecastCacheHeaders(cors) {
+  const headers = new Headers(cors);
+  // Forecast objects are batch-published (T5 publisher runs), not
+  // continuously updated -- an hour of edge freshness plus a generous
+  // stale-while-revalidate window is sane for a public, immutable-per-run
+  // artifact set.
+  headers.set('cache-control', 'public, max-age=3600, stale-while-revalidate=86400');
+  headers.set('x-content-type-options', 'nosniff');
+  return headers;
+}
+
+export async function serveForecastManifest(env, cors) {
+  const object = await env.TCGCSV_CURRENT.get(FORECAST_MANIFEST_KEY);
+  if (!object || object.size <= 0 || object.size > MAX_FORECAST_MANIFEST_BYTES) {
+    return jsonResponse({ error: 'Forecast manifest was not found' }, { status: 404, headers: cors });
+  }
+  const headers = forecastCacheHeaders(cors);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  if (object.httpEtag) headers.set('etag', object.httpEtag);
+  return new Response(object.body, { status: 200, headers });
+}
+
+export async function serveForecastObject(env, identity, cors) {
+  const key = `forecasts/${identity.categoryId}/${identity.objectId}.json.gz`;
+  const object = await env.TCGCSV_CURRENT.get(key);
+  if (!object || object.size <= 0 || object.size > MAX_FORECAST_OBJECT_BYTES) {
+    return jsonResponse({ error: 'Forecast object was not found' }, { status: 404, headers: cors });
+  }
+  const headers = forecastCacheHeaders(cors);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  // The object is stored gzip-compressed; declaring it here (independent
+  // of whatever httpMetadata the T7 uploader set) lets fetch()/browsers
+  // transparently decompress it -- response.json() just works.
+  headers.set('content-encoding', 'gzip');
+  if (object.httpEtag) headers.set('etag', object.httpEtag);
+  return new Response(object.body, { status: 200, headers });
+}
+
 export async function serveCatalogData(request, env) {
   const url = new URL(request.url);
   if (request.method !== 'GET') throw new CatalogRequestError('Method not allowed', 405);
@@ -1187,6 +1248,19 @@ export async function handleCatalogRequest(request, env) {
   try {
     const user = await authenticateCatalogUser(request, env);
     if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401, headers: cors });
+
+    // Forecast routes return raw gzip/JSON bytes with their own cache
+    // headers -- they must bypass the generic jsonResponse(...) wrapping
+    // that every other /catalog/* route goes through.
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/catalog/forecasts/manifest') {
+      return serveForecastManifest(env, cors);
+    }
+    const forecastIdentity = forecastRouteIdentity(url.pathname);
+    if (request.method === 'GET' && forecastIdentity) {
+      return serveForecastObject(env, forecastIdentity, cors);
+    }
+
     return jsonResponse(await serveCatalogData(request, env), { headers: cors });
   } catch (error) {
     const status = error instanceof CatalogRequestError ? error.status : 500;

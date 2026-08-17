@@ -119,7 +119,7 @@ function forecastCoverage(state) {
     : 0;
   return scenario.coveredHoldings
     ? { count: scenario.coveredHoldings, label: `${scenario.coveredHoldings} of ${state.holdings.length}`, detail: `Local 90-day scenarios · ${published} published market outlook${published === 1 ? '' : 's'}.` }
-    : { count: 0, label: 'Needs values', detail: 'Add a current value to start local scenarios.' };
+    : { count: 0, label: 'Needs values', detail: 'Add a current value to start manual scenarios.' };
 }
 
 function attentionModule(state, coverage) {

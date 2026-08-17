@@ -646,6 +646,44 @@ def assert_tcgcsv_research_terms(terms: SourceTerms, at: datetime) -> None:
         raise PermissionError("current TCGCSV terms do not permit research ingestion")
 
 
+def assert_tcgcsv_community_free_access_terms(terms: SourceTerms, at: datetime) -> None:
+    """Gate for T5's derived-forecast PUBLICATION path only.
+
+    T1 (``assert_tcgcsv_research_terms`` above, UNCHANGED by this function)
+    intentionally bars TCGCSV from every public/commercial permission for the
+    raw research-ingestion pipeline -- that stays exactly as it was.
+
+    This is a tracked, deliberate deviation for a narrower, separate use
+    case: Kevin's community-free-access decision, deferred from T1, that our
+    OWN derived forecast statistics (component-weight predictions computed
+    on top of TCGCSV pricing, never TCGCSV's raw price data itself) may be
+    published publicly and free of charge. It requires its own explicit,
+    separately-reviewed ``SourceTerms`` record -- see
+    ``analytics/manifests/tcgcsv-community-free-access-derived-forecasts.json``
+    for the record and its rationale. Raw price display and catalog metadata
+    remain unpublishable under this record; only derived forecasts are in
+    scope.
+    """
+
+    if not isinstance(terms, SourceTerms):
+        raise ValueError("terms must be SourceTerms")
+    if terms.decision != "approved":
+        raise PermissionError(
+            "community-free-access derived-forecast publication requires an approved SourceTerms review"
+        )
+    if terms.catalog_metadata_allowed or terms.public_raw_display_allowed:
+        raise PermissionError(
+            "community-free-access terms must not grant public raw-price or catalog-metadata display -- "
+            "only derived forecast statistics are in scope for T5 publication"
+        )
+    if not terms.commercial_use_allowed or not terms.public_derived_display_allowed:
+        raise PermissionError(
+            "community-free-access terms must explicitly allow public derived-feature display"
+        )
+    if not terms.permits_public_usage("derived_feature", at):
+        raise PermissionError("current community-free-access terms do not permit derived-forecast publication")
+
+
 @dataclass(frozen=True, slots=True)
 class TCGCSVResearchPacket:
     snapshot_hash: str
