@@ -1,0 +1,28 @@
+{
+  "categoryId": 2,
+  "contractVersion": "catalog-bridge-v1",
+  "generatedAt": "2026-08-17T23:35:56.227417+00:00",
+  "matchRates": {
+    "product_by_method": {
+      "collector-number": 38512
+    },
+    "product_matched": 38512,
+    "product_total": 43842,
+    "product_unmatched_by_reason": {
+      "ambiguous": 2562,
+      "no-candidate": 2768
+    },
+    "set_by_method": {
+      "abbreviation-exact": 134,
+      "name-exact": 407,
+      "name-similarity": 15
+    },
+    "set_matched": 556,
+    "set_total": 658,
+    "set_unmatched_by_reason": {
+      "ambiguous": 36,
+      "no-candidate": 66
+    }
+  },
+  "provider": "ygoprodeck"
+}

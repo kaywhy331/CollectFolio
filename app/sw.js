@@ -22,6 +22,7 @@ const SHELL = [
   './assets/js/services/scan-review.js', './assets/js/services/visual-index.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
   './assets/js/services/price-intelligence.js',
   './assets/js/services/forecast-trajectory.js',
+  './assets/js/services/catalog-enrichment.js',
   './assets/js/services/justtcg-refresh.js',
   './assets/js/services/tcgcsv-refresh-status.js',
   './assets/js/services/demand-events.js',

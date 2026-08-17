@@ -27,6 +27,7 @@ import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets,
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { getTrajectoryForecastForItem, trajectoryKeyForItem } from './services/forecast-trajectory.js';
+import { applyEnrichmentToItem, getEnrichmentForItem } from './services/catalog-enrichment.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
 import { fetchTcgcsvRefreshStatus } from './services/tcgcsv-refresh-status.js';
 import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
@@ -424,6 +425,29 @@ function watchedItemForRoute(items = [], entityId = '') {
   return matches.length === 1 ? matches[0] : null;
 }
 
+// catalog-v2 B2: lazily enrich the currently-shown detail item with
+// provider display data (better image, card text) once the detail view
+// is actually open -- never during list/browse hydration (API etiquette).
+// Fail-closed: any failure or no-match leaves the item exactly as TCGCSV
+// rendered it; caches by categoryId/provider card under the hood, so
+// repeat navigations to the same detail are cheap.
+async function scheduleCatalogEnrichment(item) {
+  if (item?.provider !== 'tcgcsv') return;
+  const enrichment = await getEnrichmentForItem(item).catch(() => null);
+  if (!enrichment || activeDetail?.item !== item) return;
+  const enrichedItem = applyEnrichmentToItem(item, enrichment, { preferProviderImage: true });
+  activeDetail = {
+    ...activeDetail,
+    item: enrichedItem,
+    catalogRef: catalogReferenceForItem(enrichedItem, {
+      canonicalVariantId: activeDetail.watched?.canonicalVariantId,
+      conditionClass: activeDetail.watched?.catalogRef?.conditionClass,
+      marketCondition: activeDetail.watched?.marketCondition
+    })
+  };
+  render();
+}
+
 async function hydrateCardRoute(route) {
   const hydrationId = ++routeHydrationId;
   if (route.key !== 'card-detail') return;
@@ -446,6 +470,7 @@ async function hydrateCardRoute(route) {
       })
     };
     render();
+    scheduleCatalogEnrichment(item);
   } catch (error) {
     if (hydrationId !== routeHydrationId || activeRoute.canonicalPath !== route.canonicalPath) return;
     activeDetail = { origin: route.origin || 'search', error: error.message || 'The shared card could not be loaded.', catalogRef: null };
@@ -461,6 +486,7 @@ function resolveRouteContext(route, state = getState()) {
       conditionClass: holding.grade ? 'graded' : 'raw',
       marketCondition: watchMarketConditionForHolding(holding)
     }) } : null;
+    if (activeDetail?.item) scheduleCatalogEnrichment(activeDetail.item);
   } else if (route.key === 'card-detail') {
     const item = state.search.results.find((entry) => routeItemIdentifiers(entry).has(route.entityId));
     const watched = watchedItemForRoute(state.watchlistItems, route.entityId);
@@ -475,6 +501,7 @@ function resolveRouteContext(route, state = getState()) {
         marketCondition: watched?.marketCondition
       })
     } : null;
+    if (activeDetail?.item) scheduleCatalogEnrichment(activeDetail.item);
   } else {
     activeDetail = null;
   }
