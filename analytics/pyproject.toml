@@ -18,6 +18,7 @@ collectfolio-cardbase-history = "collectfolio_analytics.cardbase_history_cli:mai
 collectfolio-tcgcsv-universe = "collectfolio_analytics.tcgcsv_universe_cli:main"
 collectfolio-tcgcsv-web-catalog = "collectfolio_analytics.tcgcsv_web_catalog_cli:main"
 collectfolio-tcgcsv-panel = "collectfolio_analytics.tcgcsv_panel_cli:main"
+collectfolio-trajectory = "collectfolio_analytics.trajectory_cli:main"
 collectfolio-structural-gap-lab = "collectfolio_analytics.structural_gap_cli:main"
 
 [tool.collectfolio]
