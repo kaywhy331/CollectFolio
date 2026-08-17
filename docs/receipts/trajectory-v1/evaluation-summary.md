@@ -77,10 +77,10 @@ with conformal offsets calibrated from TRAINING origins only -- see
 - Category 3: metrics are computed on a deterministic 20000-of-46331 variant sample (deterministic N-of-M variant sample: every (productId, subTypeName) key is ranked by sha256(f'{productId}|{subTypeName}')'s hex digest (ties broken by the key itself), and the first N in that ranking are kept -- order-independent (depends only on the key set, not on load order) and exactly reproducible.).
 - Category 85: metrics are computed on a deterministic 20000-of-32365 variant sample (deterministic N-of-M variant sample: every (productId, subTypeName) key is ranked by sha256(f'{productId}|{subTypeName}')'s hex digest (ties broken by the key itself), and the first N in that ranking are kept -- order-independent (depends only on the key set, not on load order) and exactly reproducible.).
 
-## Near-miss notes (informational -- not enabled)
+## Near-miss notes (informational; ENABLED entries are explicitly reviewed serving decisions)
 
-- Category 1, standard cohort: passes 90d only (30d fails) -- flagged for Kevin as a possible future 90d-only serving mode; NOT enabled.
-- Category 2, standard cohort: passes 90d only (30d fails) -- flagged for Kevin as a possible future 90d-only serving mode; NOT enabled.
+- Category 1, standard cohort: passes 90d only (30d fails) -- ENABLED 2026-08-17 as 90d-only serving mode per Kevin's 'forecasts should be for all products' directive.
+- Category 2, standard cohort: passes 90d only (30d fails) -- ENABLED 2026-08-17 as 90d-only serving mode per Kevin's 'forecasts should be for all products' directive.
 
 cold-start: unevaluable by construction (no walk-forward truth exists for variants
 with zero observed prices anywhere in the panel) -- serve only with explicit

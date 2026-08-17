@@ -60,7 +60,7 @@ from .hedonic_features import (
     cold_start_candidates,
     load_or_fetch_products_metadata,
 )
-from .forecast_publisher import DEFAULT_MAX_OBJECT_BYTES, publish_forecasts
+from .forecast_publisher import DEFAULT_MAX_OBJECT_BYTES, NINETY_DAY_ONLY_OVERRIDE, publish_forecasts
 from .indices import IndexSet, build_indices
 from .lifecycle import (
     GROUPS_CACHE_FILENAME,
@@ -683,7 +683,7 @@ def _render_component_weights_summary_markdown(category_rows: list[dict]) -> str
     near_miss_lines = _near_miss_notes(category_rows)
     lines += [
         "",
-        "## Near-miss notes (informational -- not enabled)",
+        "## Near-miss notes (informational; ENABLED entries are explicitly reviewed serving decisions)",
         "",
     ]
     if near_miss_lines:
@@ -703,9 +703,14 @@ def _render_component_weights_summary_markdown(category_rows: list[dict]) -> str
 
 def _near_miss_notes(category_rows: list[dict]) -> list[str]:
     """Flag (category, cohort) pairs where a later horizon passes the
-    holdout gate but an earlier one does not -- informational only, not a
-    serving decision. E.g. standard cohort passes 90d but not 30d: surfaced
-    for Kevin as a possible future 90d-only serving mode, NOT enabled."""
+    holdout gate but an earlier one does not -- informational, and NOT a
+    serving decision by itself. E.g. standard cohort passes 90d but not
+    30d: surfaced for Kevin as a possible 90d-only serving mode. Most such
+    near-misses stay unenabled; the ones explicitly activated by Kevin are
+    tracked separately in forecast_publisher.NINETY_DAY_ONLY_OVERRIDE and
+    are annotated ENABLED below (see publish-forecasts-receipt.json's
+    ninetyDayOnlyServingMode for the authoritative "is it currently being
+    served" record)."""
 
     notes = []
     for row in category_rows:
@@ -720,11 +725,18 @@ def _near_miss_notes(category_rows: list[dict]) -> list[str]:
             passing_later = [h for h in horizons[1:] if by_horizon[h]["passes"]]
             if passing_later and not by_horizon[earliest]["passes"]:
                 later_label = "/".join(f"{h}d" for h in passing_later)
-                notes.append(
-                    f"- Category {row['categoryId']}, {cohort} cohort: passes {later_label} only "
-                    f"({earliest}d fails) -- flagged for Kevin as a possible future "
-                    f"{later_label}-only serving mode; NOT enabled."
-                )
+                if (row["categoryId"], cohort) in NINETY_DAY_ONLY_OVERRIDE:
+                    notes.append(
+                        f"- Category {row['categoryId']}, {cohort} cohort: passes {later_label} only "
+                        f"({earliest}d fails) -- ENABLED 2026-08-17 as {later_label}-only serving "
+                        f"mode per Kevin's 'forecasts should be for all products' directive."
+                    )
+                else:
+                    notes.append(
+                        f"- Category {row['categoryId']}, {cohort} cohort: passes {later_label} only "
+                        f"({earliest}d fails) -- flagged for Kevin as a possible future "
+                        f"{later_label}-only serving mode; NOT enabled."
+                    )
     return notes
 
 
@@ -963,6 +975,16 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
         "maxObjectBytes": manifest["maxObjectBytes"],
         "manifestContentHash": manifest["manifestContentHash"],
         "sourceTerms": manifest["sourceTerms"],
+        # T5 90d-only serving mode: Kevin's 2026-08-17 "forecasts should be
+        # for all products" directive enabled the near-miss the T4 gate's
+        # own notes had already flagged as informational-only (category 1
+        # Magic / category 2 Yu-Gi-Oh standard cohort passes the holdout
+        # gate at 90 days but not 30). See forecast_publisher.NINETY_DAY_ONLY_OVERRIDE.
+        "ninetyDayOnlyServingMode": {
+            "enabledBy": "Kevin, 2026-08-17 'forecasts should be for all products' directive",
+            "cohorts": manifest["ninetyDayOnlyCohorts"],
+        },
+        "servedHorizonsByCategory": manifest["servedHorizonsByCategory"],
         "categories": {
             category_id: {
                 "totalVariants": row["totalVariants"],
@@ -973,6 +995,7 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
                 "excludedByCohort": row["excludedByCohort"],
                 "objectsWritten": row["objectsWritten"],
                 "lastKnownDateRange": row["lastKnownDateRange"],
+                "servedHorizonsByCohort": row["servedHorizonsByCohort"],
             }
             for category_id, row in manifest["categories"].items()
         },

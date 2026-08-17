@@ -40,6 +40,22 @@ DEFAULT_MAX_OBJECT_BYTES = 128 * 1024
 # independent of any category/cohort gate outcome.
 COLD_START_CONFIDENCE = "cold-start"
 
+# T5 90d-only serving mode. Kevin's 2026-08-17 "forecasts should be for all
+# products" directive activates a near-miss the T4 gate itself had already
+# flagged as informational-only (see trajectory_cli._near_miss_notes /
+# evaluation-summary.md "Near-miss notes"): category 1 (Magic) and category 2
+# (Yu-Gi-Oh) standard-cohort packets pass the holdout gate at 90 days but not
+# at 30. This is a narrowly scoped, explicitly reviewed allowlist -- never an
+# automatic "any near miss ships" policy -- and every (category, cohort) pair
+# on it still has its 90-day pass independently re-checked against the
+# evaluation data at publish time (see eligible_horizons); it is never
+# trusted blindly. 30d for these two stays "not enough evidence" in the app,
+# never a fabricated value.
+NINETY_DAY_ONLY_OVERRIDE: frozenset[tuple[int, str]] = frozenset({
+    (1, "standard"),
+    (2, "standard"),
+})
+
 
 # ---------------------------------------------------------------------------
 # SourceTerms manifest loading (mirrors cardbase_history_cli.py's pattern).
@@ -152,6 +168,51 @@ def is_packet_eligible(
     if confidence == COLD_START_CONFIDENCE:
         return True
     return bool(serving_eligibility.get(category_id, {}).get(confidence, False))
+
+
+def load_serving_eligibility_by_horizon(evaluation_summary_path: Path) -> dict[int, dict[str, dict[int, bool]]]:
+    """{categoryId: {cohort: {horizonDays: servingEligible}}} from T4's
+    merged evaluation-summary.json (``categories[].gate.results``), the
+    same per-(cohort, horizon) pass/fail data the near-miss notes are built
+    from. Fail-closed: any (category, cohort, horizon) not present is NOT
+    eligible."""
+
+    payload = json.loads(Path(evaluation_summary_path).read_text(encoding="utf-8"))
+    by_category: dict[int, dict[str, dict[int, bool]]] = {}
+    for row in payload.get("categories", []):
+        category_id = int(row["categoryId"])
+        by_cohort: dict[str, dict[int, bool]] = {}
+        for result in row.get("gate", {}).get("results", []):
+            by_cohort.setdefault(str(result["cohort"]), {})[int(result["horizonDays"])] = bool(
+                result.get("servingEligible", False)
+            )
+        by_category[category_id] = by_cohort
+    return by_category
+
+
+def eligible_horizons(
+    category_id: int,
+    confidence: str,
+    serving_eligibility: Mapping[int, Mapping[str, bool]],
+    serving_eligibility_by_horizon: Mapping[int, Mapping[str, Mapping[int, bool]]],
+) -> tuple[int, ...]:
+    """Which of trajectory-v1's {30, 90} horizons this (category, cohort)
+    may serve. Cold-start serves both, always (PRD Sec4 hard criterion 3b).
+    A cohort that clears the gate at both horizons serves both. Otherwise,
+    only a curated (category, cohort) on NINETY_DAY_ONLY_OVERRIDE -- and
+    only once its 90-day pass is independently re-confirmed here -- serves
+    90d alone. Everything else serves nothing: the app must render "not
+    enough evidence" for that packet rather than a fabricated value."""
+
+    if confidence == COLD_START_CONFIDENCE:
+        return (30, 90)
+    if is_packet_eligible(category_id, confidence, serving_eligibility):
+        return (30, 90)
+    if (category_id, confidence) in NINETY_DAY_ONLY_OVERRIDE:
+        by_horizon = serving_eligibility_by_horizon.get(category_id, {}).get(confidence, {})
+        if by_horizon.get(90, False):
+            return (90,)
+    return ()
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +413,7 @@ def publish_category(
     staging_root: Path,
     *,
     max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES,
+    serving_eligibility_by_horizon: Mapping[int, Mapping[str, Mapping[int, bool]]] | None = None,
 ) -> dict:
     """Stream one category's packets.jsonl.gz, apply the fail-closed
     eligibility filter, group survivors by groupId, slice each group into
@@ -359,21 +421,41 @@ def publish_category(
     category's manifest contribution (every group present -- published or
     excluded -- so the app can tell "excluded cohort" from "unknown
     product": a groupId simply absent from the manifest never existed in
-    this category's panel at all)."""
+    this category's panel at all).
 
+    A packet whose cohort clears the gate at only one horizon (currently
+    only category 1/2 "standard" via NINETY_DAY_ONLY_OVERRIDE) is still
+    included, but with the failing horizon's key stripped from its
+    ``horizons`` object -- never a fabricated value for that horizon, and
+    the app's existing "missing horizon -> not enough evidence" rendering
+    already covers the gap with no display-side change required."""
+
+    serving_eligibility_by_horizon = serving_eligibility_by_horizon or {}
     by_group: dict[int, list[Mapping[str, object]]] = {}
     all_group_ids: set[int] = set()
     total_variants = 0
     excluded_by_cohort: dict[str, int] = {}
     last_known_dates: list[str] = []
+    served_horizons_by_cohort: dict[str, set[int]] = {}
 
     for packet in _iter_category_packets(packets_path):
         total_variants += 1
         group_id = int(packet["groupId"])
         all_group_ids.add(group_id)
         confidence = str(packet["confidence"])
-        if is_packet_eligible(category_id, confidence, serving_eligibility):
-            by_group.setdefault(group_id, []).append(packet)
+        horizons = eligible_horizons(category_id, confidence, serving_eligibility, serving_eligibility_by_horizon)
+        if horizons:
+            served_horizons_by_cohort.setdefault(confidence, set()).update(horizons)
+            served_packet = packet
+            packet_horizon_keys = set(packet.get("horizons") or {})
+            if packet_horizon_keys - {str(h) for h in horizons}:
+                served_packet = {
+                    **packet,
+                    "horizons": {
+                        key: band for key, band in packet["horizons"].items() if int(key) in horizons
+                    },
+                }
+            by_group.setdefault(group_id, []).append(served_packet)
             last_known_date = packet["lastKnownDate"]
             if last_known_date is not None:
                 # cold-start packets carry no observed price history, so
@@ -434,6 +516,9 @@ def publish_category(
             "earliest": min(last_known_dates) if last_known_dates else None,
             "latest": max(last_known_dates) if last_known_dates else None,
         },
+        "servedHorizonsByCohort": {
+            cohort: sorted(horizons) for cohort, horizons in sorted(served_horizons_by_cohort.items())
+        },
         "groups": groups_manifest,
     }
 
@@ -461,6 +546,7 @@ def publish_forecasts(
     assert_tcgcsv_community_free_access_terms(terms, instant)
 
     serving_eligibility = load_serving_eligibility(Path(evaluation_summary_path))
+    serving_eligibility_by_horizon = load_serving_eligibility_by_horizon(Path(evaluation_summary_path))
 
     packets_dir = Path(packets_dir)
     if category_ids is None:
@@ -481,6 +567,7 @@ def publish_forecasts(
             publish_category(
                 category_id, packets_path, serving_eligibility, staging_root,
                 max_object_bytes=max_object_bytes,
+                serving_eligibility_by_horizon=serving_eligibility_by_horizon,
             )
         )
 
@@ -510,6 +597,19 @@ def publish_forecasts(
             }
             for category_id, cohorts in serving_eligibility.items()
         },
+        # Per-(category, cohort) list of horizon days actually served,
+        # straight from what publish_category served (not merely gate
+        # eligibility) -- covers both full-eligibility {30, 90} cohorts and
+        # the curated 90d-only NINETY_DAY_ONLY_OVERRIDE cohorts (cat 1/2
+        # "standard", enabled by Kevin's 2026-08-17 "all products"
+        # directive). A cohort/category pair with no eligible horizon at
+        # all is simply absent.
+        "servedHorizonsByCategory": {
+            str(row["categoryId"]): row["servedHorizonsByCohort"] for row in category_rows
+        },
+        "ninetyDayOnlyCohorts": [
+            f"{category_id}:{cohort}" for category_id, cohort in sorted(NINETY_DAY_ONLY_OVERRIDE)
+        ],
         "lastKnownDateRange": {
             "earliest": min(all_dates) if all_dates else None,
             "latest": max(all_dates) if all_dates else None,

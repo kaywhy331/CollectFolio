@@ -15,14 +15,18 @@ async function skipOnboarding(page) {
   }
 }
 
-// Three TCGCSV products in the same category (3 = Pokemon) but three
-// different groups, one per T6 display state: 100 = published/standard,
+// Four TCGCSV products in the same category (3 = Pokemon) but four
+// different groups, one per display state: 100 = published/standard,
 // 101 = published/cold-start, 102 = excluded (collapses to the same
-// "insufficient evidence" honest state as an unrecognized/unknown group).
+// "insufficient evidence" honest state as an unrecognized/unknown group),
+// 103 = published/standard but 90d-only serving mode (forecast-display-
+// everywhere: the T5 publisher stripped the 30d horizon because only the
+// 90d horizon passed the T4 holdout gate for this category/cohort).
 const PRODUCTS = [
   { categoryId: 3, groupId: 100, productId: 5001, name: 'Trajectory Eligible Card', subtypeName: 'Holofoil', marketPrice: 120 },
   { categoryId: 3, groupId: 101, productId: 5002, name: 'Trajectory Cold Start Card', subtypeName: 'Holofoil', marketPrice: 80 },
-  { categoryId: 3, groupId: 102, productId: 5003, name: 'Trajectory Excluded Card', subtypeName: 'Holofoil', marketPrice: 40 }
+  { categoryId: 3, groupId: 102, productId: 5003, name: 'Trajectory Excluded Card', subtypeName: 'Holofoil', marketPrice: 40 },
+  { categoryId: 3, groupId: 103, productId: 5004, name: 'Trajectory 90d Only Card', subtypeName: 'Holofoil', marketPrice: 60 }
 ];
 
 function tcgcsvSearchProduct(product) {
@@ -46,7 +50,8 @@ function manifestPayload() {
         groups: {
           100: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/100.json.gz' }] },
           101: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/101.json.gz' }] },
-          102: { status: 'excluded', reason: 'insufficient variants' }
+          102: { status: 'excluded', reason: 'insufficient variants' },
+          103: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/103.json.gz' }] }
         }
       }
     }
@@ -94,6 +99,29 @@ function groupPayload(groupId) {
       }]
     };
   }
+  if (groupId === 103) {
+    // forecast-display-everywhere: 90d-only serving mode. The publisher
+    // strips this packet's horizons object down to just "90" -- the app
+    // must render only the 3-month estimate and never fabricate a 30-day
+    // one that was never published.
+    return {
+      asOf: '2026-08-10',
+      modelVersion: 'trajectory-v1',
+      part: 1,
+      partsTotal: 1,
+      variants: [{
+        productId: 5004,
+        subTypeName: 'Holofoil',
+        confidence: 'standard',
+        lastKnownPrice: 60,
+        lastKnownDate: '2026-08-10',
+        medianPath: [{ date: '2026-08-10', price: 60 }, { date: '2026-11-08', price: 66 }],
+        horizons: {
+          90: { q10: 50, q25: 58, q50: 66, q75: 74, q90: 82 }
+        }
+      }]
+    };
+  }
   return { asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] };
 }
 
@@ -106,21 +134,20 @@ async function configureTrajectoryStubs(page) {
       APP_VERSION: '0.8.0-test',
       TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
       ENABLE_TESSERACT: false,
-      ENABLE_PRICE_INTELLIGENCE: true,
+      ENABLE_PRICE_INTELLIGENCE: false,
       ENABLE_CLOUD_DATA_REMOVAL: false
     });`
   }));
 
-  // Supabase stub: only used here to flip on the publicPriceIntelligence
-  // feature flag (product_feature_flags) and return no other published
-  // intelligence -- the trajectory-v1 packets below are what drive display.
+  // Supabase stub: deliberately does NOT enable public_price_intelligence
+  // (forecast-display-everywhere: trajectory-v1 forecasts are decoupled
+  // from that Supabase rights gate and must render from their own
+  // default-enabled trajectoryForecasts flag). This proves the fix -- the
+  // trajectory-v1 packets below are what drive display, not this stub.
   await page.route('**/__trajectory-cloud/**', (route) => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/product_feature_flags')) {
-      return route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify([{ key: 'public_price_intelligence', enabled: true, updated_at: '2026-08-01T00:00:00Z' }])
-      });
+      return route.fulfill({ contentType: 'application/json', body: '[]' });
     }
     return route.fulfill({ contentType: 'application/json', body: '[]' });
   });
@@ -144,6 +171,10 @@ async function configureTrajectoryStubs(page) {
     contentType: 'application/json',
     body: JSON.stringify(groupPayload(101))
   }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/forecasts/3/103**`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify(groupPayload(103))
+  }));
 }
 
 async function runSearch(page) {
@@ -153,10 +184,12 @@ async function runSearch(page) {
   const eligibleCard = page.locator('.result-card', { hasText: 'Trajectory Eligible Card' });
   const coldStartCard = page.locator('.result-card', { hasText: 'Trajectory Cold Start Card' });
   const excludedCard = page.locator('.result-card', { hasText: 'Trajectory Excluded Card' });
+  const ninetyDayOnlyCard = page.locator('.result-card', { hasText: 'Trajectory 90d Only Card' });
   await expect(eligibleCard).toBeVisible();
   await expect(coldStartCard).toBeVisible();
   await expect(excludedCard).toBeVisible();
-  return { eligibleCard, coldStartCard, excludedCard };
+  await expect(ninetyDayOnlyCard).toBeVisible();
+  return { eligibleCard, coldStartCard, excludedCard, ninetyDayOnlyCard };
 }
 
 test('trajectory-v1 forecasts render the three fail-closed display states from a stubbed worker response', async ({ page }) => {
@@ -206,4 +239,30 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   await expect(page.getByText('Insufficient evidence for a price forecast')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toHaveCount(0);
   await expect(page.getByText('Manual scenario outlook')).toHaveCount(0);
+});
+
+test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, never a fabricated 30-day estimate', async ({ page }) => {
+  // forecast-display-everywhere: categories 1/2 standard cohort are served
+  // 90d-only (the T4 holdout gate only passed the 90-day horizon), and
+  // this must render as an honestly-partial forecast, not a fabricated
+  // 30-day block. The Supabase public_price_intelligence flag is off in
+  // this stub (see configureTrajectoryStubs) -- trajectory-v1 forecasts
+  // must still render because they're gated by their own default-enabled
+  // trajectoryForecasts flag, decoupled from that Supabase rights gate.
+  await configureTrajectoryStubs(page);
+  await skipOnboarding(page);
+
+  const { ninetyDayOnlyCard } = await runSearch(page);
+
+  await expect(ninetyDayOnlyCard.locator('.result-market-outlook')).toBeVisible();
+  await expect(ninetyDayOnlyCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toBeVisible();
+
+  await ninetyDayOnlyCard.click();
+  await page.getByRole('button', { name: 'Open full details' }).click();
+  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toBeVisible();
+  await expect(page.getByText('90-day outlook')).toBeVisible();
+  await expect(page.getByText('30-day outlook')).toHaveCount(0);
+  await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 });
