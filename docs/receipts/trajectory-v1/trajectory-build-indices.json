@@ -5,17 +5,26 @@
     "lifecycleCurve": "analytics/data/trajectory/lifecycle_curve.json.gz"
   },
   "categoryIds": [
+    1,
+    2,
+    3,
     85
   ],
-  "generatedAt": "2026-08-17T04:46:55.532476+00:00",
+  "generatedAt": "2026-08-17T04:53:54.748489+00:00",
   "groupsMetadataContentHash": "4aa2e409ff9f7ef2ec15b9aaeb4cce5053a1eaa82c8757d720a136d64e67bd7d",
   "groupsMetadataCount": 455,
   "indexSet": {
     "categoryIds": [
+      1,
+      2,
+      3,
       85
     ],
     "categoryIndexFinal": {
-      "85": 0.0
+      "1": 0.016269876606381784,
+      "2": -0.1435624446377759,
+      "3": 0.28113493369879633,
+      "85": -0.16712368532814978
     },
     "dates": [
       "2025-02-01",
@@ -99,17 +108,23 @@
       "2026-08-01",
       "2026-08-08"
     ],
-    "groupCount": 442,
-    "marketIndexFinal": -0.019827247080584615,
+    "groupCount": 1712,
+    "marketIndexFinal": 0.14729643824756516,
     "rowCounts": {
+      "1": 12067018,
+      "2": 4655394,
+      "3": 3421733,
       "85": 1744886
     },
     "variantCounts": {
+      "1": 161875,
+      "2": 61117,
+      "3": 46418,
       "85": 32370
     }
   },
   "lifecycleCurvePoints": 260,
   "modelVersion": "trajectory-v1",
-  "peakRssBytes": 44527616,
-  "wallClockSeconds": 14.464
+  "peakRssBytes": 176500736,
+  "wallClockSeconds": 205.513
 }

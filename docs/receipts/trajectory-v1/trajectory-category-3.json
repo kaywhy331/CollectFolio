@@ -1,0 +1,25 @@
+{
+  "categoryId": 3,
+  "contentHash": "fbf03e04224f260f29697f1f29c0a3a5d2d8f7c3d4b440819b65c9576f699659",
+  "datesCovered": 80,
+  "generatedAt": "2026-08-17T04:58:26.485706+00:00",
+  "modelVersion": "trajectory-v1",
+  "outputPath": "analytics/data/trajectory/packets/category-3/packets.jsonl.gz",
+  "packetBytes": 9549498,
+  "packetRowCount": 46331,
+  "peakRssBytes": 133046272,
+  "poolSizes": {
+    "high:13": 67537,
+    "high:4": 68498,
+    "low:13": 70196,
+    "low:4": 70955,
+    "mid:13": 74616,
+    "mid:4": 74904
+  },
+  "rejects": {
+    "crossed_quantiles_rearranged": 0,
+    "no_history": 0
+  },
+  "variantCount": 46331,
+  "wallClockSeconds": 47.719
+}

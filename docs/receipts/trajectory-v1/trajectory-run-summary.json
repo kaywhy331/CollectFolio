@@ -1,38 +1,116 @@
 {
   "categories": [
     {
-      "categoryId": 85,
-      "contentHash": "f982e102518c4438fb112b2bc4470cc7ff27e9797d60b965d08ae2e7f6349bea",
+      "categoryId": 1,
+      "contentHash": "9b84a3b8b8af268238769b02dc04529d4af6a7fc85ccc59b2ea2cd1ecc165890",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T04:47:28.851968+00:00",
+      "generatedAt": "2026-08-17T04:56:37.023284+00:00",
+      "modelVersion": "trajectory-v1",
+      "outputPath": "analytics/data/trajectory/packets/category-1/packets.jsonl.gz",
+      "packetBytes": 32294837,
+      "packetRowCount": 161852,
+      "peakRssBytes": 389062656,
+      "poolSizes": {
+        "high:13": 229766,
+        "high:4": 233771,
+        "low:13": 263378,
+        "low:4": 263809,
+        "mid:13": 261387,
+        "mid:4": 261983
+      },
+      "rejects": {
+        "crossed_quantiles_rearranged": 0,
+        "no_history": 0
+      },
+      "variantCount": 161852,
+      "wallClockSeconds": 161.814
+    },
+    {
+      "categoryId": 2,
+      "contentHash": "b41099b6be0fd6dac0c1f15ced0d1f6c3e40a818a9a395b972f9bef3deb4d39f",
+      "datesCovered": 80,
+      "generatedAt": "2026-08-17T04:57:38.402333+00:00",
+      "modelVersion": "trajectory-v1",
+      "outputPath": "analytics/data/trajectory/packets/category-2/packets.jsonl.gz",
+      "packetBytes": 12079137,
+      "packetRowCount": 61113,
+      "peakRssBytes": 168599552,
+      "poolSizes": {
+        "high:13": 91115,
+        "high:4": 92111,
+        "low:13": 98920,
+        "low:4": 99182,
+        "mid:13": 100749,
+        "mid:4": 100883
+      },
+      "rejects": {
+        "crossed_quantiles_rearranged": 0,
+        "no_history": 0
+      },
+      "variantCount": 61113,
+      "wallClockSeconds": 61.002
+    },
+    {
+      "categoryId": 3,
+      "contentHash": "fbf03e04224f260f29697f1f29c0a3a5d2d8f7c3d4b440819b65c9576f699659",
+      "datesCovered": 80,
+      "generatedAt": "2026-08-17T04:58:26.485706+00:00",
+      "modelVersion": "trajectory-v1",
+      "outputPath": "analytics/data/trajectory/packets/category-3/packets.jsonl.gz",
+      "packetBytes": 9549498,
+      "packetRowCount": 46331,
+      "peakRssBytes": 133046272,
+      "poolSizes": {
+        "high:13": 67537,
+        "high:4": 68498,
+        "low:13": 70196,
+        "low:4": 70955,
+        "mid:13": 74616,
+        "mid:4": 74904
+      },
+      "rejects": {
+        "crossed_quantiles_rearranged": 0,
+        "no_history": 0
+      },
+      "variantCount": 46331,
+      "wallClockSeconds": 47.719
+    },
+    {
+      "categoryId": 85,
+      "contentHash": "8c4a0acdf99f50a3f74f8f1b442915c382bfaae4483ecafca104362b9ccf7355",
+      "datesCovered": 80,
+      "generatedAt": "2026-08-17T04:58:55.591035+00:00",
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-85/packets.jsonl.gz",
-      "packetBytes": 6614351,
+      "packetBytes": 6615897,
       "packetRowCount": 32365,
-      "peakRssBytes": 90927104,
+      "peakRssBytes": 92327936,
       "poolSizes": {
         "high:13": 42733,
         "high:4": 43905,
-        "low:13": 30151,
-        "low:4": 32034,
-        "mid:13": 31336,
-        "mid:4": 32441
+        "low:13": 27671,
+        "low:4": 29439,
+        "mid:13": 33816,
+        "mid:4": 35036
       },
       "rejects": {
         "crossed_quantiles_rearranged": 0,
         "no_history": 0
       },
       "variantCount": 32365,
-      "wallClockSeconds": 28.505
+      "wallClockSeconds": 28.766
     }
   ],
   "categoryIds": [
+    1,
+    2,
+    3,
     85
   ],
-  "generatedAt": "2026-08-17T04:47:35.804641+00:00",
+  "generatedAt": "2026-08-17T04:58:55.837041+00:00",
   "modelVersion": "trajectory-v1",
-  "peakRssBytesAcrossCategories": 90927104,
-  "totalPacketBytes": 6614351,
-  "totalPacketRows": 32365,
-  "totalWallClockSeconds": 28.505
+  "peakRssBytesAcrossCategories": 389062656,
+  "totalPacketBytes": 60539369,
+  "totalPacketRows": 301661,
+  "totalWallClockSeconds": 299.301
 }
