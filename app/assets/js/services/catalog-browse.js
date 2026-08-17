@@ -237,10 +237,25 @@ export function groupCatalogSets(sets = [], mode = 'family') {
   return [...buckets.values()].sort((left, right) => order.indexOf(left.id) - order.indexOf(right.id));
 }
 
-export function filterCatalogProducts(products = [], { query = '', sort = 'number' } = {}) {
+// TCGCSV groups mix single cards with sealed product (booster boxes, cases,
+// displays, bundles). Singles carry a collector number or a rarity in the
+// source data; sealed and other non-card product carries neither. Licensed
+// per-game providers (Scryfall, pokemontcg.io, YGOPRODeck) only return cards.
+export function catalogProductKind(product = {}) {
+  if (product?.provider !== 'tcgcsv') return 'card';
+  const hasNumber = String(product.number || '').trim() !== '';
+  const hasRarity = String(product.rarity || '').trim() !== '';
+  return hasNumber || hasRarity ? 'card' : 'sealed';
+}
+
+export function filterCatalogProducts(products = [], { query = '', sort = 'number', kind = 'all' } = {}) {
   const needle = normalizeQuery(query);
-  const filtered = products.filter((product) => !needle
-    || normalizeQuery([product.name, product.number, product.rarity, product.variant].filter(Boolean).join(' ')).includes(needle));
+  const filtered = products.filter((product) => {
+    if (kind === 'cards' && product.productKind === 'sealed') return false;
+    if (kind === 'sealed' && product.productKind !== 'sealed') return false;
+    return !needle
+      || normalizeQuery([product.name, product.number, product.rarity, product.variant].filter(Boolean).join(' ')).includes(needle);
+  });
   const byNumber = (left, right) => numberCollator.compare(String(left.number || ''), String(right.number || ''))
     || String(left.name).localeCompare(String(right.name));
   const byName = (left, right) => String(left.name).localeCompare(String(right.name))
@@ -325,5 +340,5 @@ export async function loadCatalogSetProducts({ gameId, setId, bypassCache = fals
   if (game.provider === 'tcgcsv' && products.some((product) => Number(product?.categoryId) !== game.categoryId)) {
     throw new Error('The TCGCSV response crossed game-category boundaries.');
   }
-  return filterCatalogProducts(products.map((product) => ({ ...product, gameId: game.id, productKind: 'card' })));
+  return filterCatalogProducts(products.map((product) => ({ ...product, gameId: game.id, productKind: catalogProductKind(product) })));
 }

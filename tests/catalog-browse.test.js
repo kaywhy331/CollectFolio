@@ -5,6 +5,7 @@ import {
   TCGCSV_CATALOG_GAMES,
   catalogGameRequiresSession,
   catalogGamesFromTCGCSVCategories,
+  catalogProductKind,
   filterCatalogProducts,
   catalogSetYears,
   filterCatalogSets,
@@ -341,4 +342,28 @@ test('set products use natural collector-number ordering without dropping unpric
   ).map((product) => product.id), ['a', 'b']);
   assert.equal(filterCatalogProducts(products, { query: 'card' }).length, 3);
   assert.deepEqual(filterCatalogProducts(products, { sort: 'price-desc' }).map((product) => product.id), ['two', 'one', 'ten']);
+});
+
+test('TCGCSV products classify as cards or sealed by collector number and rarity presence', () => {
+  assert.equal(catalogProductKind({ provider: 'tcgcsv', number: '25/102', rarity: '' }), 'card');
+  assert.equal(catalogProductKind({ provider: 'tcgcsv', number: '', rarity: 'Holo Rare' }), 'card');
+  assert.equal(catalogProductKind({ provider: 'tcgcsv', name: 'Booster Box', number: '', rarity: '' }), 'sealed');
+  assert.equal(catalogProductKind({ provider: 'tcgcsv', name: 'Elite Trainer Box', number: '  ', rarity: '' }), 'sealed');
+  assert.equal(catalogProductKind({ provider: 'pokemon' }), 'card');
+  assert.equal(catalogProductKind({ provider: 'scryfall', number: '' }), 'card');
+  assert.equal(catalogProductKind(), 'card');
+});
+
+test('product filtering honors the cards, sealed, and all kind selections', () => {
+  const products = [
+    { id: 'chase', name: 'Chase Card', number: '1', price: 40, productKind: 'card' },
+    { id: 'box', name: 'Booster Box', number: '', price: 120, productKind: 'sealed' },
+    { id: 'common', name: 'Common Card', number: '2', price: 0.1, productKind: 'card' }
+  ];
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'price-desc', kind: 'cards' }).map((product) => product.id), ['chase', 'common']);
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'price-desc', kind: 'sealed' }).map((product) => product.id), ['box']);
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'price-desc', kind: 'all' }).map((product) => product.id), ['box', 'chase', 'common']);
+  assert.deepEqual(filterCatalogProducts(products, { sort: 'price-desc' }).map((product) => product.id), ['box', 'chase', 'common']);
+  assert.deepEqual(filterCatalogProducts(products, { query: 'booster', kind: 'sealed' }).map((product) => product.id), ['box']);
+  assert.equal(filterCatalogProducts(products, { query: 'booster', kind: 'cards' }).length, 0);
 });
