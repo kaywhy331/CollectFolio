@@ -224,15 +224,41 @@ class MergedEvaluationSummaryTests(unittest.TestCase):
             _render_component_weights_summary_markdown,
         )
 
-        receipt = _make_component_weights_receipt(1, horizon30_passes=False, horizon90_passes=True)
+        # Category 4 is not in forecast_publisher.NINETY_DAY_ONLY_OVERRIDE,
+        # so this near-miss stays informational-only.
+        receipt = _make_component_weights_receipt(4, horizon30_passes=False, horizon90_passes=True)
         rows = [_category_row_from_receipt(receipt)]
         md = _render_component_weights_summary_markdown(rows)
-        self.assertIn("## Near-miss notes (informational -- not enabled)", md)
         self.assertIn(
-            "Category 1, standard cohort: passes 90d only (30d fails) -- flagged for Kevin "
+            "## Near-miss notes (informational; ENABLED entries are explicitly reviewed serving decisions)",
+            md,
+        )
+        self.assertIn(
+            "Category 4, standard cohort: passes 90d only (30d fails) -- flagged for Kevin "
             "as a possible future 90d-only serving mode; NOT enabled.",
             md,
         )
+
+    def test_near_miss_note_marks_enabled_for_the_reviewed_ninety_day_only_override(self):
+        # forecast-display-everywhere: category 1 standard cohort is in
+        # forecast_publisher.NINETY_DAY_ONLY_OVERRIDE (Kevin's 2026-08-17
+        # "all products" directive) -- the generated near-miss note must
+        # say ENABLED, not the stale "NOT enabled" wording, once a category
+        # is actually being served this way.
+        from collectfolio_analytics.trajectory_cli import (
+            _category_row_from_receipt,
+            _render_component_weights_summary_markdown,
+        )
+
+        receipt = _make_component_weights_receipt(1, horizon30_passes=False, horizon90_passes=True)
+        rows = [_category_row_from_receipt(receipt)]
+        md = _render_component_weights_summary_markdown(rows)
+        self.assertIn(
+            "Category 1, standard cohort: passes 90d only (30d fails) -- ENABLED 2026-08-17 as "
+            "90d-only serving mode per Kevin's 'forecasts should be for all products' directive.",
+            md,
+        )
+        self.assertNotIn("Category 1, standard cohort: passes 90d only (30d fails) -- flagged", md)
 
     def test_no_near_miss_note_when_all_horizons_agree(self):
         from collectfolio_analytics.trajectory_cli import (

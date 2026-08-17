@@ -102,6 +102,47 @@ test('owned manual/custom card detail still renders a manual scenario when publi
   assert.doesNotMatch(html, /Approved forecast projection/);
 });
 
+test('trajectory-v1 90d-only serving mode (cat 1/2 standard) renders only the horizons the T5 gate actually served', () => {
+  // forecast-display-everywhere: publish_category now strips a packet's
+  // horizons object down to only the (category, cohort) horizons the T4
+  // holdout gate served (see forecast_publisher.eligible_horizons /
+  // NINETY_DAY_ONLY_OVERRIDE) -- here the packet legitimately carries only
+  // "90". The app must render only the 90-day outlook, never fabricate a
+  // 30-day block that was never published.
+  const tcgcsvItem = { ...item, provider: 'tcgcsv', categoryId: 1, groupId: 42, productId: 777, variant: 'Holofoil' };
+  const catalogRef = catalogReferenceForItem(tcgcsvItem, { canonicalVariantId: variantId });
+  const packet = {
+    modelVersion: 'trajectory-v1', confidence: 'standard', lastKnownDate: '2026-08-01', lastKnownPrice: 90,
+    horizons: { 90: { q10: 70, q25: 80, q50: 95, q75: 105, q90: 120 } },
+    medianPath: [{ date: '2026-08-01', price: 90 }, { date: '2026-08-31', price: 95 }]
+  };
+  const state = baseState({
+    trajectoryForecasts: {
+      byKey: { '1:42:777:Holofoil': { eligibility: 'published', packet, manifest: { asOf: '2026-08-01' } } },
+      loading: false, error: ''
+    }
+  });
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, state);
+  assert.match(html, /90-day outlook/);
+  assert.doesNotMatch(html, /30-day outlook/);
+  assert.match(html, /Modeled trajectory/);
+});
+
+test('trajectory-v1 excluded/unknown packet still shows the honest insufficient-evidence state, not a fabricated horizon', () => {
+  const tcgcsvItem = { ...item, provider: 'tcgcsv', categoryId: 85, groupId: 9, productId: 111, variant: 'Normal' };
+  const catalogRef = catalogReferenceForItem(tcgcsvItem, { canonicalVariantId: variantId });
+  const state = baseState({
+    trajectoryForecasts: {
+      byKey: { '85:9:111:Normal': { eligibility: 'excluded', packet: null } },
+      loading: false, error: ''
+    }
+  });
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, state);
+  assert.match(html, /Insufficient evidence for a price forecast/);
+  assert.doesNotMatch(html, /90-day outlook/);
+  assert.doesNotMatch(html, /30-day outlook/);
+});
+
 test('tier-4 publication renders observed, trend, fair value, forecast, and drivers separately', () => {
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const state = baseState({

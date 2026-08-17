@@ -269,14 +269,21 @@ async function loadFeatureFlags() {
   const watchlistsEnabled = runtimeFlag('ENABLE_WATCHLISTS', true);
   const setBrowsingEnabled = runtimeFlag('ENABLE_SET_BROWSING', true);
   const publicIntelligenceEnabled = runtimeFlag('ENABLE_PRICE_INTELLIGENCE', false);
+  // trajectoryForecasts has no runtime-config ENABLE_* switch: it is
+  // CollectFolio's own derived trajectory-v1 statistics, served anonymously
+  // from our own worker under the community-free-access SourceTerms record
+  // (not the cloud publicPriceIntelligence rights gate), so it is
+  // always attempted and defaults ENABLED. Fetch the remote flags whenever
+  // any of them could need one, so an explicit remote
+  // trajectory_forecasts: false row is still honored even when watchlists
+  // and public price intelligence are both off.
   let remote = {};
-  if (watchlistsEnabled || publicIntelligenceEnabled) {
-    try { remote = await fetchPublicFeatureFlags(); } catch { /* Foundation migration may not be deployed yet. */ }
-  }
+  try { remote = await fetchPublicFeatureFlags(); } catch { /* Foundation migration may not be deployed yet. */ }
   setState({ featureFlags: {
     watchlists: watchlistsEnabled && (remote.watchlists ?? true),
     setBrowsing: setBrowsingEnabled,
     publicPriceIntelligence: publicIntelligenceEnabled && Boolean(remote.public_price_intelligence),
+    trajectoryForecasts: remote.trajectory_forecasts !== false,
     loaded: true
   } });
 }
@@ -284,23 +291,47 @@ async function loadFeatureFlags() {
 let intelligenceHydrationId = 0;
 let trajectoryHydrationId = 0;
 
-// Trajectory-v1 (T6): prefetches published forecast packets for TCGCSV
-// catalog items currently on screen, gated on the same
-// publicPriceIntelligence flag as cloud-published intelligence (T6
-// point 5). Deliberately best-effort and non-blocking -- a trajectory
-// fetch failure for one item never blocks the rest of hydration, and this
-// runs alongside (not instead of) hydrateIntelligence's own cloud-published path.
+// Trajectory-v1 items currently on screen or otherwise in play: search
+// results, browse/discover products, every holding, every watchlist item,
+// and the item behind the currently open detail page (holdings/watchlist
+// items outside a search context never populate search.results or
+// discover.products, so trajectorySection on their detail page would
+// otherwise never see a packet). Holdings/watchlist entries commonly share
+// TCGCSV groups, but getTrajectoryForecastForItem/fetchTrajectoryGroup
+// already cache per (categoryId, groupId) in IndexedDB, so de-duping by
+// trajectory key here is enough -- no separate per-group batching needed.
+function trajectoryCandidateItems(state) {
+  return [
+    ...(state.search?.results || []),
+    ...(state.discover?.products || []),
+    ...(state.holdings || []).map((holding) => holding.item),
+    ...(state.watchlistItems || []).map((entry) => entry.catalogRef || entry.item),
+    activeDetail?.item
+  ];
+}
+
+// Trajectory-v1 (T6/forecast-display-everywhere): prefetches published
+// forecast packets for every TCGCSV-identity item currently in play (see
+// trajectoryCandidateItems), gated on its own trajectoryForecasts flag --
+// deliberately decoupled from publicPriceIntelligence (the
+// cloud-published-intelligence rights gate): trajectory-v1 forecasts are
+// CollectFolio's own derived statistics under a separate community-free-
+// access SourceTerms record, served anonymously by our own worker, so they
+// do not need the cloud rights flag. Deliberately best-effort and
+// non-blocking -- a trajectory fetch failure for one item never blocks the
+// rest of hydration, and this runs alongside (not instead of)
+// hydrateIntelligence's own cloud-published path.
 async function hydrateTrajectoryForecasts() {
   const hydrationId = ++trajectoryHydrationId;
   const state = getState();
-  if (!state.featureFlags.publicPriceIntelligence) {
+  if (!state.featureFlags.trajectoryForecasts) {
     setState({ trajectoryForecasts: { byKey: {}, loading: false, error: '' } });
     return;
   }
-  const items = [...(state.search?.results || []), ...(state.discover?.products || [])];
+  const items = trajectoryCandidateItems(state);
   const byKey = new Map();
   for (const item of items) {
-    const key = trajectoryKeyForItem(item);
+    const key = trajectoryKeyForItem(item || {});
     if (key && !byKey.has(key)) byKey.set(key, item);
   }
   if (!byKey.size) {

@@ -1,36 +1,52 @@
 {
   "categories": {
     "1": {
-      "eligibleVariants": 4710,
+      "eligibleVariants": 163197,
       "excludedByCohort": {
         "insufficient-history": 1016,
-        "low-history": 2349,
-        "standard": 158487
+        "low-history": 2349
       },
-      "excludedGroups": 335,
+      "excludedGroups": 2,
       "lastKnownDateRange": {
-        "earliest": null,
-        "latest": null
+        "earliest": "2026-06-20",
+        "latest": "2026-08-08"
       },
-      "objectsWritten": 114,
-      "publishedGroups": 114,
+      "objectsWritten": 475,
+      "publishedGroups": 447,
+      "servedHorizonsByCohort": {
+        "cold-start": [
+          30,
+          90
+        ],
+        "standard": [
+          90
+        ]
+      },
       "totalGroups": 449,
       "totalVariants": 166562
     },
     "2": {
-      "eligibleVariants": 213,
+      "eligibleVariants": 60460,
       "excludedByCohort": {
         "insufficient-history": 273,
-        "low-history": 593,
-        "standard": 60247
+        "low-history": 593
       },
-      "excludedGroups": 525,
+      "excludedGroups": 3,
       "lastKnownDateRange": {
-        "earliest": null,
-        "latest": null
+        "earliest": "2026-06-20",
+        "latest": "2026-08-08"
       },
-      "objectsWritten": 92,
-      "publishedGroups": 92,
+      "objectsWritten": 616,
+      "publishedGroups": 614,
+      "servedHorizonsByCohort": {
+        "cold-start": [
+          30,
+          90
+        ],
+        "standard": [
+          90
+        ]
+      },
       "totalGroups": 617,
       "totalVariants": 61326
     },
@@ -47,6 +63,16 @@
       },
       "objectsWritten": 219,
       "publishedGroups": 214,
+      "servedHorizonsByCohort": {
+        "cold-start": [
+          30,
+          90
+        ],
+        "standard": [
+          30,
+          90
+        ]
+      },
       "totalGroups": 215,
       "totalVariants": 46892
     },
@@ -64,15 +90,64 @@
       },
       "objectsWritten": 212,
       "publishedGroups": 212,
+      "servedHorizonsByCohort": {
+        "cold-start": [
+          30,
+          90
+        ]
+      },
       "totalGroups": 450,
       "totalVariants": 34493
     }
   },
-  "elapsedSeconds": 23.657,
-  "generatedAt": "2026-08-17T16:26:23.532538+00:00",
-  "manifestContentHash": "586f07cdc010ffcb34830d0cd2dc69a42d6c1a11618c6ed1b1cfd654fdfb5216",
+  "elapsedSeconds": 157.611,
+  "generatedAt": "2026-08-17T19:59:20.122710+00:00",
+  "manifestContentHash": "4316570b6b06f809d07a2864c4947e6b1192aec5f6adac9fcd9690ed2009a2d7",
   "maxObjectBytes": 131072,
   "modelVersion": "trajectory-v1",
+  "ninetyDayOnlyServingMode": {
+    "cohorts": [
+      "1:standard",
+      "2:standard"
+    ],
+    "enabledBy": "Kevin, 2026-08-17 'forecasts should be for all products' directive"
+  },
+  "servedHorizonsByCategory": {
+    "1": {
+      "cold-start": [
+        30,
+        90
+      ],
+      "standard": [
+        90
+      ]
+    },
+    "2": {
+      "cold-start": [
+        30,
+        90
+      ],
+      "standard": [
+        90
+      ]
+    },
+    "3": {
+      "cold-start": [
+        30,
+        90
+      ],
+      "standard": [
+        30,
+        90
+      ]
+    },
+    "85": {
+      "cold-start": [
+        30,
+        90
+      ]
+    }
+  },
   "sourceTerms": {
     "attributionRequired": true,
     "attributionText": "Price forecasts derived from TCGCSV pricing archives via CollectFolio's trajectory-v1 model. Not affiliated with or endorsed by TCGCSV.",

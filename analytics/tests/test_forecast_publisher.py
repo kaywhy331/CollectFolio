@@ -8,8 +8,11 @@ from pathlib import Path
 from collectfolio_analytics.forecast_publisher import (
     DEFAULT_MAX_OBJECT_BYTES,
     GroupPart,
+    NINETY_DAY_ONLY_OVERRIDE,
+    eligible_horizons,
     is_packet_eligible,
     load_serving_eligibility,
+    load_serving_eligibility_by_horizon,
     load_source_terms,
     object_key,
     publish_category,
@@ -89,6 +92,73 @@ class LoadServingEligibilityTests(unittest.TestCase):
         self.assertFalse(by_category[1]["standard"])
         self.assertFalse(by_category[2]["standard"])
         self.assertFalse(by_category[85]["standard"])
+
+
+class LoadServingEligibilityByHorizonTests(unittest.TestCase):
+    def test_real_evaluation_summary_confirms_the_90d_near_miss(self):
+        # This is exactly the near-miss trajectory_cli._near_miss_notes
+        # surfaces as informational-only: cat 1/2 standard passes at 90d
+        # but not 30d. eligible_horizons's NINETY_DAY_ONLY_OVERRIDE
+        # activation depends on this data staying true.
+        by_horizon = load_serving_eligibility_by_horizon(EVALUATION_SUMMARY_PATH)
+        self.assertFalse(by_horizon[1]["standard"][30])
+        self.assertTrue(by_horizon[1]["standard"][90])
+        self.assertFalse(by_horizon[2]["standard"][30])
+        self.assertTrue(by_horizon[2]["standard"][90])
+        self.assertTrue(by_horizon[3]["standard"][30])
+        self.assertTrue(by_horizon[3]["standard"][90])
+
+
+class EligibleHorizonsTests(unittest.TestCase):
+    def setUp(self):
+        self.serving_eligibility = {
+            3: {"standard": True, "low-history": False},
+            1: {"standard": False, "low-history": False},
+            2: {"standard": False},
+        }
+        self.serving_eligibility_by_horizon = {
+            3: {"standard": {30: True, 90: True}},
+            1: {"standard": {30: False, 90: True}},
+            2: {"standard": {30: False, 90: False}},
+        }
+
+    def test_cold_start_serves_both_horizons_regardless_of_gate(self):
+        self.assertEqual(
+            eligible_horizons(999, "cold-start", self.serving_eligibility, self.serving_eligibility_by_horizon),
+            (30, 90),
+        )
+
+    def test_fully_eligible_cohort_serves_both_horizons(self):
+        self.assertEqual(
+            eligible_horizons(3, "standard", self.serving_eligibility, self.serving_eligibility_by_horizon),
+            (30, 90),
+        )
+
+    def test_override_cohort_with_confirmed_90d_pass_serves_90_only(self):
+        self.assertIn((1, "standard"), NINETY_DAY_ONLY_OVERRIDE)
+        self.assertEqual(
+            eligible_horizons(1, "standard", self.serving_eligibility, self.serving_eligibility_by_horizon),
+            (90,),
+        )
+
+    def test_override_cohort_without_confirmed_90d_pass_serves_nothing(self):
+        # cat 2 is on the override allowlist, but its 90d gate does NOT
+        # actually pass in this synthetic fixture -- the override must
+        # never be trusted blindly.
+        self.assertIn((2, "standard"), NINETY_DAY_ONLY_OVERRIDE)
+        self.assertEqual(
+            eligible_horizons(2, "standard", self.serving_eligibility, self.serving_eligibility_by_horizon),
+            (),
+        )
+
+    def test_non_override_cohort_that_fails_the_gate_serves_nothing(self):
+        self.assertEqual(
+            eligible_horizons(3, "low-history", self.serving_eligibility, self.serving_eligibility_by_horizon),
+            (),
+        )
+
+    def test_missing_horizon_data_defaults_closed(self):
+        self.assertEqual(eligible_horizons(1, "standard", self.serving_eligibility, {}), ())
 
 
 class LoadSourceTermsTests(unittest.TestCase):
@@ -313,6 +383,71 @@ class PublishCategoryTests(unittest.TestCase):
             self.assertEqual(row["lastKnownDateRange"]["latest"], "2026-02-01")
 
 
+class PublishCategoryNinetyDayOnlyTests(unittest.TestCase):
+    """T5's 90d-only serving mode against the real evaluation-summary.json
+    (Kevin's 2026-08-17 "all products" directive activating the cat 1/2
+    standard-cohort near-miss trajectory_cli._near_miss_notes had already
+    flagged as informational-only)."""
+
+    def setUp(self):
+        self.serving_eligibility = load_serving_eligibility(EVALUATION_SUMMARY_PATH)
+        self.serving_eligibility_by_horizon = load_serving_eligibility_by_horizon(EVALUATION_SUMMARY_PATH)
+
+    def test_cat1_standard_packet_serves_90_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [
+                {**_variant(1), "categoryId": 1, "groupId": 4, "confidence": "standard"},
+            ])
+            staging_root = tmp_path / "out"
+            row = publish_category(
+                1, packets_path, self.serving_eligibility, staging_root,
+                serving_eligibility_by_horizon=self.serving_eligibility_by_horizon,
+            )
+            group = row["groups"]["4"]
+            self.assertEqual(group["status"], "published")
+            self.assertEqual(row["servedHorizonsByCohort"], {"standard": [90]})
+            dest = staging_root / group["parts"][0]["objectKey"]
+            payload = json.loads(gzip.decompress(dest.read_bytes()))
+            variant = payload["variants"][0]
+            self.assertEqual(sorted(variant["horizons"]), ["90"])
+
+    def test_cat3_standard_packet_still_serves_both_horizons(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [
+                {**_variant(1), "categoryId": 3, "groupId": 4, "confidence": "standard"},
+            ])
+            staging_root = tmp_path / "out"
+            row = publish_category(
+                3, packets_path, self.serving_eligibility, staging_root,
+                serving_eligibility_by_horizon=self.serving_eligibility_by_horizon,
+            )
+            self.assertEqual(row["servedHorizonsByCohort"], {"standard": [30, 90]})
+            dest = staging_root / row["groups"]["4"]["parts"][0]["objectKey"]
+            payload = json.loads(gzip.decompress(dest.read_bytes()))
+            self.assertEqual(sorted(payload["variants"][0]["horizons"]), ["30", "90"])
+
+    def test_cat85_standard_still_excluded_entirely(self):
+        # cat85 is not on NINETY_DAY_ONLY_OVERRIDE and does not pass the
+        # gate at either horizon -- the packet must not be served at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [
+                {**_variant(1), "categoryId": 85, "groupId": 4, "confidence": "standard"},
+            ])
+            staging_root = tmp_path / "out"
+            row = publish_category(
+                85, packets_path, self.serving_eligibility, staging_root,
+                serving_eligibility_by_horizon=self.serving_eligibility_by_horizon,
+            )
+            self.assertEqual(row["groups"]["4"]["status"], "excluded")
+            self.assertEqual(row["servedHorizonsByCohort"], {})
+
+
 class PublishForecastsTests(unittest.TestCase):
     def test_end_to_end_writes_manifest_and_objects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -341,6 +476,10 @@ class PublishForecastsTests(unittest.TestCase):
             self.assertTrue(manifest["eligibilityPolicy"]["3"]["standard"])
             self.assertTrue(manifest["eligibilityPolicy"]["1"]["cold-start"])
             self.assertFalse(manifest["eligibilityPolicy"]["1"]["standard"])
+            self.assertEqual(manifest["servedHorizonsByCategory"]["3"], {"standard": [30, 90]})
+            self.assertEqual(manifest["servedHorizonsByCategory"]["1"], {"cold-start": [30, 90]})
+            self.assertIn("1:standard", manifest["ninetyDayOnlyCohorts"])
+            self.assertIn("2:standard", manifest["ninetyDayOnlyCohorts"])
 
             cat3_object = staging_root / "forecasts" / "3" / "1.json.gz"
             self.assertTrue(cat3_object.is_file())

@@ -22,7 +22,12 @@ let state = {
   watchlist: { query: '', category: 'all', sort: 'forecast-desc' },
   insights: { view: 'forecasts', horizon: 90, alertFilter: 'all' },
   compare: [],
-  featureFlags: { watchlists: true, setBrowsing: true, publicPriceIntelligence: false, loaded: false },
+  // trajectoryForecasts (CollectFolio's own derived trajectory-v1 stats,
+  // served anonymously from our own worker under the community-free-access
+  // SourceTerms record) defaults ENABLED -- it is not the Supabase
+  // publicPriceIntelligence rights gate, and is disabled only if a remote
+  // product_feature_flags row explicitly sets it enabled:false.
+  featureFlags: { watchlists: true, setBrowsing: true, publicPriceIntelligence: false, trajectoryForecasts: true, loaded: false },
   intelligence: { byVariant: {}, history: [], loading: false, error: '', lastRefresh: '' },
   // Trajectory-v1 (T6): TCGCSV-identity-keyed forecast packets, keyed by
   // `trajectoryKeyForItem(item)` (see services/forecast-trajectory.js).
