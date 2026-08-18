@@ -121,3 +121,20 @@ test('unknown locations fail closed to Overview', () => {
   assert.equal(route.notFound, '/not-a-real-capability');
   assert.equal(currentAppPath({ pathname: '/discover', search: '?mode=search' }), '/discover?mode=search');
 });
+
+test('card routes accept SEO slug URLs and resolve the numeric identity triple', () => {
+  const slugged = parseAppRoute('/cards/pop-series-2-pikachu-3-1447-88081');
+  assert.equal(slugged.key, 'card-detail');
+  assert.equal(slugged.entityId, 'tcgcsv:3:1447:88081');
+  assert.equal(slugged.canonicalPath, '/cards/pop-series-2-pikachu-3-1447-88081');
+  // legacy provider ids and watch keys (always containing ':') still resolve
+  assert.equal(parseAppRoute('/cards/tcgcsv%3A3%3A1447%3A88081').entityId, 'tcgcsv:3:1447:88081');
+  assert.equal(parseAppRoute('/cards/variant%3A123e4567-e89b-42d3-a456-426614174000').entityId, 'variant:123e4567-e89b-42d3-a456-426614174000');
+});
+
+test('detail routes generate SEO slug paths for catalog items', () => {
+  const route = appRouteForLegacyView('detail', {}, { detail: { item: { provider: 'tcgcsv', externalId: '3:1447:88081', name: 'Pikachu', setName: 'POP Series 2' } } });
+  assert.equal(route.canonicalPath, '/cards/pop-series-2-pikachu-3-1447-88081');
+  const bare = appRouteForLegacyView('detail', {}, { detail: { item: { provider: 'tcgcsv', externalId: '3:1447:88081' } } });
+  assert.equal(bare.canonicalPath, '/cards/3-1447-88081');
+});

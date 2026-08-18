@@ -95,10 +95,10 @@ root.addEventListener('error', (event) => {
 }, true);
 
 // Every state change re-renders via innerHTML, which used to recreate all
-// <img> nodes -- even cache-hit images repaint asynchronously after decode,
+// img nodes -- even cache-hit images repaint asynchronously after decode,
 // so pages with many card images flickered on each hydration step (products,
 // intelligence, forecasts, history each trigger a render). Fix: build the new
-// tree in a template, then ADOPT any already-decoded live <img> whose src is
+// tree in a template, then ADOPT any already-decoded live img element whose src is
 // unchanged -- moving a live element preserves its decoded bitmap, so
 // unchanged images never blank. Attributes from the fresh markup are carried
 // onto the adopted node; the error/fallback path keeps working because image
@@ -538,6 +538,7 @@ async function hydrateCardRoute(route) {
       })
     };
     render();
+    if (item?.name) document.title = `${[item.name, item.setName].filter(Boolean).join(' · ')} · CollectFolio`;
     scheduleCatalogEnrichment(item);
     // Bugfix (0.8.17): a deep-linked card route never went through
     // hydrateIntelligence() (search/browse only), so trajectory forecasts
@@ -701,7 +702,10 @@ function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = tru
     history.replaceState(historyState, '', route.canonicalPath);
   }
   setState(routeStatePatch(route, state));
-  document.title = `${({ overview: 'Overview', portfolio: 'Portfolio', discover: 'Discover', insights: 'Insights', add: 'Add', 'add-review': 'Add review', settings: 'Settings', 'card-detail': 'Card detail', 'holding-detail': 'Holding detail' })[route.key] || 'CollectFolio'} · CollectFolio`;
+  const detailTitle = ['card-detail', 'holding-detail'].includes(route.key) && activeDetail?.item?.name
+    ? [activeDetail.item.name, activeDetail.item.setName].filter(Boolean).join(' · ')
+    : '';
+  document.title = `${detailTitle || ({ overview: 'Overview', portfolio: 'Portfolio', discover: 'Discover', insights: 'Insights', add: 'Add', 'add-review': 'Add review', settings: 'Settings', 'card-detail': 'Card detail', 'holding-detail': 'Holding detail' })[route.key] || 'CollectFolio'} · CollectFolio`;
   if (focus) root.focus({ preventScroll: true });
   if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
   if (state.ready && route.key === 'card-detail' && !activeDetail) hydrateCardRoute(route);
