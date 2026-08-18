@@ -10,6 +10,11 @@ const CACHE_VERSION = 'v10';
 export const CATALOG_CACHE_MAX_ENTRIES = 250;
 let initialCacheMaintenance;
 const providers = {
+  // pokemon/scryfall/ygoprodeck keep their `search` entries wired for
+  // legacy detail/refresh routing only (catalogRouteId, getCatalogRouteItem,
+  // refreshCatalogItem) -- holdings and watches created before catalog-v2
+  // B3 still carry these provider identities and must keep resolving.
+  // `searchCatalog` itself never selects them anymore; see FLAGSHIP_GAMES.
   pokemon: { category: 'pokemon', label: 'Pokémon TCG API', search: searchPokemon, detail: getPokemonCard },
   scryfall: { category: 'magic', label: 'Scryfall', search: searchScryfall, detail: getScryfallCard },
   ygoprodeck: { category: 'yugioh', label: 'YGOPRODeck', search: searchYGOPRODeck, detail: getYGOCard },
@@ -21,6 +26,13 @@ const providers = {
     detail: getTCGCSVProduct
   }
 };
+// catalog-v2 B3 (search primacy, docs/CATALOG_TCGCSV_PRIMARY_PRD.md): the
+// games whose provider's `category` values above -- TCGCSV is the sole
+// search backend for these regardless of the `provider` filter param, so a
+// secondary provider catalog never introduces a result item for them.
+// Non-flagship TCGCSV categories (`tcgcsv-category-<id>`) are untouched --
+// they only ever matched the `tcgcsv` provider anyway.
+const FLAGSHIP_GAMES = Object.freeze(['pokemon', 'magic', 'yugioh']);
 
 export function clearCatalogProviderCaches() {
   clearPokemonSetCache();
@@ -114,13 +126,17 @@ export async function searchCatalog({ query, category = 'all', provider = 'all',
   const { raw, normalized } = prepareCatalogQuery(query);
   if (!normalized) throw new Error('Enter a name, set, number, character, or player.');
   if (['sports', 'comics', 'slab', 'other'].includes(category)) return { results: [], warnings: [], manual: true, cached: false };
-  const selected = Object.entries(providers).filter(([key, config]) =>
-    (provider === 'all' || provider === key)
-    && (category === 'all'
+  const selected = Object.entries(providers).filter(([key, config]) => {
+    if (!(provider === 'all' || provider === key)) return false;
+    // Flagship providers only ever cover one fixed category each, so this
+    // unconditionally retires them from search once TCGCSV owns that game
+    // -- an explicit `provider` request can no longer resurrect them.
+    if (key !== 'tcgcsv' && FLAGSHIP_GAMES.includes(config.category)) return false;
+    return category === 'all'
       || category === config.category
       || config.categories?.includes(category)
-      || config.categoryPattern?.test(category))
-  );
+      || config.categoryPattern?.test(category);
+  });
   const key = `catalog:${CACHE_VERSION}:${category}:${provider}:${normalized}`;
   if (!bypassCache) {
     const cached = await getRecord('catalogCache', key).catch(() => null);

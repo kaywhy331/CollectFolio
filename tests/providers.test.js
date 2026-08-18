@@ -405,18 +405,47 @@ test('provider failure isolation retains every successful provider result', () =
 });
 
 test('complete catalog outages are retryable and never cached as false no-matches', async () => {
+  // catalog-v2 B3: 'magic' only ever selects the tcgcsv provider now
+  // (secondary providers no longer search flagship games), so this
+  // outage/retry coverage points at the current primary backend.
   const previousFetch = globalThis.fetch;
+  const previousWindow = globalThis.window;
+  globalThis.window = { COLLECTFOLIO_CONFIG: { TCGCSV_CATALOG_URL: 'https://catalog.example/' } };
   let requests = 0;
   globalThis.fetch = async () => { requests++; throw new TypeError('offline'); };
   try {
-    const first = await searchCatalog({ query: 'Outage Sentinel', category: 'magic', provider: 'scryfall' });
+    const first = await searchCatalog({ query: 'Outage Sentinel', category: 'magic', provider: 'tcgcsv' });
     const firstRequests = requests;
-    const second = await searchCatalog({ query: 'Outage Sentinel', category: 'magic', provider: 'scryfall' });
+    const second = await searchCatalog({ query: 'Outage Sentinel', category: 'magic', provider: 'tcgcsv' });
     assert.equal(first.fulfilledProviders, 0);
     assert.equal(second.fulfilledProviders, 0);
     assert.ok(first.warnings.length && second.warnings.length);
     assert.ok(requests > firstRequests);
   } finally {
     globalThis.fetch = previousFetch;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test('search primacy (B3): flagship categories never select secondary providers, in automatic or explicit-provider mode', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousWindow = globalThis.window;
+  globalThis.window = { COLLECTFOLIO_CONFIG: { TCGCSV_CATALOG_URL: 'https://catalog.example/' } };
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ products: [] }) };
+  };
+  try {
+    await searchCatalog({ query: 'Charizard', category: 'pokemon' });
+    await searchCatalog({ query: 'Charizard', category: 'pokemon', provider: 'pokemon' });
+    await searchCatalog({ query: 'Sol Ring', category: 'all' });
+    assert.ok(requestedUrls.every((url) => url.includes('catalog.example')));
+    assert.ok(requestedUrls.every((url) => !/pokemontcg|scryfall|ygoprodeck/i.test(url)));
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
   }
 });

@@ -10,6 +10,7 @@ import {
   catalogPublicationStatus,
   completeCatalogPublication,
   planCatalogPublication,
+  serveBridgeObject,
   serveCatalogData,
   uploadCatalogAsset
 } from '../cloudflare/tcgcsv-refresh/src/catalog.js';
@@ -604,4 +605,66 @@ test('forecast routes require a session when community free access is not enable
     env
   );
   assert.equal(response.status, 401);
+});
+
+function bridgePayload(overrides = {}) {
+  return JSON.stringify({
+    modelVersion: 'catalog-bridge-v1',
+    categoryId: 3,
+    provider: 'pokemon',
+    asOf: '2026-08-17',
+    sets: [{ groupId: 1102, providerSetId: 'swsh12', matchMethod: 'name-exact' }],
+    products: [{ groupId: 1102, productId: 5001, providerSetId: 'swsh12', providerCardId: 'poke-1', matchMethod: 'collector-number' }],
+    ...overrides
+  });
+}
+
+test('serves a published bridge object with gzip content-encoding and public cache headers', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const gz = gzipSync(Buffer.from(bridgePayload()));
+  await env.TCGCSV_CURRENT.put('bridge/3.json.gz', gz, {
+    httpMetadata: { contentType: 'application/json' }
+  });
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/bridge/3'),
+    env
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), 'gzip');
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.match(response.headers.get('cache-control') ?? '', /public/);
+  const raw = new Uint8Array(await response.arrayBuffer());
+  const body = JSON.parse(gunzipSync(raw).toString('utf-8'));
+  assert.equal(body.categoryId, 3);
+  assert.equal(body.provider, 'pokemon');
+});
+
+test('returns 404 for a category with no published bridge table -- fail-closed, never a guessed join', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/bridge/2'),
+    env
+  );
+  assert.equal(response.status, 404);
+});
+
+test('bridge routes require a session when community free access is not enabled', async () => {
+  const env = environment();
+  const gz = gzipSync(Buffer.from(bridgePayload()));
+  await env.TCGCSV_CURRENT.put('bridge/3.json.gz', gz);
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/bridge/3'),
+    env
+  );
+  assert.equal(response.status, 401);
+});
+
+test('serveBridgeObject is exported directly for callers that already resolved identity', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const gz = gzipSync(Buffer.from(bridgePayload()));
+  await env.TCGCSV_CURRENT.put('bridge/3.json.gz', gz);
+  const response = await serveBridgeObject(env, { categoryId: 3 }, new Headers());
+  assert.equal(response.status, 200);
 });

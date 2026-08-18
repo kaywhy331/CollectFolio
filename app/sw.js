@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.15';
+const CACHE = 'collectfolio-shell-v0.8.16';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
@@ -22,6 +22,7 @@ const SHELL = [
   './assets/js/services/scan-review.js', './assets/js/services/visual-index.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
   './assets/js/services/price-intelligence.js',
   './assets/js/services/forecast-trajectory.js',
+  './assets/js/services/catalog-enrichment.js',
   './assets/js/services/justtcg-refresh.js',
   './assets/js/services/tcgcsv-refresh-status.js',
   './assets/js/services/demand-events.js',

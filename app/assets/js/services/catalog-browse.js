@@ -16,11 +16,24 @@ const CACHE_MS = 24 * 60 * 60 * 1000;
 const memoryCache = new Map();
 const numberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+// catalog-v2 B1 (browse identity inversion): flagship games browse the
+// TCGCSV catalog as baseline -- their product universe is TCGCSV groups/
+// products (categoryId 3/1/2), not the pokemon/scryfall/ygoprodeck API
+// providers. Those providers stay wired below as `adapters` entries for
+// B2 (enrichment bridge: alternative/additional data joined onto the
+// TCGCSV identity) and for search's own provider fan-out, which B1
+// deliberately leaves unchanged. The 'pokemon'/'magic'/'yugioh' ids and
+// their route/URL shape are preserved so existing bookmarks keep working.
 export const CATALOG_GAMES = Object.freeze([
-  Object.freeze({ id: 'pokemon', name: 'Pokémon', shortName: 'Pokémon', provider: 'pokemon', description: 'Sets and card printings' }),
-  Object.freeze({ id: 'magic', name: 'Magic: The Gathering', shortName: 'Magic', provider: 'scryfall', description: 'Paper sets and printings' }),
-  Object.freeze({ id: 'yugioh', name: 'Yu-Gi-Oh!', shortName: 'Yu-Gi-Oh!', provider: 'ygoprodeck', description: 'Sets and card printings' })
+  Object.freeze({ id: 'pokemon', name: 'Pokémon', shortName: 'Pokémon', provider: 'tcgcsv', categoryId: 3, flagship: true, description: 'TCGCSV catalog · sets and card printings' }),
+  Object.freeze({ id: 'magic', name: 'Magic: The Gathering', shortName: 'Magic', provider: 'tcgcsv', categoryId: 1, flagship: true, description: 'TCGCSV catalog · paper sets and printings' }),
+  Object.freeze({ id: 'yugioh', name: 'Yu-Gi-Oh!', shortName: 'Yu-Gi-Oh!', provider: 'tcgcsv', categoryId: 2, flagship: true, description: 'TCGCSV catalog · sets and card printings' })
 ]);
+
+// TCGCSV category ids already claimed by a flagship CATALOG_GAMES entry --
+// the dynamic tcgcsv-category-N game list must never surface these a
+// second time under their generic category label.
+const FLAGSHIP_TCGCSV_CATEGORY_IDS = new Set(CATALOG_GAMES.map((game) => game.categoryId).filter(Boolean));
 
 const adapters = Object.freeze({
   pokemon: { sets: listPokemonSets, products: getPokemonSetCards },
@@ -59,20 +72,34 @@ export function catalogGamesFromTCGCSVCategories(categories = []) {
   }).filter(Boolean).sort((left, right) => left.categoryId - right.categoryId);
 }
 
-export const TCGCSV_CATALOG_GAMES = Object.freeze(catalogGamesFromTCGCSVCategories(TCGCSV_CATEGORY_DIRECTORY));
+// Flagship categories (Pokémon/Magic/YuGiOh) are excluded here -- they're
+// already represented by their fixed CATALOG_GAMES entry above, and every
+// other TCGCSV category (including Pokémon Japan, 85) gets its own
+// dynamic game entry as before.
+export const TCGCSV_CATALOG_GAMES = Object.freeze(
+  catalogGamesFromTCGCSVCategories(TCGCSV_CATEGORY_DIRECTORY)
+    .filter((game) => !FLAGSHIP_TCGCSV_CATEGORY_IDS.has(game.categoryId))
+);
 
 export function mergeCatalogGames(...collections) {
   const games = new Map([...CATALOG_GAMES, ...TCGCSV_CATALOG_GAMES].map((game) => [game.id, game]));
   const fixedIds = new Set(CATALOG_GAMES.map((game) => game.id));
   collections.flat().forEach((game) => {
     if (!game?.id || fixedIds.has(game.id)) return;
+    // A dynamically-discovered TCGCSV category (e.g. from /catalog/summary
+    // while browsing "all") that shares a flagship game's categoryId is
+    // already represented by that fixed entry -- never let it appear a
+    // second time under its generic "TCGCSV category N" label.
+    if (FLAGSHIP_TCGCSV_CATEGORY_IDS.has(Number(game.categoryId))) return;
     games.set(game.id, { ...games.get(game.id), ...game });
   });
   return [
     ...CATALOG_GAMES,
-    ...[...games.values()].filter((game) => !fixedIds.has(game.id)).sort((left, right) =>
-      (Number(left.categoryId) || Number.MAX_SAFE_INTEGER) - (Number(right.categoryId) || Number.MAX_SAFE_INTEGER)
-      || String(left.name).localeCompare(String(right.name)))
+    ...[...games.values()]
+      .filter((game) => !fixedIds.has(game.id) && !FLAGSHIP_TCGCSV_CATEGORY_IDS.has(Number(game.categoryId)))
+      .sort((left, right) =>
+        (Number(left.categoryId) || Number.MAX_SAFE_INTEGER) - (Number(right.categoryId) || Number.MAX_SAFE_INTEGER)
+        || String(left.name).localeCompare(String(right.name)))
   ];
 }
 
@@ -281,17 +308,34 @@ export function filterCatalogProducts(products = [], { query = '', sort = 'numbe
 export async function loadCatalogSets({ gameId = 'all', bypassCache = false } = {}) {
   const requestedGameId = String(gameId || 'all');
   const categoryId = tcgcsvCategoryId(requestedGameId);
-  const selectedPublicGames = requestedGameId === 'all'
+  const selectedGames = requestedGameId === 'all'
     ? CATALOG_GAMES
     : CATALOG_GAMES.filter((game) => game.id === requestedGameId);
-  if (requestedGameId !== 'all' && !selectedPublicGames.length && categoryId === null) {
+  if (requestedGameId !== 'all' && !selectedGames.length && categoryId === null) {
     throw new Error('This card game does not have an approved browse catalog yet.');
   }
-  const tasks = selectedPublicGames.map((game) => ({
-    game,
-    kind: 'public',
-    load: () => cached(`sets:${game.id}`, adapters[game.provider].sets, bypassCache)
-  }));
+  // catalog-v2 B1: flagship games (provider 'tcgcsv') get their own
+  // category-scoped groups fetch, labeled with the flagship name/id --
+  // this is what makes forecasts+prices attach natively (the resulting
+  // sets/products carry provider 'tcgcsv' identity, same as any other
+  // TCGCSV category). Any remaining CATALOG_GAMES entries (none today,
+  // reserved for a future non-TCGCSV flagship) still use the legacy
+  // provider-adapter path.
+  const tasks = selectedGames.map((game) => (
+    game.provider === 'tcgcsv'
+      ? {
+        game,
+        kind: 'tcgcsv-flagship',
+        load: () => cached(`sets:${game.id}`, () => listTCGCSVGroups({ categoryId: game.categoryId }), bypassCache)
+      }
+      : {
+        game,
+        kind: 'public',
+        load: () => cached(`sets:${game.id}`, adapters[game.provider].sets, bypassCache)
+      }
+  ));
+  // Non-flagship TCGCSV categories: browsing "all" games, or a direct
+  // tcgcsv-category-N request that isn't one of the flagship ids.
   if (requestedGameId === 'all' || categoryId !== null) {
     const dynamicGame = categoryId === null ? null : catalogGame(requestedGameId);
     tasks.push({
@@ -316,10 +360,17 @@ export async function loadCatalogSets({ gameId = 'all', bypassCache = false } = 
       sets.push(...result.value.map((set) => ({ ...set, gameId: task.game.id, game: task.game.name })));
       return;
     }
+    if (task.kind === 'tcgcsv-flagship') {
+      sets.push(...result.value.groups.map((set) => ({ ...set, gameId: task.game.id, game: task.game.name })));
+      return;
+    }
     const dynamicGames = catalogGamesFromTCGCSVCategories(result.value.categories);
     games = mergeCatalogGames(games, dynamicGames);
     const tcgcsvSets = categoryId === null
-      ? result.value.groups
+      // "All games": exclude flagship categories here -- their own
+      // tcgcsv-flagship task above already added them under the flagship
+      // game id/name, so including them again here would duplicate sets.
+      ? result.value.groups.filter((group) => !FLAGSHIP_TCGCSV_CATEGORY_IDS.has(Number(group.categoryId)))
       : scopedTCGCSVGroups(result.value.groups, requestedGameId);
     sets.push(...tcgcsvSets);
   });

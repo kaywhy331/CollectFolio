@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { catalogReferenceForItem, watchKeyForItem } from '../app/assets/js/core/catalog-identity.js';
-import { createWatchlistItem, findWatchedItem, mergeWatchlistItems, mergeWatchlistTombstones } from '../app/assets/js/services/watchlist.js';
+import { createWatchlistItem, findWatchedItem, legacyProviderWatchMatch, mergeWatchlistItems, mergeWatchlistTombstones } from '../app/assets/js/services/watchlist.js';
 
 const card = {
   provider: 'pokemon', externalId: 'sv3-223', category: 'pokemon', game: 'Pokémon',
@@ -116,4 +116,32 @@ test('watchlist tombstones retain the newest deletion per exact key', () => {
   );
   assert.equal(merged.length, 1);
   assert.equal(merged[0].deletedAt, '2026-08-02T00:00:00.000Z');
+});
+
+test('catalog-v2 B3: a TCGCSV search result resolves an existing legacy-provider watch by name/set/number', () => {
+  const legacyWatch = createWatchlistItem(card); // card.provider === 'pokemon' (see fixture above)
+  const tcgcsvResult = {
+    provider: 'tcgcsv', externalId: '3:1102:5001', category: 'pokemon', game: 'pokemon',
+    name: card.name, setName: card.setName, number: card.number, variant: card.variant,
+    price: 92, currency: 'USD'
+  };
+  assert.equal(findWatchedItem([legacyWatch], tcgcsvResult), legacyWatch);
+  assert.equal(legacyProviderWatchMatch([legacyWatch], tcgcsvResult), legacyWatch);
+});
+
+test('catalog-v2 B3: the legacy-provider fallback never crosses two distinct cards', () => {
+  const legacyWatch = createWatchlistItem(card);
+  const differentCard = {
+    provider: 'tcgcsv', externalId: '3:1102:5002', category: 'pokemon', game: 'pokemon',
+    name: 'Blastoise ex', setName: card.setName, number: '199', variant: card.variant,
+    price: 40, currency: 'USD'
+  };
+  assert.equal(findWatchedItem([legacyWatch], differentCard), null);
+  assert.equal(legacyProviderWatchMatch([legacyWatch], differentCard), null);
+  // A same-shaped tcgcsv item (not a legacy provider) is never a fallback source.
+  const tcgcsvWatch = createWatchlistItem({ ...card, provider: 'tcgcsv', externalId: '3:1102:5001' });
+  assert.equal(legacyProviderWatchMatch([tcgcsvWatch], {
+    provider: 'tcgcsv', externalId: '3:1102:9999', category: 'pokemon', game: 'pokemon',
+    name: card.name, setName: card.setName, number: card.number
+  }), null);
 });

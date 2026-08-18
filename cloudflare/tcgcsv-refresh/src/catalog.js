@@ -1225,6 +1225,38 @@ export async function serveForecastObject(env, identity, cors) {
   return new Response(object.body, { status: 200, headers });
 }
 
+// B2: catalog-v2 enrichment bridge (analytics/src/collectfolio_analytics/
+// catalog_bridge.py). Published exactly like a forecast object -- one
+// gzip JSON object per flagship categoryId, community-free-access,
+// "absent == no enrichment for that category yet" (fail-closed; the app
+// must never guess at a join the bridge builder didn't publish).
+const MAX_BRIDGE_OBJECT_BYTES = 4 * 1024 * 1024;
+const BRIDGE_ROUTE = /^\/catalog\/bridge\/(\d+)$/;
+
+function bridgeRouteIdentity(pathname) {
+  const match = BRIDGE_ROUTE.exec(pathname);
+  if (!match) return null;
+  const categoryId = Number.parseInt(match[1], 10);
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0) return null;
+  return { categoryId };
+}
+
+export async function serveBridgeObject(env, identity, cors) {
+  const key = `bridge/${identity.categoryId}.json.gz`;
+  const object = await env.TCGCSV_CURRENT.get(key);
+  if (!object || object.size <= 0 || object.size > MAX_BRIDGE_OBJECT_BYTES) {
+    return jsonResponse({ error: 'Bridge object was not found' }, { status: 404, headers: cors });
+  }
+  // Same batch-published, hourly-fresh cache posture as forecast objects
+  // (forecastCacheHeaders) -- the bridge table is rebuilt by an analytics
+  // run, not continuously updated.
+  const headers = forecastCacheHeaders(cors);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  headers.set('content-encoding', 'gzip');
+  if (object.httpEtag) headers.set('etag', object.httpEtag);
+  return new Response(object.body, { status: 200, headers });
+}
+
 export async function serveCatalogData(request, env) {
   const url = new URL(request.url);
   if (request.method !== 'GET') throw new CatalogRequestError('Method not allowed', 405);
@@ -1259,6 +1291,10 @@ export async function handleCatalogRequest(request, env) {
     const forecastIdentity = forecastRouteIdentity(url.pathname);
     if (request.method === 'GET' && forecastIdentity) {
       return serveForecastObject(env, forecastIdentity, cors);
+    }
+    const bridgeIdentity = bridgeRouteIdentity(url.pathname);
+    if (request.method === 'GET' && bridgeIdentity) {
+      return serveBridgeObject(env, bridgeIdentity, cors);
     }
 
     return jsonResponse(await serveCatalogData(request, env), { headers: cors });

@@ -40,9 +40,12 @@ function categoryOption(value, label, selected) {
 
 function categoryOptions(selected, games = []) {
   const mergedGames = mergeCatalogGames(games);
-  const tcgcsvGames = mergedGames.filter((game) => game.provider === 'tcgcsv');
+  // Flagship games (Pokémon/Magic/Yu-Gi-Oh!) are already listed in `standard`
+  // below via CATALOG_GAMES -- exclude them here so catalog-v2 B1 doesn't
+  // duplicate them into the TCGCSV optgroup too.
+  const tcgcsvGames = mergedGames.filter((game) => game.provider === 'tcgcsv' && !game.flagship);
   const selectedGame = catalogGame(selected, mergedGames);
-  if (selectedGame?.provider === 'tcgcsv' && !tcgcsvGames.some((game) => game.id === selectedGame.id)) {
+  if (selectedGame?.provider === 'tcgcsv' && !selectedGame.flagship && !tcgcsvGames.some((game) => game.id === selectedGame.id)) {
     tcgcsvGames.push(selectedGame);
   }
   const standard = [
@@ -78,8 +81,12 @@ function contextualFilters(category, filters = {}) {
   return `<label>Set / series<input name="setName" value="${value('setName')}" placeholder="Optional"></label><label>Card number<input name="number" value="${value('number')}" placeholder="Optional"></label><label>Variant / finish<input name="variant" value="${value('variant')}" placeholder="Foil, holofoil…"></label>`;
 }
 
+// catalog-v2 B3: Pokémon/Magic/Yu-Gi-Oh! now search the TCGCSV catalog
+// exclusively (services/catalog.js's FLAGSHIP_GAMES) -- the old
+// provider-specific "market" options never return a result for those
+// games anymore, so they're removed rather than left as dead choices.
 function providerOptions(selected) {
-  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>TCGCSV games · signed-in test</option><option value="pokemon" ${selected === 'pokemon' ? 'selected' : ''}>Pokémon market</option><option value="scryfall" ${selected === 'scryfall' ? 'selected' : ''}>Magic market</option><option value="ygoprodeck" ${selected === 'ygoprodeck' ? 'selected' : ''}>Yu-Gi-Oh! market</option>`;
+  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>TCGCSV games · signed-in test</option>`;
 }
 
 function pricingMarkup(model) {
@@ -178,11 +185,16 @@ function browseGameButton(game, browse, { directory = false } = {}) {
 }
 
 function gameChooser(state, browse, catalogGames) {
-  const tcgcsvGames = catalogGames.filter((game) => game.provider === 'tcgcsv');
-  const publicGames = catalogGames.filter((game) => game.provider !== 'tcgcsv');
+  // catalog-v2 B1: flagship games (Pokémon/Magic/Yu-Gi-Oh!) are provider
+  // 'tcgcsv' too now, so the primary/directory split can no longer use
+  // provider alone -- `flagship` marks the fixed CATALOG_GAMES entries that
+  // always stay in the quick-chip row, everything else is the searchable
+  // TCGCSV category directory.
+  const tcgcsvGames = catalogGames.filter((game) => game.provider === 'tcgcsv' && !game.flagship);
+  const publicGames = catalogGames.filter((game) => game.flagship);
   const selected = catalogGame(browse.game, catalogGames);
   const quickGames = [{ id: 'all', name: 'All games', shortName: 'All games' }, ...publicGames];
-  if (selected?.provider === 'tcgcsv') quickGames.push(selected);
+  if (selected?.provider === 'tcgcsv' && !selected.flagship) quickGames.push(selected);
   const status = `${tcgcsvGames.length} TCGCSV categories mapped · free community access`;
   return `<section class="browse-game-chooser" aria-labelledby="browse-game-heading">
     <div class="browse-game-chips" role="group" aria-label="Primary card games">${quickGames.map((game) => browseGameButton(game, browse)).join('')}</div>

@@ -1,0 +1,27 @@
+{
+  "categoryId": 1,
+  "contractVersion": "catalog-bridge-v1",
+  "generatedAt": "2026-08-17T23:35:29.374557+00:00",
+  "matchRates": {
+    "product_by_method": {
+      "collector-number": 78984
+    },
+    "product_matched": 78984,
+    "product_total": 94712,
+    "product_unmatched_by_reason": {
+      "no-candidate": 15728
+    },
+    "set_by_method": {
+      "abbreviation-exact": 82,
+      "name-exact": 248,
+      "name-similarity": 3
+    },
+    "set_matched": 333,
+    "set_total": 453,
+    "set_unmatched_by_reason": {
+      "ambiguous": 1,
+      "no-candidate": 119
+    }
+  },
+  "provider": "scryfall"
+}

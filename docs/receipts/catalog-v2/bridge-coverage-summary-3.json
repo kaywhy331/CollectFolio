@@ -1,0 +1,28 @@
+{
+  "categoryId": 3,
+  "contractVersion": "catalog-bridge-v1",
+  "generatedAt": "2026-08-17T23:33:53.298058+00:00",
+  "matchRates": {
+    "product_by_method": {
+      "collector-number": 17383
+    },
+    "product_matched": 17383,
+    "product_total": 21844,
+    "product_unmatched_by_reason": {
+      "ambiguous": 7,
+      "no-candidate": 4454
+    },
+    "set_by_method": {
+      "abbreviation-exact": 87,
+      "name-exact": 59,
+      "name-similarity": 14
+    },
+    "set_matched": 160,
+    "set_total": 217,
+    "set_unmatched_by_reason": {
+      "ambiguous": 1,
+      "no-candidate": 56
+    }
+  },
+  "provider": "pokemon"
+}

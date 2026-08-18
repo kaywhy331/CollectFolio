@@ -66,6 +66,11 @@ export function catalogReferenceForItem(item = {}, options = {}) {
     marketCondition,
     image: item.image || '',
     imageSmall: item.imageSmall || item.image || '',
+    // catalog-v2 B2: additive provider display data (see
+    // services/catalog-enrichment.js). Absent for every item today and
+    // for any item that stays unmatched -- purely display-layer, never
+    // part of identity/watch-key derivation above.
+    enrichment: item.enrichment || null,
     currency: item.currency || 'USD',
     price: item.price === '' || item.price === null || item.price === undefined || !Number.isFinite(Number(item.price)) ? null : Number(item.price),
     pricingEntitlement: item.pricingEntitlement || '',

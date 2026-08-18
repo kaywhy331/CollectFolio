@@ -156,6 +156,12 @@ test('low-quality native OCR falls through and never exposes random characters',
 });
 
 test('accepted OCR relaxes an over-specific query and recovers a catalog candidate', async ({ page }) => {
+  // catalog-v2 B3: 'pokemon' search now goes exclusively through
+  // /catalog/search (TCGCSV) -- see services/catalog.js's FLAGSHIP_GAMES --
+  // so the relaxation flow (an over-specific query fails, a relaxed one
+  // recovers a candidate) is exercised against that backend's raw `q` text
+  // instead of pokemontcg.io's structured query syntax.
+  const TCGCSV_ORIGIN = 'https://tcgcsv-e2e.example.test';
   const queries = [];
   await page.addInitScript(() => {
     window.TextDetector = class {
@@ -167,37 +173,42 @@ test('accepted OCR relaxes an over-specific query and recovers a catalog candida
       }
     };
   });
-  await page.route('https://api.pokemontcg.io/v2/**', (route) => {
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.0-test',
+      TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
+      ENABLE_TESSERACT: true, ENABLE_WATCHLISTS: true,
+      ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
+    });`
+  }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/search**`, (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname.endsWith('/sets')) {
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [], totalCount: 0 }) });
-    }
-    const providerQuery = url.searchParams.get('q') || '';
-    queries.push(providerQuery);
-    const matched = providerQuery.includes('name:"synthetic dragon ex"') && !providerQuery.includes('number:223');
+    const q = url.searchParams.get('q') || '';
+    queries.push(q);
+    // Same relaxation contract as the old provider-query assertions below:
+    // the over-specific "name + number" query still fails to match, and
+    // only the relaxed "name only" query recovers the candidate.
+    const matched = /synthetic dragon ex/i.test(q) && !/223/.test(q);
     return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        data: matched ? [{
-          id: 'synthetic-223', name: 'Synthetic Dragon ex', number: '223', rarity: 'rare',
-          set: { name: 'Synthetic Set' }, images: {}
+        products: matched ? [{
+          productId: 5001, categoryId: 3, groupId: 1102,
+          categoryName: 'Pokemon', groupName: 'Synthetic Set',
+          name: 'Synthetic Dragon ex', cleanName: 'Synthetic Dragon ex',
+          cardNumber: '223', rarity: 'rare', prices: []
         }] : [],
-        totalCount: matched ? 1 : 0
+        publicationId: 'e2e', sourceUpdatedAt: '2026-08-17'
       })
     });
   });
-  await page.route('https://api.tcgdex.net/**', (route) => {
-    const url = new URL(route.request().url());
-    return route.fulfill({ contentType: 'application/json', body: url.pathname.endsWith('/sets') ? '[]' : '[]' });
-  });
-  await page.route('https://api.scryfall.com/**', (route) => route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ object: 'error', code: 'not_found' }) }));
-  await page.route('https://db.ygoprodeck.com/**', (route) => route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'No card matching your query was found in the database.' }) }));
 
   await skipOnboarding(page);
   await openImageReview(page);
 
   await expect(page.getByRole('button', { name: /Synthetic Dragon ex/ })).toBeVisible();
   await expect(page.locator('[data-crop-query]')).toHaveValue('Synthetic Dragon ex 223/197');
-  expect(queries.some((query) => query.includes('number:223'))).toBe(true);
-  expect(queries.some((query) => query.includes('name:"synthetic dragon ex"') && !query.includes('number:223'))).toBe(true);
+  expect(queries.some((query) => /223/.test(query))).toBe(true);
+  expect(queries.some((query) => /synthetic dragon ex/i.test(query) && !/223/.test(query))).toBe(true);
 });
