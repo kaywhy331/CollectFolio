@@ -142,7 +142,7 @@ test('Browse Sets keeps flagship games pinned as quick chips and the rest of the
 
   const categories = page.locator('[data-game-search-text]');
   await expect(categories).toHaveCount(87);
-  await expect(page.getByText('87 TCGCSV categories mapped · free community access')).toBeVisible();
+  await expect(page.getByText('87 game categories · free community access')).toBeVisible();
   await expect(page.locator('#browse-game-options').getByRole('button', { name: 'Pokémon', exact: true })).toHaveCount(0);
 
   await page.getByPlaceholder('Find Dragon Ball, One Piece, Digimon…').fill('one piece');

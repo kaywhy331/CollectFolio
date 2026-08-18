@@ -430,7 +430,13 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .history-bar-forecast-cold-start { fill: color-mix(in srgb, var(--warning) 35%, transparent); stroke: var(--warning); }
 .history-bar-whisker { stroke: var(--blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .trajectory-cold-start .history-bar-whisker { stroke: var(--warning); }
-.history-bar-chart .trend-chart { display: block; }
+.history-bar-chart .trend-chart, .history-line-chart .trend-chart { display: block; }
+.history-line { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.history-point { fill: var(--accent); opacity: 0.85; }
+.history-forecast-line { stroke: var(--blue); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.history-forecast-line-cold-start { stroke: var(--warning); }
+.history-forecast-point { fill: var(--blue); }
+.history-forecast-point-cold-start { fill: var(--warning); }
 .history-chart-card .chart-legend { margin-top: .6rem; }
 .inspector-history { margin-top: .75rem; }
 .inspector-history .history-bars { max-height: 180px; }
@@ -574,6 +580,8 @@ span.browse-set-art.placeholder { display: flex; align-items: center; justify-co
 .result-market-outlook dt { color: var(--muted); font-size: .56rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .result-market-outlook dd { margin: .08rem 0 0; overflow: hidden; font-size: .72rem; font-weight: 850; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .result-market-outlook small { overflow: hidden; color: var(--muted); font-size: .54rem; text-overflow: ellipsis; white-space: nowrap; }
+.result-market-outlook dd small { display: block; font-weight: 500; }
+.result-outlook-note dd { margin: 0; overflow: visible; white-space: normal; }
 .result-market-outlook .positive { color: var(--positive); }
 .result-market-outlook .negative { color: var(--danger); }
 .result-outlook-note { grid-column: 1 / -1; padding: .4rem .5rem; color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border)); border-radius: 8px; }

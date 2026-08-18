@@ -214,7 +214,7 @@ function refreshStatusMarkup(refresh = {}) {
   if (!refresh.status || refresh.status === 'disabled') return '';
   const labels = {
     loading: ['Checking market data', 'Reading the latest private refresh receipt.'],
-    current: ['Market data is current', 'The latest TCGCSV source build completed successfully.'],
+    current: ['Market data is current', 'The latest market data build completed successfully.'],
     in_progress: ['Market data is updating', 'One deterministic full-cohort refresh is in progress.'],
     update_required: ['New market data is queued', 'The hourly refresh lane will process this source build.'],
     unavailable: ['Refresh status unavailable', 'The portfolio remains usable with its existing local data.']

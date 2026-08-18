@@ -200,7 +200,7 @@ test('TCGCSV requests use the signed-in bearer token and preserve query filters'
         status: 401,
         headers: { 'content-type': 'application/json' }
       })
-    }), /This TCGCSV catalog deployment still requires sign-in/);
+    }), /This catalog deployment still requires sign-in/);
   } finally {
     if (priorWindow === undefined) delete globalThis.window;
     else globalThis.window = priorWindow;

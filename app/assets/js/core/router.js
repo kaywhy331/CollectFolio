@@ -23,6 +23,24 @@ function bounded(value, max = 200) {
   return String(value || '').trim().slice(0, max);
 }
 
+// SEO-friendly card URLs (Kevin 2026-08-18): catalog cards address as
+// /cards/<set-name-product-name>-<categoryId>-<groupId>-<productId>. The
+// trailing numeric triple is the identity; the slug prefix is decorative
+// and never trusted. Legacy /cards/tcgcsv:c:g:p links (and watch-key /
+// variant-UUID links, which always contain ':') keep resolving unchanged.
+const CARD_SLUG_ID = /^(?:[^:]*-)?(\d+)-(\d+)-(\d+)$/;
+
+export function cardSlug(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+    .replace(/-+$/, '');
+}
+
 function entityId(value) {
   try {
     return bounded(decodeURIComponent(value), 500);
@@ -145,6 +163,13 @@ export function parseAppRoute(input = '/') {
   const cardMatch = pathname.match(/^\/cards\/([^/]+)$/);
   if (cardMatch) {
     const id = entityId(cardMatch[1]);
+    const slugged = id && !id.includes(':') ? CARD_SLUG_ID.exec(id) : null;
+    if (slugged) {
+      return route('card-detail', 'detail', `/cards/${encodeURIComponent(id)}`, {
+        entityId: `tcgcsv:${slugged[1]}:${slugged[2]}:${slugged[3]}`,
+        origin: 'search'
+      });
+    }
     if (id) return route('card-detail', 'detail', `/cards/${encodeURIComponent(id)}`, { entityId: id, origin: 'search' });
   }
   const holdingMatch = pathname.match(/^\/holdings\/([^/]+)$/);
@@ -172,6 +197,10 @@ function detailPath(detail = {}) {
   if (selected.holding?.id) return `/holdings/${encodeURIComponent(selected.holding.id)}`;
   const provider = bounded(selected.item?.provider || selected.catalogRef?.provider, 50).toLowerCase();
   const externalId = bounded(selected.item?.externalId || selected.catalogRef?.externalId, 400);
+  if (provider === 'tcgcsv' && /^\d+:\d+:\d+$/.test(externalId)) {
+    const slug = cardSlug(`${selected.item?.setName || selected.catalogRef?.setName || ''} ${selected.item?.name || selected.catalogRef?.name || ''}`);
+    return `/cards/${slug ? `${slug}-` : ''}${externalId.replace(/:/g, '-')}`;
+  }
   const providerId = provider && externalId ? `${provider}:${externalId}` : '';
   const id = selected.watched?.watchKey
     || providerId

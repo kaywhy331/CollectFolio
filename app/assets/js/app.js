@@ -94,6 +94,40 @@ root.addEventListener('error', (event) => {
   image.replaceWith(placeholder);
 }, true);
 
+// Every state change re-renders via innerHTML, which used to recreate all
+// img nodes -- even cache-hit images repaint asynchronously after decode,
+// so pages with many card images flickered on each hydration step (products,
+// intelligence, forecasts, history each trigger a render). Fix: build the new
+// tree in a template, then ADOPT any already-decoded live img element whose src is
+// unchanged -- moving a live element preserves its decoded bitmap, so
+// unchanged images never blank. Attributes from the fresh markup are carried
+// onto the adopted node; the error/fallback path keeps working because image
+// error handling is delegated on `root` (see the capture listener above).
+function renderRoot(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const live = new Map();
+  root.querySelectorAll('img[data-external-image]').forEach((image) => {
+    const src = image.getAttribute('src');
+    if (src && image.complete && image.naturalWidth > 0 && !live.has(src)) live.set(src, image);
+  });
+  if (live.size) {
+    template.content.querySelectorAll('img[data-external-image]').forEach((image) => {
+      const src = image.getAttribute('src');
+      const decoded = src ? live.get(src) : null;
+      if (!decoded) return;
+      live.delete(src);
+      decoded.className = image.className;
+      decoded.alt = image.alt;
+      decoded.loading = image.loading;
+      if (image.dataset.fallbackSrc) decoded.dataset.fallbackSrc = image.dataset.fallbackSrc;
+      else delete decoded.dataset.fallbackSrc;
+      image.replaceWith(decoded);
+    });
+  }
+  root.replaceChildren(template.content);
+}
+
 function render(state = getState()) {
   const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, insights: renderInsights, profile: renderProfile, scan: () => renderScanReview(activeDraft, state), detail: () => renderPriceIntelligenceDetail(activeDetail, state) };
   const inspectorOpen = Boolean(state.ready && state.activeView === 'detail' && history.state?.inspector && activeDetail);
@@ -101,12 +135,12 @@ function render(state = getState()) {
     && !state.settings.onboardingComplete
     && !state.settings.onboardingSkipped
     && !['add', 'scan'].includes(state.activeView);
-  if (!state.ready) root.innerHTML = '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>';
-  else if (onboardingVisible) root.innerHTML = renderOnboarding(state);
+  if (!state.ready) renderRoot('<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>');
+  else if (onboardingVisible) renderRoot(renderOnboarding(state));
   else if (inspectorOpen) {
     const underlay = activeDetail.origin === 'search' ? renderSearch(state) : activeDetail.origin === 'insights' ? renderInsights(state) : renderPortfolio(state);
-    root.innerHTML = `<div class="inspector-underlay" inert aria-hidden="true">${underlay}</div>${renderQuickInspector(activeDetail, state)}`;
-  } else root.innerHTML = (views[state.activeView] || renderHome)(state);
+    renderRoot(`<div class="inspector-underlay" inert aria-hidden="true">${underlay}</div>${renderQuickInspector(activeDetail, state)}`);
+  } else renderRoot((views[state.activeView] || renderHome)(state));
   const destination = primaryDestination(state.route || activeRoute);
   document.querySelectorAll('.primary-nav [data-nav]').forEach((button) => {
     const selected = button.dataset.nav === destination;
@@ -504,6 +538,7 @@ async function hydrateCardRoute(route) {
       })
     };
     render();
+    if (item?.name) document.title = `${[item.name, item.setName].filter(Boolean).join(' · ')} · CollectFolio`;
     scheduleCatalogEnrichment(item);
     // Bugfix (0.8.17): a deep-linked card route never went through
     // hydrateIntelligence() (search/browse only), so trajectory forecasts
@@ -667,7 +702,10 @@ function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = tru
     history.replaceState(historyState, '', route.canonicalPath);
   }
   setState(routeStatePatch(route, state));
-  document.title = `${({ overview: 'Overview', portfolio: 'Portfolio', discover: 'Discover', insights: 'Insights', add: 'Add', 'add-review': 'Add review', settings: 'Settings', 'card-detail': 'Card detail', 'holding-detail': 'Holding detail' })[route.key] || 'CollectFolio'} · CollectFolio`;
+  const detailTitle = ['card-detail', 'holding-detail'].includes(route.key) && activeDetail?.item?.name
+    ? [activeDetail.item.name, activeDetail.item.setName].filter(Boolean).join(' · ')
+    : '';
+  document.title = `${detailTitle || ({ overview: 'Overview', portfolio: 'Portfolio', discover: 'Discover', insights: 'Insights', add: 'Add', 'add-review': 'Add review', settings: 'Settings', 'card-detail': 'Card detail', 'holding-detail': 'Holding detail' })[route.key] || 'CollectFolio'} · CollectFolio`;
   if (focus) root.focus({ preventScroll: true });
   if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
   if (state.ready && route.key === 'card-detail' && !activeDetail) hydrateCardRoute(route);

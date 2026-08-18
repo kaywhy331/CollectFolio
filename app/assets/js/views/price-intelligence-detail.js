@@ -4,7 +4,7 @@ import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-c
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart, trajectoryProjectionChart } from '../core/ui.js';
-import { historyBarChart } from '../core/history-chart.js';
+import { historyLineChart } from '../core/history-chart.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
 import { historyKeyForItem } from '../services/history-trajectory.js';
@@ -114,7 +114,7 @@ function allAttributesSection(item, ref, currency) {
     .map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(String(value))}</dd></div>`)
     .join('');
   if (!attributeMarkup && !priceMarkup && !identityMarkup) return '';
-  return `<details class="data-details" id="detail-attributes"><summary><span>All attributes</span><span>Full TCGCSV record for this printing</span></summary><div>${identityMarkup ? `<p class="fine-print">Group &amp; category identity</p><dl>${identityMarkup}</dl>` : ''}${attributeMarkup ? `<p class="fine-print">Card attributes</p><dl>${attributeMarkup}</dl>` : ''}${priceMarkup ? `<p class="fine-print">Price subtypes (all fields)</p><dl>${priceMarkup}</dl>` : ''}</div></details>`;
+  return `<details class="data-details" id="detail-attributes"><summary><span>All attributes</span><span>Full catalog record for this printing</span></summary><div>${identityMarkup ? `<p class="fine-print">Group &amp; category identity</p><dl>${identityMarkup}</dl>` : ''}${attributeMarkup ? `<p class="fine-print">Card attributes</p><dl>${attributeMarkup}</dl>` : ''}${priceMarkup ? `<p class="fine-print">Price subtypes (all fields)</p><dl>${priceMarkup}</dl>` : ''}</div></details>`;
 }
 
 function updatedAgo(iso) {
@@ -318,9 +318,9 @@ function trajectorySection(item, state, sectionId) {
     : isEarly
       ? 'Built from a short observed price history for this printing; treat the range as wider and less certain than a standard forecast.'
       : 'Modeled from published price history for this exact printing.';
-  const pill = isColdStart ? 'Cold start' : isEarly ? 'Early estimate' : 'Trajectory-v1';
+  const pill = isColdStart ? 'Cold start' : isEarly ? 'Early estimate' : 'Modeled';
   const horizonBlock = (horizon, band) => band ? `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(band.q50, state.settings?.currency || 'USD'))} median</h3></div><span class="pill">${pill}</span></div><div class="forecast-grid"><div><span>Range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div></section>` : '';
-  return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast · Trajectory-v1</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div>${chart}<div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))} · Model ${escapeHTML(packet.modelVersion || 'trajectory-v1')}.</p></section>`;
+  return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div>${chart}<div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
 }
 
 // 0.8.17: observed weekly price-history bar chart, with published
@@ -338,9 +338,9 @@ function historySection(item, state) {
   const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
   const packet = trajectoryEntry?.eligibility === 'published' ? trajectoryEntry.packet : null;
   const stale = packet ? isTrajectoryStale(packet, trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf) : false;
-  const chart = historyBarChart(historyEntry.points, packet, state.settings?.currency || 'USD', { stale });
+  const chart = historyLineChart(historyEntry.points, packet, state.settings?.currency || 'USD', { stale });
   if (!chart) return '';
-  return `<section class="card history-chart-card" id="detail-history"><div class="section-heading"><div><p class="eyebrow">Observed price history</p><h2>Weekly price trend${packet ? ' with projected estimates' : ''}</h2><p class="muted">Historic weekly prices sourced from TCGCSV pricing archives.${packet ? ' Projected bars show this printing’s published trajectory-v1 estimate.' : ''}</p></div></div>${chart}</section>`;
+  return `<section class="card history-chart-card" id="detail-history"><div class="section-heading"><div><p class="eyebrow">Observed price history</p><h2>Weekly price trend${packet ? ' with projected estimates' : ''}</h2><p class="muted">Observed weekly market prices for this exact printing.${packet ? ' Projected marks show the published estimate.' : ''}</p></div></div>${chart}</section>`;
 }
 
 function localScenarioSection(holding, scenario) {
