@@ -282,11 +282,13 @@ test('foundation shell stays truthful and keyboard-operable across breakpoints',
 });
 
 test('routes restore filters and Quick Inspector preserves context, focus, and full detail', async ({ page }) => {
-  await page.goto('/discover?mode=search&q=Lotus&category=magic&provider=scryfall');
+  // catalog-v2 B3: the 'Market source' filter's secondary-provider options
+  // (scryfall included) were removed -- only 'all' and 'tcgcsv' remain.
+  await page.goto('/discover?mode=search&q=Lotus&category=magic&provider=tcgcsv');
   await dismissOnboarding(page, 'Discover');
   await expect(page.locator('#catalog-query')).toHaveValue('Lotus');
   await expect(page.locator('[name="category"]')).toHaveValue('magic');
-  await expect(page.locator('[name="provider"]')).toHaveValue('scryfall');
+  await expect(page.locator('[name="provider"]')).toHaveValue('tcgcsv');
 
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Portfolio' }).click();

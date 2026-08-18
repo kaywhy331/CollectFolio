@@ -1,5 +1,33 @@
 import { test, expect } from '@playwright/test';
 
+// catalog-v2 B3 (search primacy): magic/pokemon/yugioh search now always
+// resolves through TCGCSV (services/providers/tcgcsv.js), which caps a
+// search at MAX_SEARCH_RESULTS (200) total, across as many cursor-paginated
+// upstream pages as it takes to reach that cap. This spec previously
+// stubbed Scryfall's own (uncapped) pagination directly to prove a >200
+// result set arrives and gets shown in 200-item UI batches ("Show 200
+// more" / "Show all"); that specific >200-in-one-search scenario can no
+// longer occur for any category now that TCGCSV is the sole search
+// backend, so this test instead proves the two things that still matter
+// post-B3: (1) the client keeps following TCGCSV's cursor until the cap is
+// hit rather than stopping at the first page, and (2) once results are
+// capped at exactly the page size, no dead "load more" control renders
+// (there is nothing left to load).
+const TCGCSV_ORIGIN = 'https://tcgcsv-e2e-pagination.example.test';
+
+function tcgcsvProduct(index) {
+  return {
+    productId: 9000 + index,
+    categoryId: 1,
+    groupId: 601,
+    categoryName: 'Magic: The Gathering',
+    groupName: 'Pagination Set',
+    name: `Dragon ${index}`,
+    cleanName: `Dragon ${index}`,
+    prices: [{ subtypeName: 'Normal', marketPrice: 1 }]
+  };
+}
+
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
@@ -13,26 +41,37 @@ async function skipOnboarding(page) {
   await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
 }
 
-test('Discover retains every provider page and reveals complete results in bounded batches', async ({ page }) => {
-  await page.route('https://api.scryfall.com/cards/search**', async (route) => {
+test('Discover follows every TCGCSV cursor page up to the search cap, with no dead "load more" control once capped', async ({ page }) => {
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: window.location.origin + '/__pagination-cloud',
+      SUPABASE_ANON_KEY: 'synthetic-browser-key',
+      APP_VERSION: '0.8.16-test',
+      TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
+      ENABLE_TESSERACT: false,
+      ENABLE_PRICE_INTELLIGENCE: false,
+      ENABLE_CLOUD_DATA_REMOVAL: false
+    });`
+  }));
+  await page.route('**/__pagination-cloud/**', (route) => route.fulfill({ contentType: 'application/json', body: '[]' }));
+
+  // 250 rows are available upstream, spread across three cursor pages --
+  // the client's cap (200) is hit after the second page, so the third
+  // page must never be requested.
+  const allProducts = Array.from({ length: 250 }, (_, index) => tcgcsvProduct(index));
+  let thirdPageRequested = false;
+  await page.route(`${TCGCSV_ORIGIN}/catalog/search**`, (route) => {
     const url = new URL(route.request().url());
-    const pageNumber = Number(url.searchParams.get('page') || 1);
-    const count = pageNumber < 3 ? 250 : 27;
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        object: 'list',
-        has_more: pageNumber < 3,
-        next_page: pageNumber < 3 ? `https://api.scryfall.com/cards/search?q=dragon&page=${pageNumber + 1}` : undefined,
-        data: Array.from({ length: count }, (_, index) => ({
-          id: `dragon-${pageNumber}-${index}`,
-          name: `Dragon ${pageNumber}-${index}`,
-          set_name: 'Pagination Set',
-          collector_number: `${pageNumber}-${index}`,
-          prices: {}
-        }))
-      })
-    });
+    const cursor = url.searchParams.get('cursor') || '';
+    if (cursor === '') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ products: allProducts.slice(0, 100), nextCursor: 'page-2', publicationId: 'e2e-pagination', sourceUpdatedAt: '2026-08-17' }) });
+    }
+    if (cursor === 'page-2') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ products: allProducts.slice(100, 200), nextCursor: 'page-3', publicationId: 'e2e-pagination', sourceUpdatedAt: '2026-08-17' }) });
+    }
+    thirdPageRequested = true;
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ products: allProducts.slice(200, 250), nextCursor: '', publicationId: 'e2e-pagination', sourceUpdatedAt: '2026-08-17' }) });
   });
 
   await skipOnboarding(page);
@@ -41,14 +80,15 @@ test('Discover retains every provider page and reveals complete results in bound
   await page.locator('#catalog-query').fill('dragon');
   await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
 
-  await expect(page.getByText('Showing 200 of 527 results')).toBeVisible();
+  // Both pages needed to reach the 200 cap were fetched and rendered --
+  // the search did not stop at the first page.
   await expect(page.locator('.result-card')).toHaveCount(200);
+  await expect(page.locator('.discover-results-head strong')).toHaveText('200 results');
 
-  await page.getByRole('button', { name: 'Show 200 more' }).click();
-  await expect(page.getByText('Showing 400 of 527 results')).toBeVisible();
-  await expect(page.locator('.result-card')).toHaveCount(400);
+  // Capped exactly at the page size: nothing remains to page through, so
+  // the "Show N more" / "Show all" controls must not render.
+  await expect(page.getByRole('button', { name: /Show \d+ more/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Show all \d+/ })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Show all 527' }).click();
-  await expect(page.locator('.discover-results-head strong')).toHaveText('527 results');
-  await expect(page.locator('.result-card')).toHaveCount(527);
+  expect(thirdPageRequested).toBe(false);
 });
