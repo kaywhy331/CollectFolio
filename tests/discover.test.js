@@ -100,8 +100,8 @@ test('Discover browse exposes all 87 non-flagship source categories with free co
   assert.match(html, /data-set-id="swsh12"/);
   assert.match(html, /Silver Tempest/);
   assert.match(html, /SIT · 2022 · 195 cards/);
-  assert.match(html, /All TCGCSV games and categories/);
-  assert.match(html, /87 TCGCSV categories mapped · free community access/);
+  assert.match(html, /All games and categories/);
+  assert.match(html, /87 game categories · free community access/);
   assert.equal((html.match(/data-game-search-text=/g) || []).length, 87);
   assert.equal((html.match(/data-catalog-locked="true"/g) || []).length, 0);
   // catalog-v2 B1: flagship games are pinned as quick chips, not the
@@ -132,7 +132,7 @@ test('Discover browse exposes all 87 non-flagship source categories with free co
   assert.match(drilled, /data-action="browse-all-games">Discover</);
   assert.match(drilled, /<h2>Pokémon<\/h2>/);
   assert.match(drilled, /data-action="browse-all-games">All games</);
-  assert.doesNotMatch(drilled, /All TCGCSV games and categories/);
+  assert.doesNotMatch(drilled, /All games and categories/);
   assert.equal((drilled.match(/data-game-search-text=/g) || []).length, 0);
   assert.match(drilled, /data-set-id="swsh12"/);
 
@@ -176,7 +176,7 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
   assert.match(browse, /<h2>One Piece Card Game<\/h2>/);
   assert.match(browse, /TCGCSV category 68/);
   assert.match(browse, /data-action="browse-all-games">All games</);
-  assert.doesNotMatch(browse, /All TCGCSV games and categories/);
+  assert.doesNotMatch(browse, /All games and categories/);
   assert.equal((browse.match(/data-game-search-text=/g) || []).length, 0);
   assert.match(browse, /One Piece Card Game[\s\S]*Romance Dawn/);
   assert.doesNotMatch(browse, /Full catalog|Full TCGCSV catalog/);
@@ -189,7 +189,7 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
       results: [{ ...item, provider: 'tcgcsv', externalId: '68:1000:2000', category: 'tcgcsv-category-68', game: 'One Piece Card Game', name: 'Monkey.D.Luffy' }]
     }
   }));
-  assert.match(search, /<optgroup label="TCGCSV games and categories \(87\)">/);
+  assert.match(search, /<optgroup label="More games and categories \(87\)">/);
   assert.match(search, /value="tcgcsv-category-68" selected>One Piece Card Game/);
   assert.match(search, /class="result-facts"><span>One Piece Card Game<\/span>/);
   assert.doesNotMatch(search, /Full catalog|Full TCGCSV catalog/);

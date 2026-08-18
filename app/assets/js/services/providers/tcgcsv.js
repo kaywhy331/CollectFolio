@@ -21,15 +21,15 @@ function config() {
 
 function catalogBaseUrl() {
   const configured = String(config().TCGCSV_CATALOG_URL ?? '').trim();
-  if (!configured) throw new Error('The TCGCSV catalog is not configured on this site.');
+  if (!configured) throw new Error('The card catalog is not configured on this site.');
   let url;
   try {
     url = new URL(configured);
   } catch {
-    throw new Error('The TCGCSV catalog URL is invalid.');
+    throw new Error('The card catalog URL is invalid.');
   }
   if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) {
-    throw new Error('The TCGCSV catalog must use HTTPS.');
+    throw new Error('The card catalog must use HTTPS.');
   }
   return url;
 }
@@ -48,22 +48,22 @@ async function catalogSession() {
 async function boundedJson(response) {
   const declared = Number.parseInt(response.headers.get('content-length') ?? '', 10);
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-    throw new Error('The TCGCSV catalog response exceeded its browser limit.');
+    throw new Error('The card catalog response exceeded its browser limit.');
   }
   const text = await response.text();
   if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
-    throw new Error('The TCGCSV catalog response exceeded its browser limit.');
+    throw new Error('The card catalog response exceeded its browser limit.');
   }
   let value;
   try {
     value = JSON.parse(text);
   } catch {
-    throw new Error(`The TCGCSV catalog returned invalid JSON with HTTP ${response.status}.`);
+    throw new Error(`The card catalog returned invalid JSON with HTTP ${response.status}.`);
   }
   if (!response.ok) {
     const message = response.status === 401
-      ? 'This TCGCSV catalog deployment still requires sign-in.'
-      : value?.error || `The TCGCSV catalog request failed with HTTP ${response.status}.`;
+      ? 'This catalog deployment still requires sign-in.'
+      : value?.error || `The card catalog request failed with HTTP ${response.status}.`;
     throw new Error(message);
   }
   return value;
@@ -125,7 +125,7 @@ export function tcgcsvCategory(categoryId, categoryName = '') {
   const category = tcgcsvGameId(id);
   return {
     category,
-    game: String(categoryName || KNOWN_CATEGORY_NAMES[id] || `TCGCSV category ${id}`)
+    game: String(categoryName || KNOWN_CATEGORY_NAMES[id] || `Game category ${id}`)
   };
 }
 
@@ -158,8 +158,8 @@ function normalizedPriceOption(row = {}) {
     finish: String(row.subtypeName || 'Unspecified'),
     price: preferred.value,
     source: preferred.value === null
-      ? 'TCGCSV community catalog · price unavailable'
-      : `TCGCSV community catalog · ${preferred.label}`,
+      ? 'Market pricing unavailable'
+      : `Market price · ${preferred.label}`,
     selectedField: preferred.field,
     lowPrice: finitePrice(row.lowPrice),
     midPrice: finitePrice(row.midPrice),
@@ -201,7 +201,7 @@ export function normalizeTCGCSVProduct(product = {}, {
     pricingEntitlement: FREE_ACCESS_ENTITLEMENT,
     category: mapped.category,
     game: mapped.game,
-    name: product.name || product.cleanName || `TCGCSV product ${productId}`,
+    name: product.name || product.cleanName || `Product ${productId}`,
     cleanName: product.cleanName || product.name || '',
     setName,
     setCode: group.abbreviation || '',
@@ -300,7 +300,7 @@ export async function listTCGCSVGroups({ categoryId = null, session, fetchImpl }
   const activeSession = session || await catalogSession();
   const scopedCategoryId = categoryId === null ? null : Number(categoryId);
   if (scopedCategoryId !== null && (!Number.isSafeInteger(scopedCategoryId) || scopedCategoryId <= 0)) {
-    throw new Error('This TCGCSV category identifier is invalid.');
+    throw new Error('This catalog category identifier is invalid.');
   }
   const path = scopedCategoryId === null
     ? '/catalog/groups'
@@ -328,7 +328,7 @@ function groupIdentity(setId) {
   const categoryId = Number.parseInt(match?.[1] ?? '', 10);
   const groupId = Number.parseInt(match?.[2] ?? '', 10);
   if (!match || !Number.isSafeInteger(categoryId) || !Number.isSafeInteger(groupId)) {
-    throw new Error('This TCGCSV catalog group identifier is invalid.');
+    throw new Error('This catalog group identifier is invalid.');
   }
   return { categoryId, groupId };
 }
@@ -412,7 +412,7 @@ export async function searchTCGCSV(query, { category = 'all', session, fetchImpl
 
 export async function getTCGCSVProduct(externalId) {
   const match = /^(\d+):(\d+):(\d+)$/.exec(String(externalId || ''));
-  if (!match) throw new Error('This TCGCSV product identifier is invalid.');
+  if (!match) throw new Error('This catalog product identifier is invalid.');
   const [categoryId, groupId, productId] = match.slice(1).map(Number);
   const payload = await requestTCGCSVCatalog(
     `/catalog/products/${categoryId}/${groupId}/${productId}`

@@ -53,7 +53,7 @@ function categoryOptions(selected, games = []) {
     ...CATALOG_GAMES.map((game) => [game.id, game.name])
   ].map(([value, label]) => categoryOption(value, label, selected)).join('');
   const tcgcsv = tcgcsvGames.length
-    ? `<optgroup label="TCGCSV games and categories (${tcgcsvGames.length})">${tcgcsvGames.map((game) => categoryOption(game.id, game.name, selected)).join('')}</optgroup>`
+    ? `<optgroup label="More games and categories (${tcgcsvGames.length})">${tcgcsvGames.map((game) => categoryOption(game.id, game.name, selected)).join('')}</optgroup>`
     : '';
   const custom = [['sports', 'Sports — custom'], ['comics', 'Comics — custom'], ['slab', 'Graded slab — custom'], ['other', 'Other — custom']]
     .map(([value, label]) => categoryOption(value, label, selected)).join('');
@@ -86,7 +86,7 @@ function contextualFilters(category, filters = {}) {
 // provider-specific "market" options never return a result for those
 // games anymore, so they're removed rather than left as dead choices.
 function providerOptions(selected) {
-  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>TCGCSV games · signed-in test</option>`;
+  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>Trading card games</option>`;
 }
 
 function pricingMarkup(model) {
@@ -222,14 +222,14 @@ function gameChooser(state, browse, catalogGames) {
   const selected = catalogGame(browse.game, catalogGames);
   const quickGames = [{ id: 'all', name: 'All games', shortName: 'All games' }, ...publicGames];
   if (selected?.provider === 'tcgcsv' && !selected.flagship) quickGames.push(selected);
-  const status = `${tcgcsvGames.length} TCGCSV categories mapped · free community access`;
+  const status = `${tcgcsvGames.length} game categories · free community access`;
   return `<section class="browse-game-chooser" aria-labelledby="browse-game-heading">
     <div class="browse-game-chips" role="group" aria-label="Primary card games">${quickGames.map((game) => browseGameButton(game, browse)).join('')}</div>
     <div class="browse-game-directory">
-      <div class="browse-game-directory-head"><div><strong id="browse-game-heading">All TCGCSV games and categories</strong><span>${escapeHTML(status)}</span></div><span class="browse-game-count">${tcgcsvGames.length}</span></div>
-      <label class="browse-game-search"><span class="sr-only">Filter TCGCSV games and categories</span><input type="search" data-browse-game-query aria-controls="browse-game-options" placeholder="Find Dragon Ball, One Piece, Digimon…" autocomplete="off"></label>
-      <div id="browse-game-options" class="browse-game-options" role="group" aria-label="All TCGCSV games and categories">${tcgcsvGames.map((game) => browseGameButton(game, browse, { directory: true })).join('')}</div>
-      <p class="browse-game-empty" data-browse-game-empty hidden>No matching TCGCSV category.</p>
+      <div class="browse-game-directory-head"><div><strong id="browse-game-heading">All games and categories</strong><span>${escapeHTML(status)}</span></div><span class="browse-game-count">${tcgcsvGames.length}</span></div>
+      <label class="browse-game-search"><span class="sr-only">Filter games and categories</span><input type="search" data-browse-game-query aria-controls="browse-game-options" placeholder="Find Dragon Ball, One Piece, Digimon…" autocomplete="off"></label>
+      <div id="browse-game-options" class="browse-game-options" role="group" aria-label="All games and categories">${tcgcsvGames.map((game) => browseGameButton(game, browse, { directory: true })).join('')}</div>
+      <p class="browse-game-empty" data-browse-game-empty hidden>No matching category.</p>
     </div>
   </section>`;
 }
@@ -306,7 +306,7 @@ function renderBrowseSets(state, browse) {
     : remaining > 0
       ? `Showing ${visible.length.toLocaleString()} of ${sets.length.toLocaleString()} sets`
       : `${sets.length.toLocaleString()} ${sets.length === 1 ? 'set' : 'sets'}`;
-  const rightsNote = 'All 90 imported TCGCSV categories are free to browse for the whole community. Groups, products, finishes, and prices stay category-scoped and non-commercial.';
+  const rightsNote = 'Every imported game category is free to browse for the whole community. Groups, products, finishes, and prices stay category-scoped and non-commercial.';
   return `${browse.game === 'all' ? gameChooser(state, browse, games) : browseGameHeader(browse, games)}
     <div class="browse-controls">
       <label class="browse-query"><span class="sr-only">Search sets</span><input type="search" data-browse-set-query value="${escapeAttribute(browse.query || '')}" placeholder="Search sets or codes…" autocomplete="off"></label>
