@@ -1,24 +1,30 @@
 {
   "categories": {
     "1": {
-      "eligibleVariants": 163197,
-      "excludedByCohort": {
-        "insufficient-history": 1016,
-        "low-history": 2349
-      },
-      "excludedGroups": 2,
+      "eligibleVariants": 166562,
+      "excludedByCohort": {},
+      "excludedGroups": 0,
       "lastKnownDateRange": {
-        "earliest": "2026-06-20",
+        "earliest": "2025-02-08",
         "latest": "2026-08-08"
       },
-      "objectsWritten": 468,
-      "publishedGroups": 447,
+      "objectsWritten": 510,
+      "publishedGroups": 449,
       "servedHorizonsByCohort": {
         "cold-start": [
           30,
           90
         ],
+        "insufficient-history": [
+          30,
+          90
+        ],
+        "low-history": [
+          30,
+          90
+        ],
         "standard": [
+          30,
           90
         ]
       },
@@ -26,24 +32,30 @@
       "totalVariants": 166562
     },
     "2": {
-      "eligibleVariants": 60460,
-      "excludedByCohort": {
-        "insufficient-history": 273,
-        "low-history": 593
-      },
-      "excludedGroups": 3,
+      "eligibleVariants": 61326,
+      "excludedByCohort": {},
+      "excludedGroups": 0,
       "lastKnownDateRange": {
-        "earliest": "2026-06-20",
+        "earliest": "2025-02-01",
         "latest": "2026-08-08"
       },
-      "objectsWritten": 614,
-      "publishedGroups": 614,
+      "objectsWritten": 622,
+      "publishedGroups": 617,
       "servedHorizonsByCohort": {
         "cold-start": [
           30,
           90
         ],
+        "insufficient-history": [
+          30,
+          90
+        ],
+        "low-history": [
+          30,
+          90
+        ],
         "standard": [
+          30,
           90
         ]
       },
@@ -51,20 +63,25 @@
       "totalVariants": 61326
     },
     "3": {
-      "eligibleVariants": 45572,
-      "excludedByCohort": {
-        "insufficient-history": 118,
-        "low-history": 1202
-      },
-      "excludedGroups": 1,
+      "eligibleVariants": 46892,
+      "excludedByCohort": {},
+      "excludedGroups": 0,
       "lastKnownDateRange": {
-        "earliest": "2026-06-20",
+        "earliest": "2025-02-01",
         "latest": "2026-08-08"
       },
-      "objectsWritten": 218,
-      "publishedGroups": 214,
+      "objectsWritten": 220,
+      "publishedGroups": 215,
       "servedHorizonsByCohort": {
         "cold-start": [
+          30,
+          90
+        ],
+        "insufficient-history": [
+          30,
+          90
+        ],
+        "low-history": [
           30,
           90
         ],
@@ -77,21 +94,29 @@
       "totalVariants": 46892
     },
     "85": {
-      "eligibleVariants": 2128,
-      "excludedByCohort": {
-        "insufficient-history": 748,
-        "low-history": 2820,
-        "standard": 28797
-      },
-      "excludedGroups": 238,
+      "eligibleVariants": 34493,
+      "excludedByCohort": {},
+      "excludedGroups": 0,
       "lastKnownDateRange": {
-        "earliest": null,
-        "latest": null
+        "earliest": "2025-02-01",
+        "latest": "2026-08-08"
       },
-      "objectsWritten": 212,
-      "publishedGroups": 212,
+      "objectsWritten": 450,
+      "publishedGroups": 450,
       "servedHorizonsByCohort": {
         "cold-start": [
+          30,
+          90
+        ],
+        "insufficient-history": [
+          30,
+          90
+        ],
+        "low-history": [
+          30,
+          90
+        ],
+        "standard": [
           30,
           90
         ]
@@ -100,9 +125,9 @@
       "totalVariants": 34493
     }
   },
-  "elapsedSeconds": 108.479,
-  "generatedAt": "2026-08-18T05:33:56.226325+00:00",
-  "manifestContentHash": "29876c2d92694b9e1bfb639b005bf3b6723845616a03150631ed5e13fc98d6fd",
+  "elapsedSeconds": 205.985,
+  "generatedAt": "2026-08-18T12:46:39.571685+00:00",
+  "manifestContentHash": "90cfbc32efcb095a6e0b881b4fce9c5583fa25687b92acdd50a129f1db73d753",
   "maxObjectBytes": 131072,
   "modelVersion": "trajectory-v1",
   "ninetyDayOnlyServingMode": {
@@ -112,13 +137,26 @@
     ],
     "enabledBy": "Kevin, 2026-08-17 'forecasts should be for all products' directive"
   },
+  "serveAllCohortsMode": {
+    "enabled": true,
+    "enabledBy": "Kevin, 2026-08-18 'estimates are supposed to be provided on all products' directive"
+  },
   "servedHorizonsByCategory": {
     "1": {
       "cold-start": [
         30,
         90
       ],
+      "insufficient-history": [
+        30,
+        90
+      ],
+      "low-history": [
+        30,
+        90
+      ],
       "standard": [
+        30,
         90
       ]
     },
@@ -127,12 +165,29 @@
         30,
         90
       ],
+      "insufficient-history": [
+        30,
+        90
+      ],
+      "low-history": [
+        30,
+        90
+      ],
       "standard": [
+        30,
         90
       ]
     },
     "3": {
       "cold-start": [
+        30,
+        90
+      ],
+      "insufficient-history": [
+        30,
+        90
+      ],
+      "low-history": [
         30,
         90
       ],
@@ -143,6 +198,18 @@
     },
     "85": {
       "cold-start": [
+        30,
+        90
+      ],
+      "insufficient-history": [
+        30,
+        90
+      ],
+      "low-history": [
+        30,
+        90
+      ],
+      "standard": [
         30,
         90
       ]

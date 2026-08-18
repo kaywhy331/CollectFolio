@@ -304,12 +304,23 @@ function trajectorySection(item, state, sectionId) {
   }
   const packet = entry.packet;
   const isColdStart = packet.confidence === 'cold-start';
+  // Serve-all-cohorts mode (Kevin 2026-08-18): low-history and
+  // insufficient-history packets are served everywhere, labeled as early
+  // estimates rather than presented as fully modeled trajectories.
+  const isEarly = !isColdStart && ['low-history', 'insufficient-history'].includes(packet.confidence);
   const stale = isTrajectoryStale(packet, entry.manifest?.asOf || entry.groupAsOf);
   const chart = trajectoryProjectionChart(packet, state.settings?.currency || 'USD', { stale });
   const ninety = packet.horizons?.['90'];
   const thirty = packet.horizons?.['30'];
-  const horizonBlock = (horizon, band) => band ? `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(band.q50, state.settings?.currency || 'USD'))} median</h3></div><span class="pill">${isColdStart ? 'Cold start' : 'Trajectory-v1'}</span></div><div class="forecast-grid"><div><span>Range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div></section>` : '';
-  return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast · Trajectory-v1</p><h2>${isColdStart ? 'Cold start estimate' : 'Modeled trajectory'}</h2><p class="muted">${isColdStart ? 'Built without enough observed price history for this printing; treat the range as wider and less certain than a standard forecast.' : 'Modeled from published price history for this exact printing.'}</p></div></div>${chart}<div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))} · Model ${escapeHTML(packet.modelVersion || 'trajectory-v1')}.</p></section>`;
+  const heading = isColdStart ? 'Cold start estimate' : isEarly ? 'Early estimate' : 'Modeled trajectory';
+  const explainer = isColdStart
+    ? 'Built without enough observed price history for this printing; treat the range as wider and less certain than a standard forecast.'
+    : isEarly
+      ? 'Built from a short observed price history for this printing; treat the range as wider and less certain than a standard forecast.'
+      : 'Modeled from published price history for this exact printing.';
+  const pill = isColdStart ? 'Cold start' : isEarly ? 'Early estimate' : 'Trajectory-v1';
+  const horizonBlock = (horizon, band) => band ? `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(band.q50, state.settings?.currency || 'USD'))} median</h3></div><span class="pill">${pill}</span></div><div class="forecast-grid"><div><span>Range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div></section>` : '';
+  return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast · Trajectory-v1</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div>${chart}<div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))} · Model ${escapeHTML(packet.modelVersion || 'trajectory-v1')}.</p></section>`;
 }
 
 // 0.8.17: observed weekly price-history bar chart, with published

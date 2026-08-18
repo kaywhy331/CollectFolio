@@ -103,20 +103,47 @@ function signedPercent(value) {
   return formatPercent(value * 100);
 }
 
+// Reduced-confidence trajectory tiers (serve-all-cohorts mode, Kevin
+// 2026-08-18): served and displayed, but never presented as a fully
+// modeled forecast -- each carries an explicit qualifier.
+const EARLY_ESTIMATE_CONFIDENCES = Object.freeze(['low-history', 'insufficient-history']);
+
+function outlookEstimateCell(forecast, label, currency) {
+  if (!forecast) {
+    return `<div><dt>${escapeHTML(label)}</dt><dd>—</dd><small>Not enough data yet</small></div>`;
+  }
+  const qualifier = forecast.status === 'cold-start'
+    ? ' · cold start estimate'
+    : EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence)
+      ? ' · early estimate'
+      : ' modeled';
+  return `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, currency))}</dd><small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${qualifier}</small></div>`;
+}
+
 function marketOutlookMarkup(model) {
-  const horizons = [
+  // Uniform outlook template (Kevin 2026-08-18: "there is only 1 structured
+  // template layout"): every product card renders the same three slots --
+  // 30D trend, 1 mo est., 3 mo est. -- with an explicit "—" placeholder when
+  // a value is genuinely unavailable, so the card layout never differs from
+  // product to product. 6 mo / 1 year rows are appended only when a
+  // cloud-published forecast actually carries them (trajectory-v1 never does).
+  const fixed = [
     [model.forecast30d, '1 mo est.'],
-    [model.forecast90d, '3 mo est.'],
+    [model.forecast90d, '3 mo est.']
+  ];
+  const extra = [
     [model.forecast180d, '6 mo est.'],
     [model.forecast365d, '1 year est.']
   ].filter(([forecast]) => forecast);
-  if (model.change30d === null && !horizons.length) return '';
+  const horizons = [...fixed, ...extra];
   const trendClass = model.change30d === null ? '' : model.change30d >= 0 ? 'positive' : 'negative';
-  const coldStart = horizons.some(([forecast]) => forecast.status === 'cold-start');
+  const coldStart = horizons.some(([forecast]) => forecast?.status === 'cold-start');
+  const early = horizons.some(([forecast]) => forecast && forecast.status !== 'cold-start' && EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence));
   return `<dl class="result-market-outlook" aria-label="Published market trend and forecast estimates">
     <div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}</dd><small>${model.change30d === null ? 'Not enough history' : model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></div>
-    ${horizons.map(([forecast, label]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, model.currency))}</dd><small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${forecast.status === 'cold-start' ? ' · cold start estimate' : ' modeled'}</small></div>`).join('')}
+    ${horizons.map(([forecast, label]) => outlookEstimateCell(forecast, label, model.currency)).join('')}
     ${coldStart ? '<div class="result-outlook-note"><small>Cold start estimate: built without enough observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></div>' : ''}
+    ${early ? '<div class="result-outlook-note"><small>Early estimate: built from a short observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></div>' : ''}
   </dl>`;
 }
 

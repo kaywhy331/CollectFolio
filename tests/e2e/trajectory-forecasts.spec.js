@@ -26,7 +26,11 @@ const PRODUCTS = [
   { categoryId: 3, groupId: 100, productId: 5001, name: 'Trajectory Eligible Card', subtypeName: 'Holofoil', marketPrice: 120 },
   { categoryId: 3, groupId: 101, productId: 5002, name: 'Trajectory Cold Start Card', subtypeName: 'Holofoil', marketPrice: 80 },
   { categoryId: 3, groupId: 102, productId: 5003, name: 'Trajectory Excluded Card', subtypeName: 'Holofoil', marketPrice: 40 },
-  { categoryId: 3, groupId: 103, productId: 5004, name: 'Trajectory 90d Only Card', subtypeName: 'Holofoil', marketPrice: 60 }
+  { categoryId: 3, groupId: 103, productId: 5004, name: 'Trajectory 90d Only Card', subtypeName: 'Holofoil', marketPrice: 60 },
+  // 104 = published/low-history (serve-all-cohorts mode, Kevin 2026-08-18):
+  // served everywhere but labeled as an early estimate, never presented as
+  // a fully modeled forecast.
+  { categoryId: 3, groupId: 104, productId: 5005, name: 'Trajectory Early Estimate Card', subtypeName: 'Holofoil', marketPrice: 30 }
 ];
 
 function tcgcsvSearchProduct(product) {
@@ -51,7 +55,8 @@ function manifestPayload() {
           100: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/100.json.gz' }] },
           101: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/101.json.gz' }] },
           102: { status: 'excluded', reason: 'insufficient variants' },
-          103: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/103.json.gz' }] }
+          103: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/103.json.gz' }] },
+          104: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/104.json.gz' }] }
         }
       }
     }
@@ -122,6 +127,28 @@ function groupPayload(groupId) {
       }]
     };
   }
+  if (groupId === 104) {
+    // Serve-all-cohorts mode: a low-history packet serves both horizons
+    // with an explicit early-estimate label.
+    return {
+      asOf: '2026-08-10',
+      modelVersion: 'trajectory-v1',
+      part: 1,
+      partsTotal: 1,
+      variants: [{
+        productId: 5005,
+        subTypeName: 'Holofoil',
+        confidence: 'low-history',
+        lastKnownPrice: 30,
+        lastKnownDate: '2026-08-10',
+        medianPath: [{ date: '2026-08-10', price: 30 }, { date: '2026-09-09', price: 32 }],
+        horizons: {
+          30: { q10: 24, q25: 28, q50: 32, q75: 36, q90: 42 },
+          90: { q10: 20, q25: 27, q50: 34, q75: 42, q90: 52 }
+        }
+      }]
+    };
+  }
   return { asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] };
 }
 
@@ -175,6 +202,10 @@ async function configureTrajectoryStubs(page) {
     contentType: 'application/json',
     body: JSON.stringify(groupPayload(103))
   }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/forecasts/3/104**`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify(groupPayload(104))
+  }));
 }
 
 async function runSearch(page) {
@@ -185,11 +216,13 @@ async function runSearch(page) {
   const coldStartCard = page.locator('.result-card', { hasText: 'Trajectory Cold Start Card' });
   const excludedCard = page.locator('.result-card', { hasText: 'Trajectory Excluded Card' });
   const ninetyDayOnlyCard = page.locator('.result-card', { hasText: 'Trajectory 90d Only Card' });
+  const earlyEstimateCard = page.locator('.result-card', { hasText: 'Trajectory Early Estimate Card' });
   await expect(eligibleCard).toBeVisible();
   await expect(coldStartCard).toBeVisible();
   await expect(excludedCard).toBeVisible();
   await expect(ninetyDayOnlyCard).toBeVisible();
-  return { eligibleCard, coldStartCard, excludedCard, ninetyDayOnlyCard };
+  await expect(earlyEstimateCard).toBeVisible();
+  return { eligibleCard, coldStartCard, excludedCard, ninetyDayOnlyCard, earlyEstimateCard };
 }
 
 test('trajectory-v1 forecasts render the three fail-closed display states from a stubbed worker response', async ({ page }) => {
@@ -211,8 +244,15 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
 
   // State 3 -- excluded (collapses with "unknown" per the fail-closed
   // manifest map): no fabricated band, no local-scenario-v1 standing in.
+  // Uniform template (Kevin 2026-08-18): the outlook block still renders
+  // with the same 1 mo / 3 mo slots as every other card, but with explicit
+  // "—" placeholders instead of values.
   await expect(excludedCard.getByText('No published outlook', { exact: true })).toBeVisible();
-  await expect(excludedCard.locator('.result-market-outlook')).toHaveCount(0);
+  await expect(excludedCard.locator('.result-market-outlook')).toBeVisible();
+  await expect(excludedCard.getByText('1 mo est.', { exact: true })).toBeVisible();
+  await expect(excludedCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  await expect(excludedCard.getByText('Not enough data yet').first()).toBeVisible();
+  await expect(excludedCard.locator('.result-market-outlook dd', { hasText: '$' })).toHaveCount(0);
 
   // Drill into the eligible card's detail view for the full trajectory
   // chart + q50 horizon display.
@@ -256,7 +296,10 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
 
   await expect(ninetyDayOnlyCard.locator('.result-market-outlook')).toBeVisible();
   await expect(ninetyDayOnlyCard.getByText('3 mo est.', { exact: true })).toBeVisible();
-  await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  // Uniform template (Kevin 2026-08-18): the 1 mo slot still renders, but
+  // as an explicit placeholder -- never a fabricated 30-day value.
+  await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toBeVisible();
+  await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(1);
   await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toBeVisible();
 
   await ninetyDayOnlyCard.click();
@@ -265,6 +308,26 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
   await expect(page.getByText('90-day outlook')).toBeVisible();
   await expect(page.getByText('30-day outlook')).toHaveCount(0);
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
+});
+
+test('serve-all-cohorts (2026-08-18): a low-history packet renders labeled early estimates on card and detail', async ({ page }) => {
+  await configureTrajectoryStubs(page);
+  await skipOnboarding(page);
+
+  const { earlyEstimateCard } = await runSearch(page);
+
+  await expect(earlyEstimateCard.locator('.result-market-outlook')).toBeVisible();
+  await expect(earlyEstimateCard.getByText('1 mo est.', { exact: true })).toBeVisible();
+  await expect(earlyEstimateCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  await expect(earlyEstimateCard.getByText(/early estimate/).first()).toBeVisible();
+  await expect(earlyEstimateCard.locator('.result-outlook-note')).toContainText('Early estimate');
+  await expect(earlyEstimateCard.getByText('cold start estimate')).toHaveCount(0);
+
+  await earlyEstimateCard.click();
+  await page.getByRole('button', { name: 'Open full details' }).click();
+  await expect(page.getByRole('heading', { name: 'Early estimate', exact: true })).toBeVisible();
+  await expect(page.getByText(/short observed price history/).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toHaveCount(0);
 });
 
 test('bugfix (0.8.17): a card-detail deep link with no prior search still hydrates trajectory forecasts', async ({ page }) => {
