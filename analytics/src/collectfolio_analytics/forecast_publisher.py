@@ -56,6 +56,26 @@ NINETY_DAY_ONLY_OVERRIDE: frozenset[tuple[int, str]] = frozenset({
     (2, "standard"),
 })
 
+# T5 serve-all-cohorts mode (Kevin's 2026-08-18 directive: "The estimates are
+# supposed to be provided on all products", extending the 2026-08-17 "forecasts
+# should be for all products" decision from curated near-miss horizons to every
+# cohort the engine itself labels). When enabled, every packet whose cohort
+# string is one the trajectory engine emits (see trajectory.confidence_tier +
+# the cold-start branch) serves BOTH horizons everywhere. The T4 holdout gate
+# still runs and its per-cohort verdicts are still recorded in
+# evaluation-summary.* and this publish's receipt -- under this mode the gate
+# is a labeling/reporting input rather than a serving filter: the app renders
+# non-standard-confidence estimates with an explicit reduced-confidence label
+# instead of hiding them. Unrecognized cohort strings remain fail-closed
+# excluded (garbage in a packet stream must never reach the app).
+SERVE_ALL_COHORTS = True
+KNOWN_COHORTS: frozenset[str] = frozenset({
+    "standard",
+    "low-history",
+    "insufficient-history",
+    COLD_START_CONFIDENCE,
+})
+
 
 # ---------------------------------------------------------------------------
 # SourceTerms manifest loading (mirrors cardbase_history_cli.py's pattern).
@@ -202,10 +222,18 @@ def eligible_horizons(
     only a curated (category, cohort) on NINETY_DAY_ONLY_OVERRIDE -- and
     only once its 90-day pass is independently re-confirmed here -- serves
     90d alone. Everything else serves nothing: the app must render "not
-    enough evidence" for that packet rather than a fabricated value."""
+    enough evidence" for that packet rather than a fabricated value.
+
+    SERVE_ALL_COHORTS (Kevin's 2026-08-18 directive) short-circuits the
+    gate-as-filter behavior above: every recognized cohort serves both
+    horizons, with the confidence tier carried in the packet so the app
+    labels reduced-confidence estimates instead of hiding them. Unknown
+    cohort strings still serve nothing."""
 
     if confidence == COLD_START_CONFIDENCE:
         return (30, 90)
+    if SERVE_ALL_COHORTS:
+        return (30, 90) if confidence in KNOWN_COHORTS else ()
     if is_packet_eligible(category_id, confidence, serving_eligibility):
         return (30, 90)
     if (category_id, confidence) in NINETY_DAY_ONLY_OVERRIDE:
@@ -610,6 +638,10 @@ def publish_forecasts(
         "ninetyDayOnlyCohorts": [
             f"{category_id}:{cohort}" for category_id, cohort in sorted(NINETY_DAY_ONLY_OVERRIDE)
         ],
+        # Serve-all-cohorts mode flag (see SERVE_ALL_COHORTS): when true,
+        # every recognized cohort served both horizons regardless of the
+        # per-cohort gate verdicts recorded in evaluation-summary.*.
+        "serveAllCohorts": SERVE_ALL_COHORTS,
         "lastKnownDateRange": {
             "earliest": min(all_dates) if all_dates else None,
             "latest": max(all_dates) if all_dates else None,

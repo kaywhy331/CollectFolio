@@ -985,6 +985,16 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
             "enabledBy": "Kevin, 2026-08-17 'forecasts should be for all products' directive",
             "cohorts": manifest["ninetyDayOnlyCohorts"],
         },
+        # Serve-all-cohorts mode: Kevin's 2026-08-18 "the estimates are
+        # supposed to be provided on all products" directive. Every
+        # recognized cohort (standard / low-history / insufficient-history /
+        # cold-start) now serves both horizons everywhere; the T4 gate's
+        # per-cohort verdicts remain recorded in evaluation-summary.* as
+        # labeling/reporting input. See forecast_publisher.SERVE_ALL_COHORTS.
+        "serveAllCohortsMode": {
+            "enabledBy": "Kevin, 2026-08-18 'estimates are supposed to be provided on all products' directive",
+            "enabled": manifest["serveAllCohorts"],
+        },
         "servedHorizonsByCategory": manifest["servedHorizonsByCategory"],
         "categories": {
             category_id: {

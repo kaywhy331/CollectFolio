@@ -5,6 +5,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from unittest import mock
+
+from collectfolio_analytics import forecast_publisher
 from collectfolio_analytics.forecast_publisher import (
     DEFAULT_MAX_OBJECT_BYTES,
     GroupPart,
@@ -60,6 +63,18 @@ def _write_packets(path: Path, rows):
             handle.write(json.dumps(row) + "\n")
 
 
+
+LEGACY_GATE_DOC = """Tests marked legacy-gate run with SERVE_ALL_COHORTS patched
+off: they exercise the fail-closed gate-as-filter machinery, which remains the
+behavior whenever the 2026-08-18 serve-all-cohorts directive is flipped off."""
+
+
+def _legacy_gate_mode(test_case):
+    patcher = mock.patch.object(forecast_publisher, "SERVE_ALL_COHORTS", False)
+    patcher.start()
+    test_case.addCleanup(patcher.stop)
+
+
 class IsPacketEligibleTests(unittest.TestCase):
     def setUp(self):
         self.serving_eligibility = {
@@ -111,6 +126,7 @@ class LoadServingEligibilityByHorizonTests(unittest.TestCase):
 
 class EligibleHorizonsTests(unittest.TestCase):
     def setUp(self):
+        _legacy_gate_mode(self)  # see LEGACY_GATE_DOC
         self.serving_eligibility = {
             3: {"standard": True, "low-history": False},
             1: {"standard": False, "low-history": False},
@@ -291,6 +307,7 @@ class SplitGroupVariantsDeterministicTests(unittest.TestCase):
 
 class PublishCategoryTests(unittest.TestCase):
     def setUp(self):
+        _legacy_gate_mode(self)  # see LEGACY_GATE_DOC
         self.serving_eligibility = {
             3: {"standard": True, "low-history": False, "insufficient-history": False},
             1: {"standard": False, "low-history": False, "insufficient-history": False},
@@ -390,6 +407,7 @@ class PublishCategoryNinetyDayOnlyTests(unittest.TestCase):
     flagged as informational-only)."""
 
     def setUp(self):
+        _legacy_gate_mode(self)  # see LEGACY_GATE_DOC
         self.serving_eligibility = load_serving_eligibility(EVALUATION_SUMMARY_PATH)
         self.serving_eligibility_by_horizon = load_serving_eligibility_by_horizon(EVALUATION_SUMMARY_PATH)
 
@@ -449,6 +467,9 @@ class PublishCategoryNinetyDayOnlyTests(unittest.TestCase):
 
 
 class PublishForecastsTests(unittest.TestCase):
+    def setUp(self):
+        _legacy_gate_mode(self)  # see LEGACY_GATE_DOC
+
     def test_end_to_end_writes_manifest_and_objects(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -515,6 +536,66 @@ class PublishForecastsTests(unittest.TestCase):
                     packets_dir, EVALUATION_SUMMARY_PATH, SOURCE_TERMS_PATH, staging_root,
                     category_ids=[3],
                 )
+
+
+class ServeAllCohortsModeTests(unittest.TestCase):
+    """Serve-all-cohorts mode (Kevin's 2026-08-18 "the estimates are supposed
+    to be provided on all products" directive): every cohort string the engine
+    itself emits serves both horizons everywhere, regardless of per-cohort
+    gate verdicts; unrecognized cohort strings stay fail-closed excluded."""
+
+    def test_mode_is_enabled_in_production(self):
+        self.assertTrue(forecast_publisher.SERVE_ALL_COHORTS)
+
+    def test_every_known_cohort_serves_both_horizons_despite_failing_gate(self):
+        failing_gate = {3: {"standard": False, "low-history": False, "insufficient-history": False}}
+        for cohort in ("standard", "low-history", "insufficient-history", "cold-start"):
+            self.assertEqual(
+                eligible_horizons(3, cohort, failing_gate, {}),
+                (30, 90),
+                cohort,
+            )
+
+    def test_unknown_cohort_string_still_serves_nothing(self):
+        self.assertEqual(eligible_horizons(3, "totally-bogus", {}, {}), ())
+        self.assertEqual(eligible_horizons(3, "", {}, {}), ())
+
+    def test_publish_category_includes_low_and_insufficient_history_packets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [
+                _variant(1, confidence="standard"),
+                _variant(2, confidence="low-history"),
+                _variant(3, confidence="insufficient-history"),
+                _variant(4, confidence="mystery-cohort"),
+            ])
+            row = publish_category(
+                3, packets_path, {3: {"standard": True, "low-history": False}}, tmp_path / "out",
+            )
+            self.assertEqual(row["eligibleVariants"], 3)
+            self.assertEqual(row["excludedByCohort"], {"mystery-cohort": 1})
+            self.assertEqual(row["groups"]["1"]["status"], "published")
+            self.assertEqual(row["groups"]["1"]["eligibleVariantCount"], 3)
+            self.assertEqual(row["servedHorizonsByCohort"], {
+                "insufficient-history": [30, 90],
+                "low-history": [30, 90],
+                "standard": [30, 90],
+            })
+
+    def test_manifest_records_serve_all_cohorts_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_dir = tmp_path / "packets"
+            _write_packets(packets_dir / "category-3" / "packets.jsonl.gz", [
+                _variant(1, confidence="low-history"),
+            ])
+            manifest = publish_forecasts(
+                packets_dir, EVALUATION_SUMMARY_PATH, SOURCE_TERMS_PATH, tmp_path / "out",
+            )
+            self.assertTrue(manifest["serveAllCohorts"])
+            self.assertEqual(manifest["categories"]["3"]["eligibleVariants"], 1)
+
 
 
 if __name__ == "__main__":
