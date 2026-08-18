@@ -110,14 +110,14 @@ const EARLY_ESTIMATE_CONFIDENCES = Object.freeze(['low-history', 'insufficient-h
 
 function outlookEstimateCell(forecast, label, currency) {
   if (!forecast) {
-    return `<div><dt>${escapeHTML(label)}</dt><dd>—</dd><small>Not enough data yet</small></div>`;
+    return `<div><dt>${escapeHTML(label)}</dt><dd>—<small>Not enough data yet</small></dd></div>`;
   }
   const qualifier = forecast.status === 'cold-start'
     ? ' · cold start estimate'
     : EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence)
       ? ' · early estimate'
       : ' modeled';
-  return `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, currency))}</dd><small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${qualifier}</small></div>`;
+  return `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, currency))}<small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${qualifier}</small></dd></div>`;
 }
 
 function marketOutlookMarkup(model) {
@@ -140,10 +140,10 @@ function marketOutlookMarkup(model) {
   const coldStart = horizons.some(([forecast]) => forecast?.status === 'cold-start');
   const early = horizons.some(([forecast]) => forecast && forecast.status !== 'cold-start' && EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence));
   return `<dl class="result-market-outlook" aria-label="Published market trend and forecast estimates">
-    <div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}</dd><small>${model.change30d === null ? 'Not enough history' : model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></div>
+    <div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}<small>${model.change30d === null ? 'Not enough history' : model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></dd></div>
     ${horizons.map(([forecast, label]) => outlookEstimateCell(forecast, label, model.currency)).join('')}
-    ${coldStart ? '<div class="result-outlook-note"><small>Cold start estimate: built without enough observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></div>' : ''}
-    ${early ? '<div class="result-outlook-note"><small>Early estimate: built from a short observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></div>' : ''}
+    ${coldStart ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Cold start estimate: built without enough observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
+    ${early ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Early estimate: built from a short observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
   </dl>`;
 }
 
