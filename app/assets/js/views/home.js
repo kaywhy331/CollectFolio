@@ -262,7 +262,7 @@ export function renderHome(state) {
       <article class="card overview-performance">
         <div class="overview-performance-head"><div><p class="metric-label">Estimated market value · ${escapeHTML(currency)} only</p><strong class="overview-value">${escapeHTML(formatCurrency(summary.marketValue, currency))}</strong>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Portfolio chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
         ${trendChart(series, currency)}
-        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> pricing coverage</span>${historyCoverage.total ? `<span><strong>${historyCoverage.percent}%</strong> chart history coverage (${historyCoverage.withHistory} of ${historyCoverage.total} holdings)</span>` : ''}<span>${asOf ? `Updated ${escapeHTML(asOf)}` : 'Waiting for the first snapshot'}</span></div>
+        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> pricing coverage</span>${historyCoverage.total ? `<span><strong>${historyCoverage.percent}%</strong> chart history coverage across this portfolio</span>` : ''}<span>${asOf ? `Updated ${escapeHTML(asOf)}` : 'Waiting for the first snapshot'}</span></div>
       </article>
       <aside class="overview-summary" aria-label="Portfolio summary">
         <article class="summary-stat"><span>Cost basis</span><strong>${escapeHTML(formatCurrency(summary.costBasis, currency))}</strong><small>Purchase price + fees</small></article>

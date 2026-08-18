@@ -141,9 +141,9 @@ function portfolioValueTrendModule(state, currency) {
   const movement = change.amount === null
     ? ''
     : `<span class="${tone}"><span aria-hidden="true">${change.amount >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(Math.abs(change.amount), currency))}${change.percent === null ? '' : ` (${escapeHTML(formatPercent(change.percent))})`}</span>`;
-  return `<section class="card overview-module portfolio-value-trend"><div class="section-heading compact"><div><p class="eyebrow">Value over time</p><h2>Portfolio trend</h2></div>${movement}</div>
+  return `<section class="card overview-module portfolio-value-trend"><div class="section-heading compact"><div><p class="eyebrow">Value over time</p><h2>Value trend</h2></div>${movement}</div>
     ${trendChart(series, currency)}
-    ${coverage.total ? `<div class="overview-chart-meta"><span><strong>${coverage.percent}%</strong> chart history coverage (${coverage.withHistory} of ${coverage.total} holdings)</span></div>` : ''}
+    ${coverage.total ? `<div class="overview-chart-meta"><span><strong>${coverage.percent}%</strong> chart history coverage across this portfolio</span></div>` : ''}
   </section>`;
 }
 
