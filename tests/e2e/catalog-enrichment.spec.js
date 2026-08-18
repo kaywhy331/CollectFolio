@@ -20,7 +20,7 @@ async function skipOnboarding(page) {
 // catalog-v2 B2's fail-closed contract requires the unmapped product to
 // render exactly as it does today, with no enrichment note and no broken
 // image.
-const MAPPED_PRODUCT = { categoryId: 3, groupId: 1102, productId: 5001, name: 'Enriched Bridge Card', subtypeName: 'Holofoil', marketPrice: 45 };
+const MAPPED_PRODUCT = { categoryId: 3, groupId: 1102, productId: 5001, name: 'Enriched Bridge Card', subtypeName: 'Holofoil', marketPrice: 45, extendedData: [{ name: 'Number', value: '7/195' }, { name: 'Stage', value: 'Basic' }] };
 const UNMAPPED_PRODUCT = { categoryId: 3, groupId: 1102, productId: 5002, name: 'Unmapped Bridge Card', subtypeName: 'Holofoil', marketPrice: 12 };
 
 function tcgcsvSearchProduct(product) {
@@ -32,7 +32,8 @@ function tcgcsvSearchProduct(product) {
     groupName: 'Silver Tempest',
     name: product.name,
     cleanName: product.name,
-    prices: [{ subtypeName: product.subtypeName, marketPrice: product.marketPrice }]
+    prices: [{ subtypeName: product.subtypeName, marketPrice: product.marketPrice }],
+    extendedData: product.extendedData || []
   };
 }
 
@@ -150,4 +151,27 @@ test('catalog-v2 B2: an unmapped product renders its detail view exactly as toda
   await expect(page.getByRole('heading', { name: 'Unmapped Bridge Card' })).toBeVisible();
   await expect(page.getByText(/Image and details enriched from/)).toHaveCount(0);
   expect(providerCardRequested).toBe(false);
+});
+
+test('catalog-v2 B4: a hidden-by-default TCGCSV attribute appears after expanding "All attributes"', async ({ page }) => {
+  await configureEnrichmentStubs(page);
+  await skipOnboarding(page);
+  const { mappedCard } = await runSearch(page);
+
+  await mappedCard.click();
+  await page.getByRole('button', { name: 'Open full details' }).click();
+
+  const allAttributes = page.locator('#detail-attributes');
+  await expect(allAttributes.getByText('All attributes')).toBeVisible();
+  // Collapsed by default: the <details> element itself is closed, and its
+  // "Stage" attribute (not in the curated visibility set) is not rendered
+  // in the accessibility tree / visible layout until expanded.
+  await expect(allAttributes).not.toHaveJSProperty('open', true);
+  await expect(page.getByText('Stage', { exact: true })).toBeHidden();
+
+  await allAttributes.locator('summary').click();
+
+  await expect(allAttributes).toHaveJSProperty('open', true);
+  await expect(page.getByText('Stage', { exact: true })).toBeVisible();
+  await expect(allAttributes.getByText('Basic')).toBeVisible();
 });

@@ -31,6 +31,26 @@ function publication(payload, supportTier, reasonCodes = []) {
   return { variantId, seriesIdentity: { sourceId: 'approved', currency: 'USD', language: 'en', finish: 'holofoil', conditionClass: 'raw', marketCondition: 'near-mint', priceSemantics: 'market' }, supportTier, publicationStatus: 'published', reasonCodes, payload, sourceAttributions: [], publishedAt: '2026-08-01T00:00:00Z', expiresAt: '' };
 }
 
+const tcgcsvItem = {
+  provider: 'tcgcsv', externalId: '3:604:97847', category: 'tcgcsv-category-3', game: 'Pokemon',
+  name: 'Charizard ex', setName: 'Obsidian Flames', number: '223', variant: 'Holofoil', language: 'en', marketCondition: 'near-mint',
+  rarity: 'Special Illustration Rare', image: '', imageSmall: '', price: 90, currency: 'USD',
+  categoryId: 3, groupId: 604, productId: 97847,
+  priceOptions: [
+    { finish: 'Holofoil', price: 90, source: 'TCGCSV community catalog · market', selectedField: 'marketPrice', marketPrice: 90, midPrice: 85, lowPrice: 60, highPrice: 140, directLowPrice: 58 },
+    { finish: 'Normal', price: 4.5, source: 'TCGCSV community catalog · market', selectedField: 'marketPrice', marketPrice: 4.5, midPrice: 4, lowPrice: 2, highPrice: 9, directLowPrice: 1.8 }
+  ],
+  extendedData: [
+    { name: 'Number', displayName: 'Number', value: '223/197' },
+    { name: 'Rarity', displayName: 'Rarity', value: 'Special Illustration Rare' },
+    { name: 'Stage', displayName: 'Stage', value: 'Stage 2' },
+    { name: 'HP', displayName: 'HP', value: '330' },
+    { name: 'CardText', displayName: 'Attack 1', value: '<script>alert(1)</script> Deals 330 damage.' }
+  ],
+  tcgcsvGroup: { name: 'Obsidian Flames', groupId: 604 },
+  tcgcsvCategory: { displayName: 'Pokemon', categoryId: 3 }
+};
+
 test('detail view without a selection offers a way back instead of crashing', () => {
   const html = renderPriceIntelligenceDetail(null, baseState());
   assert.match(html, /No card selected/);
@@ -220,4 +240,53 @@ test('watchlist signals lists only unread alerts for still-watched cards', () =>
     { id: 'a3', watchKey: 'gone', message: 'Unwatched', readAt: '' }
   ], [{ watchKey: 'k1' }]);
   assert.deepEqual(signals.map((entry) => entry.id), ['a1']);
+});
+
+test('B4: full TCGCSV attributes section stays collapsed by default and omits already-curated fields', () => {
+  const catalogRef = catalogReferenceForItem(tcgcsvItem);
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState());
+  assert.match(html, /id="detail-attributes"/);
+  assert.doesNotMatch(html, /<details class="data-details" id="detail-attributes" open/);
+  assert.match(html, /All attributes/);
+  // "Number" and "Rarity" are already surfaced by the curated header/metadata
+  // UI, so the visibility config keeps them out of the collapsible section.
+  const attributesSection = html.slice(html.indexOf('id="detail-attributes"'));
+  assert.doesNotMatch(attributesSection, /<dt>Number<\/dt>/);
+  assert.doesNotMatch(attributesSection, /<dt>Rarity<\/dt>/);
+});
+
+test('B4: attributes not in the curated visibility config render (in DOM, collapsed) with markup escaped', () => {
+  const catalogRef = catalogReferenceForItem(tcgcsvItem);
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState());
+  assert.match(html, /<dt>Stage<\/dt><dd>Stage 2<\/dd>/);
+  assert.match(html, /<dt>HP<\/dt><dd>330<\/dd>/);
+  // Markup-ish extendedData value must be escaped, never rendered as live HTML.
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+
+test('B4: all price subtypes and fields (market/mid/low/high/directLow) are surfaced per finish', () => {
+  const catalogRef = catalogReferenceForItem(tcgcsvItem);
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState());
+  assert.match(html, /Holofoil.*Market/);
+  assert.match(html, /Holofoil.*Direct low/);
+  assert.match(html, /Normal.*Market/);
+  assert.match(html, /Normal.*Direct low/);
+});
+
+test('B4: group/category identity (categoryId/groupId/productId, category + set names) is surfaced', () => {
+  const catalogRef = catalogReferenceForItem(tcgcsvItem);
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState());
+  assert.match(html, /<dt>Category ID<\/dt><dd>3<\/dd>/);
+  assert.match(html, /<dt>Group ID<\/dt><dd>604<\/dd>/);
+  assert.match(html, /<dt>Product ID<\/dt><dd>97847<\/dd>/);
+  assert.match(html, /<dt>Category<\/dt><dd>Pokemon<\/dd>/);
+  assert.match(html, /<dt>Set \/ group<\/dt><dd>Obsidian Flames<\/dd>/);
+});
+
+test('B4: non-TCGCSV items (secondary providers) do not render the all-attributes section', () => {
+  const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item, catalogRef }, baseState());
+  assert.doesNotMatch(html, /id="detail-attributes"/);
+  assert.doesNotMatch(html, /All attributes/);
 });

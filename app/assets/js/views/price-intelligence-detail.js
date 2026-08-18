@@ -23,6 +23,98 @@ const POSITION_LABELS = {
   insufficient: 'Insufficient evidence'
 };
 
+// ---------------------------------------------------------------------------
+// Full-attribute surfacing (catalog-v2 B4)
+//
+// normalizeTCGCSVProduct() (services/providers/tcgcsv.js) preserves the
+// *complete* upstream TCGCSV record on every catalog item: every
+// extendedData attribute the category carries (number, rarity, card text,
+// HP, stage, attacks, ...), every price subtype with all five TCGPlayer
+// price fields (market/mid/low/high/directLow), and group/category
+// identity (categoryId/groupId/productId, category + set names). None of
+// that is ever discarded on the way here -- it rides on `detail.item`
+// (the raw normalized item) right alongside the narrower `catalogRef`
+// (core/catalog-identity.js) that this view otherwise renders from, which
+// intentionally curates its return shape for watch-key identity and does
+// not carry the full record. `allAttributesSection()` below reads from
+// `detail.item`, never `catalogRef`, so nothing here can regress if
+// catalogRef's shape changes.
+//
+// B2 enrichment (applyEnrichmentToItem, services/catalog-enrichment.js)
+// only ever overwrites `image`/`imageSmall` and adds a separate
+// `enrichment` object -- it never touches extendedData, priceOptions, or
+// group/category identity. So every field this section renders is native
+// TCGCSV data; there is no collision with provider-sourced enrichment,
+// which stays confined to its own "Image and details enriched from ..."
+// note in the header above.
+//
+// ATTRIBUTE_VISIBILITY is a *display* decision only, never a data one:
+// every attribute the dataset carries is always present on the item and
+// always rendered somewhere on this page. Attribute names already
+// surfaced by the curated header/metadata UI (see headerCard() below) are
+// keyed here as 'shown' so the "All attributes" disclosure does not
+// repeat them; every other extendedData attribute name defaults to
+// 'collapsed' and appears only inside that disclosure, closed by default.
+// To promote an attribute into the always-visible curated set, add its
+// normalized name here as 'shown' -- the underlying data never changes.
+const ATTRIBUTE_VISIBILITY = Object.freeze({
+  number: 'shown',
+  'card number': 'shown',
+  rarity: 'shown'
+});
+
+function attributeVisibility(name) {
+  const key = String(name || '').trim().toLowerCase();
+  return ATTRIBUTE_VISIBILITY[key] === 'shown' ? 'shown' : 'collapsed';
+}
+
+const TCGCSV_PRICE_FIELDS = Object.freeze([
+  ['marketPrice', 'Market'],
+  ['midPrice', 'Mid'],
+  ['lowPrice', 'Low'],
+  ['highPrice', 'High'],
+  ['directLowPrice', 'Direct low']
+]);
+
+function priceSubtypeRows(priceOptions, currency) {
+  return priceOptions.flatMap((option) => TCGCSV_PRICE_FIELDS.map(([field, label]) => {
+    const value = option?.[field];
+    if (value === null || value === undefined) return '';
+    return `<div><dt>${escapeHTML(option.finish || 'Unspecified')} &middot; ${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(value, currency))}</dd></div>`;
+  })).filter(Boolean).join('');
+}
+
+// Renders the complete TCGCSV record (every extendedData attribute not
+// already promoted into the curated UI, every price subtype/field, and
+// group/category identity) in a collapsed-by-default disclosure. See the
+// comment block above for the data-flow and visibility-config rationale.
+function allAttributesSection(item, ref, currency) {
+  if (!item || item.provider !== 'tcgcsv') return '';
+  const extendedData = Array.isArray(item.extendedData) ? item.extendedData : [];
+  const collapsedAttributes = extendedData.filter((entry) => {
+    const value = entry?.value;
+    return value !== null && value !== undefined && String(value) !== ''
+      && attributeVisibility(entry?.displayName || entry?.name) === 'collapsed';
+  });
+  const priceOptions = Array.isArray(item.priceOptions) ? item.priceOptions : [];
+  const identityRows = [
+    ['Category', item.tcgcsvCategory?.displayName || item.tcgcsvCategory?.name || ref.game],
+    ['Set / group', item.tcgcsvGroup?.name || ref.setName],
+    ['Category ID', item.categoryId],
+    ['Group ID', item.groupId],
+    ['Product ID', item.productId]
+  ].filter(([, value]) => value !== null && value !== undefined && value !== '');
+  const attributeMarkup = collapsedAttributes
+    .map((entry) => `<div><dt>${escapeHTML(entry.displayName || entry.name || 'Attribute')}</dt><dd>${escapeHTML(String(entry.value))}</dd></div>`)
+    .join('');
+  const priceMarkup = priceSubtypeRows(priceOptions, currency);
+  const identityMarkup = identityRows
+    .map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(String(value))}</dd></div>`)
+    .join('');
+  if (!attributeMarkup && !priceMarkup && !identityMarkup) return '';
+  return `<details class="data-details" id="detail-attributes"><summary><span>All attributes</span><span>Full TCGCSV record for this printing</span></summary><div>${identityMarkup ? `<p class="fine-print">Group &amp; category identity</p><dl>${identityMarkup}</dl>` : ''}${attributeMarkup ? `<p class="fine-print">Card attributes</p><dl>${attributeMarkup}</dl>` : ''}${priceMarkup ? `<p class="fine-print">Price subtypes (all fields)</p><dl>${priceMarkup}</dl>` : ''}</div></details>`;
+}
+
 function updatedAgo(iso) {
   const time = Date.parse(iso);
   if (!Number.isFinite(time)) return '';
@@ -90,6 +182,7 @@ export function renderPriceIntelligenceDetail(detail, state) {
     <div class="detail-sections">${localScenarioSection(holding, localScenario)}${intelligence ? intelligenceSections(intelligence, currency, Boolean(localScenario), trajectoryMarkup) : unsupportedSection(ref, state, Boolean(localScenario), trajectoryMarkup)}
     ${salesSection(ref)}
     ${dataDetailsSection(ref, intelligence)}
+    ${allAttributesSection(detail.item, ref, currency)}
     ${intelligence ? attributionFootnote(intelligence) : ''}</div>`;
 }
 
