@@ -11,7 +11,7 @@
         "earliest": "2026-06-20",
         "latest": "2026-08-08"
       },
-      "objectsWritten": 475,
+      "objectsWritten": 468,
       "publishedGroups": 447,
       "servedHorizonsByCohort": {
         "cold-start": [
@@ -36,7 +36,7 @@
         "earliest": "2026-06-20",
         "latest": "2026-08-08"
       },
-      "objectsWritten": 616,
+      "objectsWritten": 614,
       "publishedGroups": 614,
       "servedHorizonsByCohort": {
         "cold-start": [
@@ -61,7 +61,7 @@
         "earliest": "2026-06-20",
         "latest": "2026-08-08"
       },
-      "objectsWritten": 219,
+      "objectsWritten": 218,
       "publishedGroups": 214,
       "servedHorizonsByCohort": {
         "cold-start": [
@@ -100,9 +100,9 @@
       "totalVariants": 34493
     }
   },
-  "elapsedSeconds": 157.611,
-  "generatedAt": "2026-08-17T19:59:20.122710+00:00",
-  "manifestContentHash": "4316570b6b06f809d07a2864c4947e6b1192aec5f6adac9fcd9690ed2009a2d7",
+  "elapsedSeconds": 108.479,
+  "generatedAt": "2026-08-18T05:33:56.226325+00:00",
+  "manifestContentHash": "29876c2d92694b9e1bfb639b005bf3b6723845616a03150631ed5e13fc98d6fd",
   "maxObjectBytes": 131072,
   "modelVersion": "trajectory-v1",
   "ninetyDayOnlyServingMode": {

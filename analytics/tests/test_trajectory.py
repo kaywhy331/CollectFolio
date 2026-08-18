@@ -783,6 +783,62 @@ class HedonicBlendAnchorCapTests(unittest.TestCase):
         anchor = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i=100_000)
         self.assertAlmostEqual(anchor, own_log, places=3)
 
+    def test_anchor_is_exactly_own_log_at_and_above_the_standard_threshold(self):
+        # T4 incident fix (2026-08): once a variant has enough own history
+        # to be "standard" confidence, the blend must not move the anchor
+        # at all -- not "far inside the cap", exactly equal -- regardless
+        # of how extreme the hedonic prediction is.
+        own_log = math.log(100.0)
+        extreme_hedonic_pred = math.log(100_000.0)
+        for n_i in (MIN_HISTORY_FOR_STANDARD, MIN_HISTORY_FOR_STANDARD + 1, 50, 100_000):
+            anchor = hedonic_blend_anchor_log(own_log, extreme_hedonic_pred, n_i)
+            self.assertEqual(anchor, own_log, f"n_i={n_i} must anchor purely on own_log")
+
+    def test_below_threshold_still_uses_the_old_weighted_and_clamped_blend(self):
+        # The early return must not swallow the below-threshold path: it
+        # keeps the exact same empirical-Bayes weight and ln(3) clamp as
+        # before, one step below the standard cutoff.
+        own_log = math.log(100.0)
+        hedonic_pred = math.log(120.0)
+        n_i = MIN_HISTORY_FOR_STANDARD - 1
+        anchor = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i)
+        weight = n_i / (n_i + 8.0)  # N0_HEDONIC
+        expected = weight * own_log + (1.0 - weight) * hedonic_pred
+        self.assertAlmostEqual(anchor, expected, places=9)
+
+        own_log_extreme = math.log(81421.0)
+        hedonic_pred_extreme = math.log(100.0)
+        anchor_extreme = hedonic_blend_anchor_log(own_log_extreme, hedonic_pred_extreme, n_i=0)
+        self.assertAlmostEqual(anchor_extreme, own_log_extreme - MAX_HEDONIC_BLEND_LOG_SHIFT, places=9)
+
+    def test_incident_shape_no_longer_saturates_the_clamp_at_standard_confidence(self):
+        # Live incident fixture (2026-08, cat2 product 695695, "1st
+        # Edition"): own last-known price $1,196.63, hedonic prediction
+        # ~$30, n_i=10 -- one above MIN_HISTORY_FOR_STANDARD=8, so this
+        # card is "standard" confidence yet only has 11 weekly
+        # observations. Pre-fix, weight = 10/18 (44% hedonic contribution)
+        # drove a raw shift far past the ln(3) clamp bound, serving a
+        # medianPath that opened at exactly own_price/3 -- a 3x instant
+        # drop presented as "standard" confidence. Post-fix, standard
+        # confidence anchors purely on the card's own last-known price.
+        own_price = 1196.63
+        hedonic_pred_price = 30.0
+        own_log = math.log(own_price)
+        hedonic_pred = math.log(hedonic_pred_price)
+        n_i = 10
+        self.assertGreaterEqual(n_i, MIN_HISTORY_FOR_STANDARD)
+
+        anchor = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i)
+        self.assertEqual(anchor, own_log)
+        self.assertAlmostEqual(math.exp(anchor), own_price, places=6)
+
+        # Sanity check against the pre-fix regression: the old unclamped
+        # weighted blend really did saturate the ln(3) bound for this
+        # shape, confirming the fixture reproduces the incident.
+        weight = n_i / (n_i + 8.0)  # N0_HEDONIC
+        raw_shift = (1.0 - weight) * (hedonic_pred - own_log)
+        self.assertLess(raw_shift, -MAX_HEDONIC_BLEND_LOG_SHIFT)
+
 
 class ComponentWeightsApplicationTests(unittest.TestCase):
     """T4 remediation: process_category's component_weights parameter."""
