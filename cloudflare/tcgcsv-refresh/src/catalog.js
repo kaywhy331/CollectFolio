@@ -1222,7 +1222,13 @@ export async function serveForecastObject(env, identity, cors) {
   // transparently decompress it -- response.json() just works.
   headers.set('content-encoding', 'gzip');
   if (object.httpEtag) headers.set('etag', object.httpEtag);
-  return new Response(object.body, { status: 200, headers });
+  // encodeBody: 'manual' tells the Workers runtime the body is ALREADY
+  // gzip-encoded to match the content-encoding header. Without it the
+  // edge treats the body as plain, rewrites/strips content-encoding, and
+  // browsers receive raw gzip bytes that response.json() cannot parse
+  // (live incident 2026-08-18: every forecast/history/bridge fetch
+  // failed client-side with "invalid JSON with HTTP 200").
+  return new Response(object.body, { status: 200, headers, encodeBody: 'manual' });
 }
 
 // 0.8.17: TCGCSV weekly price-history publication (community-free-access,
@@ -1270,7 +1276,13 @@ export async function serveHistoryObject(env, identity, cors) {
   headers.set('content-type', 'application/json; charset=utf-8');
   headers.set('content-encoding', 'gzip');
   if (object.httpEtag) headers.set('etag', object.httpEtag);
-  return new Response(object.body, { status: 200, headers });
+  // encodeBody: 'manual' tells the Workers runtime the body is ALREADY
+  // gzip-encoded to match the content-encoding header. Without it the
+  // edge treats the body as plain, rewrites/strips content-encoding, and
+  // browsers receive raw gzip bytes that response.json() cannot parse
+  // (live incident 2026-08-18: every forecast/history/bridge fetch
+  // failed client-side with "invalid JSON with HTTP 200").
+  return new Response(object.body, { status: 200, headers, encodeBody: 'manual' });
 }
 
 // B2: catalog-v2 enrichment bridge (analytics/src/collectfolio_analytics/
@@ -1302,7 +1314,13 @@ export async function serveBridgeObject(env, identity, cors) {
   headers.set('content-type', 'application/json; charset=utf-8');
   headers.set('content-encoding', 'gzip');
   if (object.httpEtag) headers.set('etag', object.httpEtag);
-  return new Response(object.body, { status: 200, headers });
+  // encodeBody: 'manual' tells the Workers runtime the body is ALREADY
+  // gzip-encoded to match the content-encoding header. Without it the
+  // edge treats the body as plain, rewrites/strips content-encoding, and
+  // browsers receive raw gzip bytes that response.json() cannot parse
+  // (live incident 2026-08-18: every forecast/history/bridge fetch
+  // failed client-side with "invalid JSON with HTTP 200").
+  return new Response(object.body, { status: 200, headers, encodeBody: 'manual' });
 }
 
 export async function serveCatalogData(request, env) {
