@@ -117,8 +117,14 @@ export async function getTrajectoryForecast(categoryId, groupId, productId, subT
   const { eligibility, entry } = manifestGroupEntry(manifest, categoryId, groupId);
   if (eligibility !== 'published') return { eligibility, packet: null, manifest };
   const group = await fetchTrajectoryGroup(categoryId, groupId, entry, opts);
-  const packet = group.variants.find((variant) => Number(variant.productId) === Number(productId)
-    && String(variant.subTypeName || '') === String(subTypeName || ''));
+  const productVariants = group.variants.filter((variant) => Number(variant.productId) === Number(productId));
+  // Exact (productId, subTypeName) match first. If the catalog item carries
+  // no usable finish (e.g. a product with no price rows maps to variant '')
+  // or its finish doesn't name any published packet, fall back to the
+  // product's packet ONLY when it is unambiguous (exactly one variant
+  // published for the product) -- never guess between finishes.
+  const packet = productVariants.find((variant) => String(variant.subTypeName || '') === String(subTypeName || ''))
+    || (productVariants.length === 1 ? productVariants[0] : null);
   if (!packet) return { eligibility: 'unknown', packet: null, manifest };
   return { eligibility: 'published', packet, manifest, groupAsOf: group.asOf };
 }
