@@ -12,15 +12,15 @@
     ]
   },
   "componentWeightsApplied": true,
-  "contentHash": "b658e91620aaca77e62b79b0572553769181a6680a76a55c7095464a25abfc38",
+  "contentHash": "fbe0c1bc1c878f39f2b4ab92c6f7ab266e5bbff4f9feee371ab43848290dcf5b",
   "datesCovered": 80,
-  "generatedAt": "2026-08-17T16:00:49.580388+00:00",
+  "generatedAt": "2026-08-18T05:31:18.245339+00:00",
   "hedonicBlendApplied": true,
   "modelVersion": "trajectory-v1",
   "outputPath": "analytics/data/trajectory/packets/category-1/packets.jsonl.gz",
-  "packetBytes": 28837535,
+  "packetBytes": 25822407,
   "packetRowCount": 166562,
-  "peakRssBytes": 422350848,
+  "peakRssBytes": 423395328,
   "poolSizes": {
     "high:13": 229766,
     "high:4": 233771,
@@ -34,5 +34,5 @@
     "no_history": 0
   },
   "variantCount": 166562,
-  "wallClockSeconds": 192.662
+  "wallClockSeconds": 184.975
 }

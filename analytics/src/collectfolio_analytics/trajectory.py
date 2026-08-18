@@ -561,7 +561,29 @@ def hedonic_blend_anchor_log(
     magnitude* the shift would have taken; this only bounds how far it is
     allowed to move the anchor. At high n the unclamped shift is already
     near zero, so the clamp is a no-op there (HighNInvarianceTests).
+
+    T4 incident fix (2026-08): this blend is a cold-start/low-n device --
+    it exists to lean on the hedonic model when a variant's own history is
+    too thin to trust alone. At standard confidence (``n_i >=
+    MIN_HISTORY_FOR_STANDARD``) it can only ever *add* hedonic bias on top
+    of an already-sufficient own-history anchor, and the empirical-Bayes
+    weight does not go to zero fast enough to make that bias negligible:
+    a real card with n_i=10 (own last-known price $1,196.63, hedonic
+    prediction around $30, weight = 10/18 -> 44% hedonic contribution)
+    saturated the ln(3) clamp and served a 90d q50 that was a 3x
+    instant-drop from the card's actual last price under "standard"
+    confidence -- indefensible to a user even though it passed the
+    aggregate T4 gate (young-but-standard cards are rare enough that the
+    aggregate MAE gate does not catch this shape). So above the standard
+    threshold the anchor is exactly the card's own last-known log price;
+    the weight/clamp machinery below only ever runs for n_i below
+    threshold, where packets are cold-start-only and never served at
+    "standard" confidence, but must still carry an honest, back-testable
+    number.
     """
+
+    if n_i >= MIN_HISTORY_FOR_STANDARD:
+        return own_log
 
     weight = hedonic_level_weight(n_i)
     raw_shift = (1.0 - weight) * (hedonic_pred - own_log)
@@ -871,10 +893,11 @@ def process_category(
                     # shrinkage) toward the hedonic prior by the same
                     # empirical-Bayes form, weighted by the card's own
                     # drift-fit sample size, then clamp the resulting shift
-                    # -- see hedonic_blend_anchor_log's docstring. weight
-                    # -> 1 as n grows, so this is a no-op (within floating
-                    # point noise) for well-observed variants -- see
-                    # HighNInvarianceTests.
+                    # -- see hedonic_blend_anchor_log's docstring. At and
+                    # above MIN_HISTORY_FOR_STANDARD (the "standard"
+                    # confidence threshold) this is now an exact no-op --
+                    # the blend only ever runs below that threshold, where
+                    # packets are cold-start/low-history only.
                     anchor_log = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i)
                 else:
                     anchor_log = own_log

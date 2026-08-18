@@ -14,15 +14,15 @@
         ]
       },
       "componentWeightsApplied": true,
-      "contentHash": "b658e91620aaca77e62b79b0572553769181a6680a76a55c7095464a25abfc38",
+      "contentHash": "fbe0c1bc1c878f39f2b4ab92c6f7ab266e5bbff4f9feee371ab43848290dcf5b",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T16:00:49.580388+00:00",
+      "generatedAt": "2026-08-18T05:31:18.245339+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-1/packets.jsonl.gz",
-      "packetBytes": 28837535,
+      "packetBytes": 25822407,
       "packetRowCount": 166562,
-      "peakRssBytes": 422350848,
+      "peakRssBytes": 423395328,
       "poolSizes": {
         "high:13": 229766,
         "high:4": 233771,
@@ -36,7 +36,7 @@
         "no_history": 0
       },
       "variantCount": 166562,
-      "wallClockSeconds": 192.662
+      "wallClockSeconds": 184.975
     },
     {
       "categoryId": 2,
@@ -52,15 +52,15 @@
         ]
       },
       "componentWeightsApplied": true,
-      "contentHash": "8e15b5e71922550070515d9dad9393b0c2b6a0374d5897264be83f9ad502e9c0",
+      "contentHash": "cd8bba7c5f9c5967902e80e353099460272692f59319a2759b100a2b80480ce2",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T16:02:02.178366+00:00",
+      "generatedAt": "2026-08-18T05:32:29.435864+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-2/packets.jsonl.gz",
-      "packetBytes": 11461991,
+      "packetBytes": 11007316,
       "packetRowCount": 61326,
-      "peakRssBytes": 182530048,
+      "peakRssBytes": 183353344,
       "poolSizes": {
         "high:13": 91115,
         "high:4": 92111,
@@ -74,7 +74,7 @@
         "no_history": 0
       },
       "variantCount": 61326,
-      "wallClockSeconds": 72.007
+      "wallClockSeconds": 70.555
     },
     {
       "categoryId": 3,
@@ -90,15 +90,15 @@
         ]
       },
       "componentWeightsApplied": true,
-      "contentHash": "a7b9e7a8aae2c2ecf825e1ec3960490f17964e6dd7c34c5a14cbc5c17c00d858",
+      "contentHash": "70dbb71db575162ce3ce97e2709bda1ffb8df04df826f276b778a99085399b89",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T16:02:54.373802+00:00",
+      "generatedAt": "2026-08-18T05:33:23.385099+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-3/packets.jsonl.gz",
-      "packetBytes": 8621370,
+      "packetBytes": 7933781,
       "packetRowCount": 46892,
-      "peakRssBytes": 144564224,
+      "peakRssBytes": 145838080,
       "poolSizes": {
         "high:13": 67537,
         "high:4": 68498,
@@ -112,7 +112,7 @@
         "no_history": 0
       },
       "variantCount": 46892,
-      "wallClockSeconds": 51.71
+      "wallClockSeconds": 53.368
     },
     {
       "categoryId": 85,
@@ -128,15 +128,15 @@
         ]
       },
       "componentWeightsApplied": true,
-      "contentHash": "a11b093ccdbc8a57a8fe7fd59912ed6c71dd5c3a9f4df31de612c2cc6f28a2e3",
+      "contentHash": "00168c342902e2a5ee00964a82aac832f643b4fc9b93c7023ba613f4ff06ef85",
       "datesCovered": 80,
-      "generatedAt": "2026-08-17T16:03:25.118095+00:00",
+      "generatedAt": "2026-08-18T05:33:55.676354+00:00",
       "hedonicBlendApplied": true,
       "modelVersion": "trajectory-v1",
       "outputPath": "analytics/data/trajectory/packets/category-85/packets.jsonl.gz",
-      "packetBytes": 4853824,
+      "packetBytes": 3976049,
       "packetRowCount": 34493,
-      "peakRssBytes": 100499456,
+      "peakRssBytes": 101072896,
       "poolSizes": {
         "high:13": 42733,
         "high:4": 43905,
@@ -150,7 +150,7 @@
         "no_history": 0
       },
       "variantCount": 34493,
-      "wallClockSeconds": 30.241
+      "wallClockSeconds": 31.855
     }
   ],
   "categoryIds": [
@@ -159,10 +159,10 @@
     3,
     85
   ],
-  "generatedAt": "2026-08-17T16:03:25.410920+00:00",
+  "generatedAt": "2026-08-18T05:33:55.957239+00:00",
   "modelVersion": "trajectory-v1",
-  "peakRssBytesAcrossCategories": 422350848,
-  "totalPacketBytes": 53774720,
+  "peakRssBytesAcrossCategories": 423395328,
+  "totalPacketBytes": 48739553,
   "totalPacketRows": 309273,
-  "totalWallClockSeconds": 346.62
+  "totalWallClockSeconds": 340.753
 }

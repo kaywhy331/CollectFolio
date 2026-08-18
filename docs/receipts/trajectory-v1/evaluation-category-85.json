@@ -178,7 +178,7 @@
       "standard": false
     }
   },
-  "generatedAt": "2026-08-17T15:41:22.848873+00:00",
+  "generatedAt": "2026-08-18T05:27:47.522462+00:00",
   "gridScores": {
     "13": [
       {
@@ -378,7 +378,7 @@
     ]
   },
   "modelVersion": "trajectory-v1",
-  "peakRssBytes": 776982528,
+  "peakRssBytes": 773718016,
   "sampledVariants": 20000,
   "samplingApplied": true,
   "samplingRule": "deterministic N-of-M variant sample: every (productId, subTypeName) key is ranked by sha256(f'{productId}|{subTypeName}')'s hex digest (ties broken by the key itself), and the first N in that ranking are kept -- order-independent (depends only on the key set, not on load order) and exactly reproducible.",
@@ -449,5 +449,5 @@
     }
   },
   "totalVariants": 32365,
-  "wallClockSeconds": 175.807
+  "wallClockSeconds": 172.673
 }
