@@ -47,7 +47,7 @@ test('Discover follows every TCGCSV cursor page up to the search cap, with no de
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
       SUPABASE_URL: window.location.origin + '/__pagination-cloud',
       SUPABASE_ANON_KEY: 'synthetic-browser-key',
-      APP_VERSION: '0.8.17-test',
+      APP_VERSION: '0.8.18-test',
       TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
       ENABLE_TESSERACT: false,
       ENABLE_PRICE_INTELLIGENCE: false,
