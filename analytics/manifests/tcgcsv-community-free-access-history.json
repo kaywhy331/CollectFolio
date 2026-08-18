@@ -1,0 +1,25 @@
+{
+  "mode": "community_free_access_price_history",
+  "_deviationNote": "TRACKED DEVIATION from T1 (see analytics/manifests/tcgcsv-surging-sparks-current-v2.json / assert_tcgcsv_research_terms, which remain unchanged and still bar ALL public/commercial use of TCGCSV's raw ingested data for the research-ingestion pipeline) AND a SEPARATE, narrower record than analytics/manifests/tcgcsv-community-free-access-derived-forecasts.json (assert_tcgcsv_community_free_access_terms), whose review explicitly does NOT cover 'never TCGCSV raw price data'. This record is scoped ONLY to weekly-sampled TCGCSV raw price-history publication for the 0.8.17 history-chart feature, gated by assert_tcgcsv_community_free_access_history_terms (analytics/src/collectfolio_analytics/tcgcsv.py). History is observed data with no eligibility gate -- ALL variants publish, unlike the T4 holdout-gated forecast record.",
+  "_rationale": "CollectFolio TCGCSV weekly price-history publication rationale, tracked deviation from T1 (analytics/manifests/tcgcsv-surging-sparks-current-v2.json, assert_tcgcsv_research_terms, UNCHANGED by this record) and a SEPARATE, narrower record from the derived-forecast one (assert_tcgcsv_community_free_access_terms, analytics/manifests/tcgcsv-community-free-access-derived-forecasts.json), which explicitly does NOT cover TCGCSV raw price data. Decision owner: Kevin Yang. Kevin's 2026-08-17 directive requesting a public history chart on the card detail page and Quick Inspector drawer ('display a history chart on the product page and drawer window' / 'a bar graph chart to show historic trend and the expected forecasted projection estimates plotted') is the authorizing decision for this NEW, explicit, separately-reviewed SourceTerms record: CollectFolio may publish weekly-sampled (Saturday archive) TCGCSV raw historical prices per variant, publicly and free of community access, gated strictly by assert_tcgcsv_community_free_access_history_terms (analytics/src/collectfolio_analytics/tcgcsv.py). Unlike the derived-forecast record, this one explicitly grants publicRawDisplayAllowed=true -- but ONLY for weekly-sampled historical price points republished as history/<categoryId>/<groupId>.json.gz objects; it grants no other TCGCSV raw-data or catalog-metadata publication right beyond that narrow scope. This document_hash is a placeholder computed from this rationale note pending an official written community-free-access policy artifact from Kevin; flagged here so the deviation and its provisional nature are visible in review, not silently assumed.",
+  "_documentHashSource": "sha256 of the exact _rationale string above, computed at review time -- NOT an externally-issued legal document hash. Replace both this record and documentHash once Kevin issues a formal written community-free-access policy artifact.",
+  "source": {
+    "id": "f24c78f8-d4b9-55a3-a8f7-b05d484c052e",
+    "termsReviewId": "7b2c4d1e-9a3f-4c8b-8e5a-2f6d3c1a9b4e",
+    "currentTermsReviewId": "7b2c4d1e-9a3f-4c8b-8e5a-2f6d3c1a9b4e",
+    "code": "tcgcsv-community-free-access-history",
+    "name": "TCGCSV weekly price-history publication (community free access)",
+    "termsUrl": "https://tcgcsv.com/docs",
+    "decision": "approved",
+    "active": true,
+    "commercialUseAllowed": true,
+    "catalogMetadataAllowed": false,
+    "publicRawDisplayAllowed": true,
+    "publicDerivedDisplayAllowed": false,
+    "attributionRequired": true,
+    "attributionText": "Historical prices sourced from TCGCSV pricing archives. Not affiliated with or endorsed by TCGCSV.",
+    "documentHash": "bd35b9dc097b109482f011663bd420682b387a95cdc7550c4045a75ed64afc86",
+    "reviewedAt": "2026-08-17T00:00:00+00:00",
+    "expiresAt": null
+  }
+}

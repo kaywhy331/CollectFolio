@@ -35,6 +35,12 @@ let state = {
   // (categoryId/groupId/productId/subTypeName) is TCGCSV's own, not the
   // app's canonical variant UUID.
   trajectoryForecasts: { byKey: {}, loading: false, error: '' },
+  // 0.8.17: TCGCSV weekly price-HISTORY objects, keyed by
+  // `historyKeyForItem(item)` (see services/history-trajectory.js). Same
+  // TCGCSV identity keying as trajectoryForecasts, but observed data with
+  // no eligibility gate -- an absent key simply means no history object
+  // was ever published for that item, never "excluded".
+  priceHistory: { byKey: {}, loading: false, error: '' },
   tcgcsvRefresh: {
     status: 'disabled', sourceUpdatedAt: '', lastSuccessfulSourceBuild: null,
     lastSuccessfulAt: null, error: ''

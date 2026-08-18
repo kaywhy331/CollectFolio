@@ -27,6 +27,7 @@ import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets,
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { getTrajectoryForecastForItem, trajectoryKeyForItem } from './services/forecast-trajectory.js';
+import { getPriceHistoryForItem, historyKeyForItem } from './services/history-trajectory.js';
 import { applyEnrichmentToItem, getEnrichmentForItem } from './services/catalog-enrichment.js';
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
 import { fetchTcgcsvRefreshStatus } from './services/tcgcsv-refresh-status.js';
@@ -351,10 +352,43 @@ async function hydrateTrajectoryForecasts() {
   setState({ trajectoryForecasts: { byKey: Object.fromEntries(entries), loading: false, error: '' } });
 }
 
+let historyHydrationId = 0;
+
+// 0.8.17: prefetches published weekly price-HISTORY objects for the same
+// set of TCGCSV-identity items hydrateTrajectoryForecasts covers (see
+// trajectoryCandidateItems) -- shares the item discovery, differs only in
+// key/fetch function since history has no eligibility gate to report.
+// Deliberately best-effort/non-blocking, same as the forecast hydration.
+async function hydratePriceHistory() {
+  const hydrationId = ++historyHydrationId;
+  const state = getState();
+  const items = trajectoryCandidateItems(state);
+  const byKey = new Map();
+  for (const item of items) {
+    const key = historyKeyForItem(item || {});
+    if (key && !byKey.has(key)) byKey.set(key, item);
+  }
+  if (!byKey.size) {
+    setState({ priceHistory: { byKey: {}, loading: false, error: '' } });
+    return;
+  }
+  setState({ priceHistory: { ...getState().priceHistory, loading: true, error: '' } });
+  const entries = await Promise.all([...byKey.entries()].map(async ([key, item]) => {
+    try {
+      return [key, await getPriceHistoryForItem(item, { session: state.auth?.session })];
+    } catch (error) {
+      return [key, { available: false, points: null, error: error.message || 'Price history unavailable.' }];
+    }
+  }));
+  if (hydrationId !== historyHydrationId) return;
+  setState({ priceHistory: { byKey: Object.fromEntries(entries), loading: false, error: '' } });
+}
+
 async function hydrateIntelligence() {
   const hydrationId = ++intelligenceHydrationId;
   const state = getState();
   hydrateTrajectoryForecasts().catch(() => {});
+  hydratePriceHistory().catch(() => {});
   const variantIds = intelligenceVariantIds(
     state.holdings,
     state.watchlistItems,
@@ -471,6 +505,14 @@ async function hydrateCardRoute(route) {
     };
     render();
     scheduleCatalogEnrichment(item);
+    // Bugfix (0.8.17): a deep-linked card route never went through
+    // hydrateIntelligence() (search/browse only), so trajectory forecasts
+    // never got fetched for it -- fire the same best-effort hydration
+    // enrichment already triggers here. hydrateTrajectoryForecasts() reads
+    // activeDetail.item itself and guards staleness with its own
+    // hydrationId, so no extra route-staleness check is needed here.
+    hydrateTrajectoryForecasts().catch(() => {});
+    hydratePriceHistory().catch(() => {});
   } catch (error) {
     if (hydrationId !== routeHydrationId || activeRoute.canonicalPath !== route.canonicalPath) return;
     activeDetail = { origin: route.origin || 'search', error: error.message || 'The shared card could not be loaded.', catalogRef: null };
@@ -486,7 +528,11 @@ function resolveRouteContext(route, state = getState()) {
       conditionClass: holding.grade ? 'graded' : 'raw',
       marketCondition: watchMarketConditionForHolding(holding)
     }) } : null;
-    if (activeDetail?.item) scheduleCatalogEnrichment(activeDetail.item);
+    if (activeDetail?.item) {
+      scheduleCatalogEnrichment(activeDetail.item);
+      hydrateTrajectoryForecasts().catch(() => {});
+      hydratePriceHistory().catch(() => {});
+    }
   } else if (route.key === 'card-detail') {
     const item = state.search.results.find((entry) => routeItemIdentifiers(entry).has(route.entityId));
     const watched = watchedItemForRoute(state.watchlistItems, route.entityId);
@@ -501,7 +547,11 @@ function resolveRouteContext(route, state = getState()) {
         marketCondition: watched?.marketCondition
       })
     } : null;
-    if (activeDetail?.item) scheduleCatalogEnrichment(activeDetail.item);
+    if (activeDetail?.item) {
+      scheduleCatalogEnrichment(activeDetail.item);
+      hydrateTrajectoryForecasts().catch(() => {});
+      hydratePriceHistory().catch(() => {});
+    }
   } else {
     activeDetail = null;
   }

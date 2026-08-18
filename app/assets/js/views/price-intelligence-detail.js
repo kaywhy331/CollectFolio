@@ -4,8 +4,10 @@ import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-c
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart, trajectoryProjectionChart } from '../core/ui.js';
+import { historyBarChart } from '../core/history-chart.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
+import { historyKeyForItem } from '../services/history-trajectory.js';
 import {
   expectedMarketSeriesKey,
   holdingMarketSeriesIdentity,
@@ -175,11 +177,13 @@ export function renderPriceIntelligenceDetail(detail, state) {
     ? 'detail-published-forecast'
     : 'detail-forecast';
   const trajectoryMarkup = trajectorySection(trajectoryItem, state, trajectorySectionId);
+  const historyMarkup = historySection(trajectoryItem, state);
 
   return `<div class="detail-back"><button class="button ghost small" type="button" data-action="close-detail">← Back</button><span>Card detail</span></div>
     ${headerCard(detail, ref, intelligence, holding, Boolean(watchedEntry), currency, state, localScenario, watchedEntry?.watchKey)}
     <nav class="detail-tabs" aria-label="Card detail sections"><a href="#detail-overview">Overview</a><a href="#detail-market">Market</a><a href="#detail-forecast">Forecast</a><a href="#detail-sales">Sales</a><a href="#detail-data">Details</a></nav>
     <div class="detail-sections">${localScenarioSection(holding, localScenario)}${intelligence ? intelligenceSections(intelligence, currency, Boolean(localScenario), trajectoryMarkup) : unsupportedSection(ref, state, Boolean(localScenario), trajectoryMarkup)}
+    ${historyMarkup}
     ${salesSection(ref)}
     ${dataDetailsSection(ref, intelligence)}
     ${allAttributesSection(detail.item, ref, currency)}
@@ -306,6 +310,26 @@ function trajectorySection(item, state, sectionId) {
   const thirty = packet.horizons?.['30'];
   const horizonBlock = (horizon, band) => band ? `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(band.q50, state.settings?.currency || 'USD'))} median</h3></div><span class="pill">${isColdStart ? 'Cold start' : 'Trajectory-v1'}</span></div><div class="forecast-grid"><div><span>Range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div></section>` : '';
   return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast · Trajectory-v1</p><h2>${isColdStart ? 'Cold start estimate' : 'Modeled trajectory'}</h2><p class="muted">${isColdStart ? 'Built without enough observed price history for this printing; treat the range as wider and less certain than a standard forecast.' : 'Modeled from published price history for this exact printing.'}</p></div></div>${chart}<div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))} · Model ${escapeHTML(packet.modelVersion || 'trajectory-v1')}.</p></section>`;
+}
+
+// 0.8.17: observed weekly price-history bar chart, with published
+// trajectory-v1 estimates overlaid at their served horizons when
+// available. Fail-closed and independent of trajectorySection above --
+// an item with no published history object renders nothing here even if
+// it has a forecast, and an item with history but no forecast still gets
+// its bar chart (history-bars-only, no projection overlay).
+function historySection(item, state) {
+  const historyKey = historyKeyForItem(item || {});
+  if (!historyKey) return '';
+  const historyEntry = state.priceHistory?.byKey?.[historyKey];
+  if (!historyEntry?.available || !Array.isArray(historyEntry.points) || !historyEntry.points.length) return '';
+  const trajectoryKey = trajectoryKeyForItem(item || {});
+  const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
+  const packet = trajectoryEntry?.eligibility === 'published' ? trajectoryEntry.packet : null;
+  const stale = packet ? isTrajectoryStale(packet, trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf) : false;
+  const chart = historyBarChart(historyEntry.points, packet, state.settings?.currency || 'USD', { stale });
+  if (!chart) return '';
+  return `<section class="card history-chart-card" id="detail-history"><div class="section-heading"><div><p class="eyebrow">Observed price history</p><h2>Weekly price trend${packet ? ' with projected estimates' : ''}</h2><p class="muted">Historic weekly prices sourced from TCGCSV pricing archives.${packet ? ' Projected bars show this printing’s published trajectory-v1 estimate.' : ''}</p></div></div>${chart}</section>`;
 }
 
 function localScenarioSection(holding, scenario) {

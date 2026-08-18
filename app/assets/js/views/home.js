@@ -6,6 +6,8 @@ import { allocationChart, trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForHolding } from '../core/market-series.js';
+import { mergeRetroSeriesWithSnapshots, reconstructPortfolioValueSeries } from '../core/portfolio-history.js';
+import { historyKeyForItem } from '../services/history-trajectory.js';
 
 export const OVERVIEW_RANGES = Object.freeze(['1D', '7D', '1M', '3M', '1Y', 'All']);
 
@@ -23,7 +25,23 @@ function hasManualValue(holding = {}) {
     && Number.isFinite(Number(holding.manualMarketPrice));
 }
 
-export function overviewSeries(holdings = [], snapshots = [], range = '3M', now = new Date(), currency = 'USD') {
+function filterByRange(points, range) {
+  const days = RANGE_DAYS[OVERVIEW_RANGES.includes(range) ? range : '3M'];
+  if (!Number.isFinite(days) || !points.length) return points;
+  const latest = validDate(`${points.at(-1).date}T00:00:00.000Z`);
+  if (!latest) return points;
+  const cutoff = new Date(latest);
+  cutoff.setUTCDate(cutoff.getUTCDate() - days);
+  return points.filter((point) => validDate(`${point.date}T00:00:00.000Z`) >= cutoff);
+}
+
+// The locally-recorded side of the chart series: today's live snapshot
+// plus every recorded daily local snapshot, one point per day. This is
+// exactly what overviewSeries used to compute end to end before 0.8.17
+// added a retro-history side to merge in (see overviewSeriesWithHistory
+// below) -- kept as its own function because mergeRetroSeriesWithSnapshots
+// needs it as the "snapshots win" input on its own, range-unfiltered.
+function dailySnapshotSeries(holdings = [], snapshots = [], now = new Date(), currency = 'USD') {
   if (!holdings.length) return [];
   const current = snapshotFor(holdings, now, { currency });
   const byDay = new Map(
@@ -33,14 +51,46 @@ export function overviewSeries(holdings = [], snapshots = [], range = '3M', now 
       .map((entry) => [entry.date, { ...entry }])
   );
   byDay.set(current.date, current);
-  const points = [...byDay.values()].sort((left, right) => left.date.localeCompare(right.date));
-  const days = RANGE_DAYS[OVERVIEW_RANGES.includes(range) ? range : '3M'];
-  if (!Number.isFinite(days)) return points;
-  const latest = validDate(`${points.at(-1).date}T00:00:00.000Z`);
-  if (!latest) return points;
-  const cutoff = new Date(latest);
-  cutoff.setUTCDate(cutoff.getUTCDate() - days);
-  return points.filter((point) => validDate(`${point.date}T00:00:00.000Z`) >= cutoff);
+  return [...byDay.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+// 0.8.17: resolves each holding's TCGCSV weekly price-history points (if
+// any were published for it) out of `state.priceHistory.byKey`, keyed by
+// holding.id for portfolio-history.js's reconstruction input. A holding
+// with no TCGCSV identity, or whose group/variant was never published,
+// is simply absent from the returned map -- reconstructPortfolioValueSeries
+// treats that as its documented flat-fallback case, never an error.
+export function historyPointsByHoldingId(holdings = [], priceHistory = {}) {
+  const byKey = priceHistory?.byKey || {};
+  const result = {};
+  (Array.isArray(holdings) ? holdings : []).forEach((holding) => {
+    const key = historyKeyForItem(holding?.item || {});
+    const entry = key ? byKey[key] : null;
+    if (entry?.available && Array.isArray(entry.points) && entry.points.length) {
+      result[holding.id] = entry.points;
+    }
+  });
+  return result;
+}
+
+export function overviewSeries(holdings = [], snapshots = [], range = '3M', now = new Date(), currency = 'USD') {
+  return filterByRange(dailySnapshotSeries(holdings, snapshots, now, currency), range);
+}
+
+// 0.8.17: merges the Item-3 retro weekly reconstruction (from published
+// TCGCSV price history) underneath the existing locally-recorded daily
+// snapshot series -- snapshots win on any overlapping date, per the
+// coordinator's merge strategy. `historyPointsByHoldingId` is
+// `{ [holding.id]: [[date, price], ...] }`, already resolved by the
+// caller from state.priceHistory.byKey (see hydratePortfolioHistory in
+// app.js). Falls back to plain snapshot-only behavior (identical to
+// overviewSeries) when no history is resolvable for any holding --
+// fail-closed, never a regression from pre-0.8.17 behavior.
+export function overviewSeriesWithHistory(holdings = [], snapshots = [], historyPointsByHoldingId = {}, range = '3M', now = new Date(), currency = 'USD') {
+  const daily = dailySnapshotSeries(holdings, snapshots, now, currency);
+  const retro = reconstructPortfolioValueSeries(holdings, historyPointsByHoldingId, { currency, now });
+  const merged = mergeRetroSeriesWithSnapshots(retro.points, daily);
+  return { points: filterByRange(merged, range), coverage: retro.coverage };
 }
 
 export function overviewChange(points = []) {
@@ -185,7 +235,10 @@ export function renderHome(state) {
   const currency = state.settings.currency || 'USD';
   const summary = portfolioSummary(state.holdings, { currency });
   const range = OVERVIEW_RANGES.includes(state.overview?.range) ? state.overview.range : '3M';
-  const series = overviewSeries(state.holdings, state.snapshots, range, new Date(), currency);
+  const historyPoints = historyPointsByHoldingId(state.holdings, state.priceHistory);
+  const { points: series, coverage: historyCoverage } = overviewSeriesWithHistory(
+    state.holdings, state.snapshots, historyPoints, range, new Date(), currency
+  );
   const change = overviewChange(series);
   const gainTone = summary.gain >= 0 ? 'positive' : 'negative';
   const coverage = pricingCoverage(state.holdings, state.intelligence?.byVariant);
@@ -209,7 +262,7 @@ export function renderHome(state) {
       <article class="card overview-performance">
         <div class="overview-performance-head"><div><p class="metric-label">Estimated market value · ${escapeHTML(currency)} only</p><strong class="overview-value">${escapeHTML(formatCurrency(summary.marketValue, currency))}</strong>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Portfolio chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
         ${trendChart(series, currency)}
-        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> pricing coverage</span><span>${asOf ? `Updated ${escapeHTML(asOf)}` : 'Waiting for the first snapshot'}</span></div>
+        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> pricing coverage</span>${historyCoverage.total ? `<span><strong>${historyCoverage.percent}%</strong> chart history coverage across this portfolio</span>` : ''}<span>${asOf ? `Updated ${escapeHTML(asOf)}` : 'Waiting for the first snapshot'}</span></div>
       </article>
       <aside class="overview-summary" aria-label="Portfolio summary">
         <article class="summary-stat"><span>Cost basis</span><strong>${escapeHTML(formatCurrency(summary.costBasis, currency))}</strong><small>Purchase price + fees</small></article>

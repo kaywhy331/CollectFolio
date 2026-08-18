@@ -684,6 +684,44 @@ def assert_tcgcsv_community_free_access_terms(terms: SourceTerms, at: datetime) 
         raise PermissionError("current community-free-access terms do not permit derived-forecast publication")
 
 
+def assert_tcgcsv_community_free_access_history_terms(terms: SourceTerms, at: datetime) -> None:
+    """Gate for the 0.8.17 weekly price-HISTORY publication path only.
+
+    T1 (``assert_tcgcsv_research_terms`` above, UNCHANGED) stays exactly as
+    it was. This is also a SEPARATE, narrower gate than
+    ``assert_tcgcsv_community_free_access_terms`` (T5's derived-forecast
+    publication): that function's review explicitly does NOT cover TCGCSV
+    raw price data ("never TCGCSV raw price data or catalog metadata" --
+    see its docstring). History objects republish raw, weekly-sampled
+    TCGCSV historical prices, so they require their own explicit,
+    separately-reviewed ``SourceTerms`` record authorizing raw display --
+    see ``analytics/manifests/tcgcsv-community-free-access-history.json``
+    for the record and its rationale (Kevin's 2026-08-17 directive
+    requesting public history charts on the card detail page and Quick
+    Inspector drawer is the authorizing decision). Catalog metadata
+    publication and *derived*-feature display (that's still T5's separate
+    record) remain out of scope for this gate.
+    """
+
+    if not isinstance(terms, SourceTerms):
+        raise ValueError("terms must be SourceTerms")
+    if terms.decision != "approved":
+        raise PermissionError(
+            "community-free-access history publication requires an approved SourceTerms review"
+        )
+    if terms.catalog_metadata_allowed:
+        raise PermissionError(
+            "community-free-access history terms must not grant public catalog-metadata display -- "
+            "only raw weekly price-history points are in scope for this publication"
+        )
+    if not terms.commercial_use_allowed or not terms.public_raw_display_allowed:
+        raise PermissionError(
+            "community-free-access history terms must explicitly allow public raw-price display"
+        )
+    if not terms.permits_public_usage("raw_price", at):
+        raise PermissionError("current community-free-access terms do not permit history publication")
+
+
 @dataclass(frozen=True, slots=True)
 class TCGCSVResearchPacket:
     snapshot_hash: str

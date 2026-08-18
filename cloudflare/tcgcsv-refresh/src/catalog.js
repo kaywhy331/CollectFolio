@@ -1225,6 +1225,54 @@ export async function serveForecastObject(env, identity, cors) {
   return new Response(object.body, { status: 200, headers });
 }
 
+// 0.8.17: TCGCSV weekly price-history publication (community-free-access,
+// see analytics/manifests/tcgcsv-community-free-access-history.json -- a
+// SEPARATE, explicitly-reviewed SourceTerms record from the derived-
+// forecast one above: history objects republish raw TCGCSV historical
+// prices, which the forecast record's community-free-access review does
+// NOT cover). Objects under history/ are pre-published for every variant
+// (history is observed data, no eligibility gate) -- an unknown product is
+// simply absent from the manifest, mirroring the forecast route's 404
+// behavior for a plain R2 miss.
+const HISTORY_MANIFEST_KEY = 'history/manifest.json';
+const MAX_HISTORY_MANIFEST_BYTES = 8 * 1024 * 1024;
+// T5-style publisher targets <=128KiB gzip objects per part; same
+// generous-but-bounded headroom as the forecast route.
+const MAX_HISTORY_OBJECT_BYTES = 256 * 1024;
+const HISTORY_ROUTE = /^\/catalog\/history\/(\d+)\/(\d+(?:\.part\d+)?)$/;
+
+function historyRouteIdentity(pathname) {
+  const match = HISTORY_ROUTE.exec(pathname);
+  if (!match) return null;
+  const categoryId = Number.parseInt(match[1], 10);
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0) return null;
+  return { categoryId, objectId: match[2] };
+}
+
+export async function serveHistoryManifest(env, cors) {
+  const object = await env.TCGCSV_CURRENT.get(HISTORY_MANIFEST_KEY);
+  if (!object || object.size <= 0 || object.size > MAX_HISTORY_MANIFEST_BYTES) {
+    return jsonResponse({ error: 'History manifest was not found' }, { status: 404, headers: cors });
+  }
+  const headers = forecastCacheHeaders(cors);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  if (object.httpEtag) headers.set('etag', object.httpEtag);
+  return new Response(object.body, { status: 200, headers });
+}
+
+export async function serveHistoryObject(env, identity, cors) {
+  const key = `history/${identity.categoryId}/${identity.objectId}.json.gz`;
+  const object = await env.TCGCSV_CURRENT.get(key);
+  if (!object || object.size <= 0 || object.size > MAX_HISTORY_OBJECT_BYTES) {
+    return jsonResponse({ error: 'History object was not found' }, { status: 404, headers: cors });
+  }
+  const headers = forecastCacheHeaders(cors);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  headers.set('content-encoding', 'gzip');
+  if (object.httpEtag) headers.set('etag', object.httpEtag);
+  return new Response(object.body, { status: 200, headers });
+}
+
 // B2: catalog-v2 enrichment bridge (analytics/src/collectfolio_analytics/
 // catalog_bridge.py). Published exactly like a forecast object -- one
 // gzip JSON object per flagship categoryId, community-free-access,
@@ -1295,6 +1343,14 @@ export async function handleCatalogRequest(request, env) {
     const bridgeIdentity = bridgeRouteIdentity(url.pathname);
     if (request.method === 'GET' && bridgeIdentity) {
       return serveBridgeObject(env, bridgeIdentity, cors);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/catalog/history/manifest') {
+      return serveHistoryManifest(env, cors);
+    }
+    const historyIdentity = historyRouteIdentity(url.pathname);
+    if (request.method === 'GET' && historyIdentity) {
+      return serveHistoryObject(env, historyIdentity, cors);
     }
 
     return jsonResponse(await serveCatalogData(request, env), { headers: cors });
