@@ -19,3 +19,11 @@
 | Netlify runtime-config.js | APP_VERSION "0.8.13" |
 
 Serving state per the T4 fail-closed gate: cat3 standard cohort + cold-start (labeled) everywhere; all other cohorts excluded ("insufficient evidence" in-app).
+
+# 0.8.17 — deep-link fix, history bar charts, portfolio trend (2026-08-18)
+
+- PR #41 merged aa0f1420 (one CI round-trip: the new portfolio module's heading/coverage phrasing collided with protection-baseline strict-mode locators; fixed by rewording, 38/38 test:browser green). Netlify live at APP_VERSION "0.8.17".
+- History publication: publish-history run over the 80-week panel — 1,832 objects / 301,780 variants / 65MB, 17.9 min, 1.1GB peak RSS; 1,832/1,832 uploaded to R2 under history/ (manifest last), 0 failures. Worker deployed (version ccb28570) with /catalog/history routes.
+- Live checks: history manifest 200; history/2/24621 200 (183 variants; product 695695 '1st Edition' has 11 weekly points 2026-05-30 $1,299.00 → 2026-08-08 $1,196.63); unknown group 404; forecasts routes unaffected.
+- The user-reported card (/cards/tcgcsv:2:24621:695695) now has: deep-link forecast hydration (bug fixed + regression test), a served 90d forecast, and history chart data live.
+- Note for future gates: CI runs `npm run test:browser` (38 tests) — plain `npx playwright test` runs fewer; always gate with the npm script.
