@@ -122,3 +122,10 @@ correspondence table.
   `docs/receipts/catalog-v2/search-primacy-notes.md`.
 - B4 (`a9c9a20`): `app/assets/js/views/price-intelligence-detail.js`,
   `tests/detail-view.test.js`, `tests/e2e/catalog-enrichment.spec.js`.
+
+## Live verification (2026-08-17, post-merge)
+
+- PR #39 merged 4df99352; all 6 CI checks green; Netlify live at APP_VERSION "0.8.16".
+- Bridge tables uploaded to R2 (bridge/1: 2.0MB, bridge/2: 412KB, bridge/3: 101KB); worker deployed (version 3c1f64be).
+- Live checks: GET /catalog/bridge/{1,2,3} → 200 (first request raced R2 read-after-write propagation, immediately consistent on retry); /catalog/bridge/99 → 404; forecasts manifest unaffected (200).
+- Live bridge/3 payload verified: 160 sets, 17,383 products, contentHash present — byte-equivalent to the committed build.
