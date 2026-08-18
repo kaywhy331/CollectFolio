@@ -1,7 +1,7 @@
 import { externalImage } from '../core/components.js';
 import { searchResultViewModel } from '../core/view-models.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
-import { historyBarChart } from '../core/history-chart.js';
+import { historyLineChart } from '../core/history-chart.js';
 import { escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForCatalogItem, selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
 import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
@@ -21,7 +21,7 @@ function inspectorHistoryMarkup(item, state) {
   const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
   const packet = trajectoryEntry?.eligibility === 'published' ? trajectoryEntry.packet : null;
   const stale = packet ? isTrajectoryStale(packet, trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf) : false;
-  const chart = historyBarChart(historyEntry.points, packet, state.settings?.currency || 'USD', { compact: true, stale });
+  const chart = historyLineChart(historyEntry.points, packet, state.settings?.currency || 'USD', { compact: true, stale });
   if (!chart) return '';
   return `<div class="inspector-history"><p class="eyebrow">Price history</p>${chart}</div>`;
 }

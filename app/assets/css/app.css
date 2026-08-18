@@ -430,7 +430,13 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .history-bar-forecast-cold-start { fill: color-mix(in srgb, var(--warning) 35%, transparent); stroke: var(--warning); }
 .history-bar-whisker { stroke: var(--blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .trajectory-cold-start .history-bar-whisker { stroke: var(--warning); }
-.history-bar-chart .trend-chart { display: block; }
+.history-bar-chart .trend-chart, .history-line-chart .trend-chart { display: block; }
+.history-line { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.history-point { fill: var(--accent); opacity: 0.85; }
+.history-forecast-line { stroke: var(--blue); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.history-forecast-line-cold-start { stroke: var(--warning); }
+.history-forecast-point { fill: var(--blue); }
+.history-forecast-point-cold-start { fill: var(--warning); }
 .history-chart-card .chart-legend { margin-top: .6rem; }
 .inspector-history { margin-top: .75rem; }
 .inspector-history .history-bars { max-height: 180px; }

@@ -151,7 +151,7 @@ async function runSearch(page) {
   return { withForecast, historyOnly, noHistory };
 }
 
-test('history bar chart renders on the full detail page with forecast projection bars for a served item', async ({ page }) => {
+test('history line chart renders on the full detail page with forecast projection marks for a served item', async ({ page }) => {
   await configureStubs(page);
   await skipOnboarding(page);
   const { withForecast } = await runSearch(page);
@@ -160,14 +160,14 @@ test('history bar chart renders on the full detail page with forecast projection
   await expect(page.getByRole('heading', { name: 'Weekly price trend with projected estimates' })).toBeVisible();
   const chart = page.locator('.history-chart-card svg.history-bars');
   await expect(chart).toBeVisible();
-  await expect(chart.locator('rect.history-bar').first()).toBeVisible();
-  await expect(chart.locator('rect.history-bar-forecast').first()).toBeVisible();
+  await expect(chart.locator('polyline.history-line')).toBeVisible();
+  await expect(chart.locator('line.history-forecast-line').first()).toBeVisible();
   await expect(chart.locator('line.history-bar-whisker')).toHaveCount(2);
   await expect(page.getByText('+30d est.')).toBeVisible();
   await expect(page.getByText('+90d est.')).toBeVisible();
 });
 
-test('history bar chart renders history-only bars with no projection overlay when no forecast is published', async ({ page }) => {
+test('history line chart renders a history-only line with no projection overlay when no forecast is published', async ({ page }) => {
   await configureStubs(page);
   await skipOnboarding(page);
   const { historyOnly } = await runSearch(page);
@@ -176,11 +176,12 @@ test('history bar chart renders history-only bars with no projection overlay whe
   await expect(page.getByRole('heading', { name: 'Weekly price trend', exact: true })).toBeVisible();
   const chart = page.locator('.history-chart-card svg.history-bars');
   await expect(chart).toBeVisible();
-  await expect(chart.locator('rect.history-bar-forecast')).toHaveCount(0);
+  await expect(chart.locator('polyline.history-line')).toBeVisible();
+  await expect(chart.locator('line.history-forecast-line')).toHaveCount(0);
   await expect(page.getByText('+30d est.')).toHaveCount(0);
 });
 
-test('history bar chart fails closed (no chart at all) when no history object was ever published', async ({ page }) => {
+test('history line chart fails closed (no chart at all) when no history object was ever published', async ({ page }) => {
   await configureStubs(page);
   await skipOnboarding(page);
   const { noHistory } = await runSearch(page);
@@ -189,7 +190,7 @@ test('history bar chart fails closed (no chart at all) when no history object wa
   await expect(page.locator('.history-chart-card')).toHaveCount(0);
 });
 
-test('history bar chart renders a compact variant in the Quick Inspector drawer', async ({ page }) => {
+test('history line chart renders a compact variant in the Quick Inspector drawer', async ({ page }) => {
   await configureStubs(page);
   await skipOnboarding(page);
   const { withForecast } = await runSearch(page);
@@ -197,5 +198,5 @@ test('history bar chart renders a compact variant in the Quick Inspector drawer'
   await expect(page.locator('.quick-inspector')).toBeVisible();
   const chart = page.locator('.inspector-history svg.history-bars');
   await expect(chart).toBeVisible();
-  await expect(chart.locator('rect.history-bar').first()).toBeVisible();
+  await expect(chart.locator('polyline.history-line')).toBeVisible();
 });

@@ -4,7 +4,7 @@ import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-c
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart, trajectoryProjectionChart } from '../core/ui.js';
-import { historyBarChart } from '../core/history-chart.js';
+import { historyLineChart } from '../core/history-chart.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
 import { historyKeyForItem } from '../services/history-trajectory.js';
@@ -338,7 +338,7 @@ function historySection(item, state) {
   const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
   const packet = trajectoryEntry?.eligibility === 'published' ? trajectoryEntry.packet : null;
   const stale = packet ? isTrajectoryStale(packet, trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf) : false;
-  const chart = historyBarChart(historyEntry.points, packet, state.settings?.currency || 'USD', { stale });
+  const chart = historyLineChart(historyEntry.points, packet, state.settings?.currency || 'USD', { stale });
   if (!chart) return '';
   return `<section class="card history-chart-card" id="detail-history"><div class="section-heading"><div><p class="eyebrow">Observed price history</p><h2>Weekly price trend${packet ? ' with projected estimates' : ''}</h2><p class="muted">Historic weekly prices sourced from TCGCSV pricing archives.${packet ? ' Projected bars show this printing’s published trajectory-v1 estimate.' : ''}</p></div></div>${chart}</section>`;
 }

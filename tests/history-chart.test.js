@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   downsampleHistoryPoints,
-  historyBarChart,
+  historyLineChart,
   normalizeHistoryPoints,
   selectServedForecastBars
 } from '../app/assets/js/core/history-chart.js';
@@ -66,19 +66,19 @@ test('selectServedForecastBars rejects an unordered or incomplete band', () => {
   assert.deepEqual(selectServedForecastBars(null), []);
 });
 
-test('historyBarChart fails closed on an empty/invalid points array', () => {
-  assert.equal(historyBarChart([], null, 'USD'), '');
-  assert.equal(historyBarChart(null, null, 'USD'), '');
+test('historyLineChart fails closed on an empty/invalid points array', () => {
+  assert.equal(historyLineChart([], null, 'USD'), '');
+  assert.equal(historyLineChart(null, null, 'USD'), '');
 });
 
-test('historyBarChart renders history bars only when no forecast packet is supplied', () => {
-  const html = historyBarChart(weeklyPoints(6), null, 'USD');
-  assert.match(html, /class="history-bar"/);
-  assert.doesNotMatch(html, /history-bar-forecast/);
+test('historyLineChart renders a history line only when no forecast packet is supplied', () => {
+  const html = historyLineChart(weeklyPoints(6), null, 'USD');
+  assert.match(html, /class="chart-line chart-market history-line"/);
+  assert.doesNotMatch(html, /history-forecast-line/);
   assert.doesNotMatch(html, /est\.<\/text>/);
 });
 
-test('historyBarChart appends projection bars with whiskers only for served horizons', () => {
+test('historyLineChart appends projection marks with whiskers only for served horizons', () => {
   const packet = {
     confidence: 'standard',
     horizons: {
@@ -86,33 +86,56 @@ test('historyBarChart appends projection bars with whiskers only for served hori
       90: { q10: 80, q50: 120, q90: 160 }
     }
   };
-  const html = historyBarChart(weeklyPoints(10), packet, 'USD');
-  assert.match(html, /history-bar-forecast/);
+  const html = historyLineChart(weeklyPoints(10), packet, 'USD');
+  assert.match(html, /history-forecast-line/);
+  assert.match(html, /history-forecast-point/);
   assert.match(html, /history-bar-whisker/);
   assert.match(html, /\+30d est\./);
   assert.match(html, /\+90d est\./);
   assert.match(html, /forecast-present/);
 });
 
-test('historyBarChart applies cold-start warning-tone styling consistent with the trajectory chart', () => {
+test('historyLineChart applies cold-start warning-tone styling consistent with the trajectory chart', () => {
   const packet = { confidence: 'cold-start', horizons: { 30: { q10: 5, q50: 10, q90: 20 } } };
-  const html = historyBarChart(weeklyPoints(5), packet, 'USD');
+  const html = historyLineChart(weeklyPoints(5), packet, 'USD');
   assert.match(html, /trajectory-cold-start/);
   assert.match(html, /Cold start estimate/);
-  assert.match(html, /history-bar-forecast-cold-start/);
+  assert.match(html, /history-forecast-line-cold-start/);
+  assert.match(html, /history-forecast-point-cold-start/);
 });
 
-test('historyBarChart compact variant renders fewer bars and a shorter viewBox', () => {
-  const html = historyBarChart(weeklyPoints(60), null, 'USD', { compact: true });
+test('historyLineChart compact variant renders fewer bars and a shorter viewBox', () => {
+  const html = historyLineChart(weeklyPoints(60), null, 'USD', { compact: true });
   assert.match(html, /viewBox="0 0 760 180"/);
 });
 
-test('historyBarChart escapes untrusted-looking text content', () => {
-  // Confidence strings are internal, but escapeHTML must still be applied
-  // defensively -- assert the escaping helper is actually wired in by
-  // checking no raw "<" survives an adversarial confidence label.
+test('historyLineChart escapes untrusted-looking text content', () => {
+  // The line chart never echoes the packet's confidence string at all --
+  // only fixed badge labels for recognized tiers -- so an adversarial
+  // confidence value must simply not appear in the markup.
   const packet = { confidence: '<script>alert(1)</script>', horizons: { 30: { q10: 1, q50: 2, q90: 3 } } };
-  const html = historyBarChart(weeklyPoints(5), packet, 'USD');
+  const html = historyLineChart(weeklyPoints(5), packet, 'USD');
   assert.doesNotMatch(html, /<script>/);
-  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /alert\(1\)/);
+});
+
+test('historyLineChart zooms the y-domain to the observed range instead of anchoring at zero', () => {
+  // A $50 card moving by a couple of dollars: with a zero-anchored axis the
+  // line is flat; the zoomed domain must place min near the bottom and max
+  // near the top, and tick labels must span [~min..~max], not [$0..].
+  const points = [['2026-06-06', 49], ['2026-06-13', 50], ['2026-06-20', 51], ['2026-06-27', 50.5]];
+  const html = historyLineChart(points, null, 'USD');
+  assert.doesNotMatch(html, /\$0(?:\.00)?</);
+  const ys = [...html.matchAll(/history-point" \/>/g)];
+  assert.equal(ys.length, 4);
+  // min and max tick labels reflect the padded observed range (2-decimal
+  // formatting because the range is narrow).
+  assert.match(html, /48\.\d{2}/);
+  assert.match(html, /51\.\d{2}/);
+});
+
+test('historyLineChart plots every published point instead of downsampling to 32 bars', () => {
+  const html = historyLineChart(weeklyPoints(80), null, 'USD');
+  const coords = /polyline points="([^"]+)"/.exec(html)[1].split(' ');
+  assert.equal(coords.length, 80);
 });
