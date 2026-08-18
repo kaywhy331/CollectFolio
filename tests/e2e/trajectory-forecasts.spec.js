@@ -266,3 +266,38 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
   await expect(page.getByText('30-day outlook')).toHaveCount(0);
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 });
+
+test('bugfix (0.8.17): a card-detail deep link with no prior search still hydrates trajectory forecasts', async ({ page }) => {
+  // Regression for the live bug report: hydrateCardRoute() set activeDetail
+  // and enriched the item, but never fired hydrateTrajectoryForecasts()
+  // (that only ran inside hydrateIntelligence(), which a deep link never
+  // invokes). Navigating straight to /cards/<id> with no prior search must
+  // still fetch and render the published forecast.
+  await configureTrajectoryStubs(page);
+  await page.route(`${TCGCSV_ORIGIN}/catalog/products/3/100/5001**`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      product: {
+        productId: 5001,
+        categoryId: 3,
+        groupId: 100,
+        name: 'Trajectory Eligible Card',
+        cleanName: 'Trajectory Eligible Card',
+        prices: [{ subtypeName: 'Holofoil', marketPrice: 120 }]
+      },
+      category: { categoryId: 3, displayName: 'Pokemon' },
+      group: { groupId: 100, name: 'Group 100' },
+      publicationId: 'e2e',
+      sourceUpdatedAt: '2026-08-10'
+    })
+  }));
+  await skipOnboarding(page);
+
+  await page.goto('/cards/tcgcsv%3A3%3A100%3A5001');
+  // A card-detail deep link renders the full detail page directly (no
+  // Quick Inspector drawer / "Open full details" step in between).
+  await expect(page.getByRole('heading', { name: 'Trajectory Eligible Card' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toBeVisible();
+  await expect(page.locator('.trajectory-chart svg')).toBeVisible();
+  await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
+});

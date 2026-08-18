@@ -4,10 +4,11 @@ import { filterAndSortHoldings, holdingCostBasis, holdingCostCurrency, holdingGa
 import { catalogPriceDisclosure, catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { filterAndSortPortfolioSets, groupPortfolioSets } from '../core/portfolio-sets.js';
-import { forecastProjectionChart } from '../core/ui.js';
+import { forecastProjectionChart, trendChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
 import { findWatchedItem } from '../services/watchlist.js';
+import { historyPointsByHoldingId, overviewChange, overviewSeriesWithHistory } from './home.js';
 
 export const PORTFOLIO_VIEWS = Object.freeze(['gallery', 'list']);
 export const PORTFOLIO_SET_PAGE_SIZE = 60;
@@ -114,10 +115,36 @@ function holdingsSection(state) {
   const limit = Math.max(1, Number(state.portfolio.limit) || 100);
   const visible = shown.slice(0, limit);
   return `${portfolioSummaryBar(state, summary, currency)}
+    ${portfolioValueTrendModule(state, currency)}
     ${holdingsControls(state, view)}
     ${bulkToolbar(selected)}
     <div class="portfolio-result-heading"><div><strong>${shown.length} holding${shown.length === 1 ? '' : 's'}</strong><span>${selected.length ? `${selected.length} selected` : 'Exact lots remain separate'}</span></div><button class="button ghost small" type="button" data-action="export-csv">Export CSV</button></div>
     ${visible.length ? `<div class="portfolio-holdings ${escapeAttribute(view)}">${visible.map((holding) => holdingCard(holding, currency, state, view, selected.includes(holding.id))).join('')}</div>${shown.length > visible.length ? `<button class="button secondary portfolio-load-more" type="button" data-action="load-more-holdings">Show ${Math.min(100, shown.length - visible.length)} more</button>` : ''}` : state.holdings.length ? emptyState('No holdings match these filters', 'Remove a filter or clear the search to see the rest of your portfolio.', '<button class="button ghost" type="button" data-action="clear-portfolio-filters">Clear all filters</button>') : emptyState('Add your first collectible', 'Search, scan, import, or create a custom item. Pricing is optional.', '<button class="button" type="button" data-go="add">Add collectible</button>')}`;
+}
+
+// 0.8.17: a portfolio-page value line graph, consistent styling with the
+// overview module's chart -- built from the same retro TCGCSV
+// price-history reconstruction merged with local snapshots (snapshots
+// win on overlap). Renders nothing when there are no holdings at all;
+// otherwise always renders (trendChart itself falls back to its own
+// empty-chart placeholder only if literally zero points resolve, which
+// cannot happen once a holding exists because today's live snapshot is
+// always included).
+function portfolioValueTrendModule(state, currency) {
+  if (!state.holdings.length) return '';
+  const historyPoints = historyPointsByHoldingId(state.holdings, state.priceHistory);
+  const { points: series, coverage } = overviewSeriesWithHistory(
+    state.holdings, state.snapshots, historyPoints, state.overview?.range || '3M', new Date(), currency
+  );
+  const change = overviewChange(series);
+  const tone = change.amount === null ? 'neutral' : change.amount >= 0 ? 'positive' : 'negative';
+  const movement = change.amount === null
+    ? ''
+    : `<span class="${tone}"><span aria-hidden="true">${change.amount >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(Math.abs(change.amount), currency))}${change.percent === null ? '' : ` (${escapeHTML(formatPercent(change.percent))})`}</span>`;
+  return `<section class="card overview-module portfolio-value-trend"><div class="section-heading compact"><div><p class="eyebrow">Value over time</p><h2>Portfolio trend</h2></div>${movement}</div>
+    ${trendChart(series, currency)}
+    ${coverage.total ? `<div class="overview-chart-meta"><span><strong>${coverage.percent}%</strong> chart history coverage (${coverage.withHistory} of ${coverage.total} holdings)</span></div>` : ''}
+  </section>`;
 }
 
 function portfolioSummaryBar(state, summary, currency) {

@@ -61,6 +61,7 @@ from .hedonic_features import (
     load_or_fetch_products_metadata,
 )
 from .forecast_publisher import DEFAULT_MAX_OBJECT_BYTES, NINETY_DAY_ONLY_OVERRIDE, publish_forecasts
+from .history_publisher import DEFAULT_MAX_OBJECT_BYTES as HISTORY_DEFAULT_MAX_OBJECT_BYTES, publish_history
 from .indices import IndexSet, build_indices
 from .lifecycle import (
     GROUPS_CACHE_FILENAME,
@@ -1014,6 +1015,74 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _publish_history_command(args: argparse.Namespace) -> int:
+    """0.8.17: slice every category's observed weekly panel prices (ALL
+    variants -- history is observed data, no eligibility gate) into
+    <=--max-object-bytes gzip objects under --out-dir, plus
+    history/manifest.json. Gated on an explicit, separately-reviewed
+    community-free-access SourceTerms record authorizing RAW price display
+    -- narrower than and separate from T5's derived-forecast record (see
+    history_publisher.py's module docstring); refuses to write anything if
+    that gate fails."""
+
+    panel_dir = Path(args.panel_dir)
+    if not panel_dir.is_dir():
+        print(f"trajectory-cli: panel dir not found: {panel_dir}", file=sys.stderr)
+        return 2
+    source_terms_path = Path(args.source_terms_path)
+    if not source_terms_path.is_file():
+        print(f"trajectory-cli: source terms manifest not found: {source_terms_path}", file=sys.stderr)
+        return 2
+
+    category_ids = None
+    if args.category_ids:
+        category_ids = sorted({int(part) for part in args.category_ids.split(",") if part.strip()})
+
+    started = time.monotonic()
+    manifest = publish_history(
+        panel_dir,
+        source_terms_path,
+        Path(args.out_dir),
+        category_ids=category_ids,
+        max_object_bytes=args.max_object_bytes,
+    )
+    elapsed_seconds = time.monotonic() - started
+
+    receipts_dir = Path(args.receipts_dir)
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "task": "0.8.17-publish-history",
+        "modelVersion": manifest["modelVersion"],
+        "generatedAt": manifest["generatedAt"],
+        "elapsedSeconds": round(elapsed_seconds, 3),
+        "maxObjectBytes": manifest["maxObjectBytes"],
+        "manifestContentHash": manifest["manifestContentHash"],
+        "sourceTerms": manifest["sourceTerms"],
+        "categories": {
+            category_id: {
+                "totalGroups": row["totalGroups"],
+                "publishedGroups": row["publishedGroups"],
+                "excludedGroups": row["excludedGroups"],
+                "totalVariants": row["totalVariants"],
+                "objectsWritten": row["objectsWritten"],
+            }
+            for category_id, row in manifest["categories"].items()
+        },
+    }
+    receipt_path = receipts_dir / "publish-history-receipt.json"
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    total_objects = sum(row["objectsWritten"] for row in manifest["categories"].values())
+    total_variants = sum(row["totalVariants"] for row in manifest["categories"].values())
+    print(
+        f"published {total_objects} object(s) covering {total_variants} variant(s) "
+        f"across {len(manifest['categories'])} categor(y/ies) in {elapsed_seconds:.1f}s"
+    )
+    print(f"wrote {Path(args.out_dir) / 'history' / 'manifest.json'}")
+    print(f"wrote {receipt_path}")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1188,6 +1257,30 @@ def _parser() -> argparse.ArgumentParser:
     )
     publish.add_argument("--max-object-bytes", type=int, default=DEFAULT_MAX_OBJECT_BYTES)
     publish.set_defaults(handler=_publish_forecasts_command)
+
+    publish_history = subparsers.add_parser(
+        "publish-history",
+        help=(
+            "0.8.17: slice every category's observed weekly panel prices (ALL variants, no "
+            "eligibility gate -- history is observed data) into <=128KiB gzip objects + "
+            "history/manifest.json under --out-dir, gated on an explicit community-free-access "
+            "SourceTerms record authorizing RAW price display (separate from publish-forecasts' "
+            "derived-forecast record)"
+        ),
+    )
+    publish_history.add_argument("--panel-dir", default="analytics/data/panel")
+    publish_history.add_argument(
+        "--source-terms-path",
+        default="analytics/manifests/tcgcsv-community-free-access-history.json",
+    )
+    publish_history.add_argument("--out-dir", default="analytics/data/publish")
+    publish_history.add_argument("--receipts-dir", default="docs/receipts/trajectory-v1")
+    publish_history.add_argument(
+        "--category-ids", default=None,
+        help="comma-separated category ids to publish; defaults to every category-<id> dir found",
+    )
+    publish_history.add_argument("--max-object-bytes", type=int, default=HISTORY_DEFAULT_MAX_OBJECT_BYTES)
+    publish_history.set_defaults(handler=_publish_history_command)
 
     return parser
 

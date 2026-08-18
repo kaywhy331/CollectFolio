@@ -1,9 +1,30 @@
 import { externalImage } from '../core/components.js';
 import { searchResultViewModel } from '../core/view-models.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
+import { historyBarChart } from '../core/history-chart.js';
 import { escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForCatalogItem, selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
+import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
+import { historyKeyForItem } from '../services/history-trajectory.js';
 import { findWatchedItem } from '../services/watchlist.js';
+
+// 0.8.17: compact bar chart for the drawer -- fewer bars, tighter height
+// (see core/history-chart.js's `compact` option). Same fail-closed rule
+// as the full detail page: no published history object -> no chart, and
+// forecast-less items simply get history bars with no projection overlay.
+function inspectorHistoryMarkup(item, state) {
+  const historyKey = historyKeyForItem(item || {});
+  if (!historyKey) return '';
+  const historyEntry = state.priceHistory?.byKey?.[historyKey];
+  if (!historyEntry?.available || !Array.isArray(historyEntry.points) || !historyEntry.points.length) return '';
+  const trajectoryKey = trajectoryKeyForItem(item || {});
+  const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
+  const packet = trajectoryEntry?.eligibility === 'published' ? trajectoryEntry.packet : null;
+  const stale = packet ? isTrajectoryStale(packet, trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf) : false;
+  const chart = historyBarChart(historyEntry.points, packet, state.settings?.currency || 'USD', { compact: true, stale });
+  if (!chart) return '';
+  return `<div class="inspector-history"><p class="eyebrow">Price history</p>${chart}</div>`;
+}
 
 function pricingSummary(model) {
   const labels = {
@@ -52,6 +73,7 @@ export function renderQuickInspector(detail, state) {
       <div class="inspector-identity"><strong>${escapeHTML(identity || 'Identity details pending')}</strong><span>${escapeHTML([model.game || model.category, model.sourceId].filter(Boolean).join(' · '))}</span></div>
       <div class="inspector-stats">${pricingSummary(model)}${movementSummary(model)}<div class="inspector-stat forecast"><span>${localScenarioAvailable ? 'Manual scenario' : 'Published forecast'}</span><strong>${localScenarioAvailable ? `${escapeHTML(formatCurrency(localScenario.q25, localScenario.currency))}–${escapeHTML(formatCurrency(localScenario.q75, localScenario.currency))}` : model.forecastStatus === 'available' ? 'Available' : '—'}</strong><small>${localScenarioAvailable ? `${localScenario.horizon}-day range · ${escapeHTML(localScenario.confidence.label)} confidence` : model.forecastStatus === 'available' ? 'Approved outlook published' : detail.holding ? 'Add a value to start a manual scenario' : 'No approved outlook published'}</small></div></div>
       ${detail.holding ? `<div class="inspector-holding"><span>In your portfolio</span><strong>${escapeHTML(String(detail.holding.quantity || 0))} owned · ${escapeHTML(detail.holding.condition || 'Condition not set')}</strong></div>` : ''}
+      ${inspectorHistoryMarkup(item, state)}
     </div>
     <footer><button class="button" type="button" data-action="add-from-detail">${detail.holding ? 'Add another' : 'Add to portfolio'}</button>${state.featureFlags?.watchlists !== false ? `<button class="button secondary" type="button" data-action="toggle-watch" data-detail-watch="true">${watching ? 'Watching' : 'Watch'}</button>` : ''}<button class="button ghost inspector-full-detail" type="button" data-action="open-full-detail">Open full details</button></footer>
   </aside></div>`;

@@ -423,6 +423,17 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .trajectory-cold-start .forecast-point { fill: var(--warning); }
 .support-badge.unsupported { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .trajectory-insufficient { padding: 2rem 1.25rem; text-align: center; background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); }
+
+/* 0.8.17: weekly price-history bar chart (core/history-chart.js). */
+.history-bar { fill: var(--accent); }
+.history-bar-forecast { fill: color-mix(in srgb, var(--blue) 35%, transparent); stroke: var(--blue); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.history-bar-forecast-cold-start { fill: color-mix(in srgb, var(--warning) 35%, transparent); stroke: var(--warning); }
+.history-bar-whisker { stroke: var(--blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trajectory-cold-start .history-bar-whisker { stroke: var(--warning); }
+.history-bar-chart .trend-chart { display: block; }
+.history-chart-card .chart-legend { margin-top: .6rem; }
+.inspector-history { margin-top: .75rem; }
+.inspector-history .history-bars { max-height: 180px; }
 .trajectory-insufficient h2 { margin: .3rem 0 .35rem; }
 .trajectory-insufficient p.muted { max-width: 32rem; margin: 0 auto; }
 

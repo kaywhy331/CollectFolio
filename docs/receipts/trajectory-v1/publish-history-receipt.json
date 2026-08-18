@@ -1,0 +1,45 @@
+{
+  "categories": {
+    "1": {
+      "excludedGroups": 0,
+      "objectsWritten": 547,
+      "publishedGroups": 442,
+      "totalGroups": 442,
+      "totalVariants": 161875
+    },
+    "2": {
+      "excludedGroups": 0,
+      "objectsWritten": 623,
+      "publishedGroups": 615,
+      "totalGroups": 615,
+      "totalVariants": 61117
+    },
+    "3": {
+      "excludedGroups": 0,
+      "objectsWritten": 220,
+      "publishedGroups": 213,
+      "totalGroups": 213,
+      "totalVariants": 46418
+    },
+    "85": {
+      "excludedGroups": 0,
+      "objectsWritten": 442,
+      "publishedGroups": 442,
+      "totalGroups": 442,
+      "totalVariants": 32370
+    }
+  },
+  "elapsedSeconds": 1075.794,
+  "generatedAt": "2026-08-18T02:39:31.685740+00:00",
+  "manifestContentHash": "ca8dc7403d6b0ca484fc4a2daf480ef578e7ce5151bfe50b907e82f608bdc78f",
+  "maxObjectBytes": 131072,
+  "modelVersion": "tcgcsv-history-v1",
+  "sourceTerms": {
+    "attributionRequired": true,
+    "attributionText": "Historical prices sourced from TCGCSV pricing archives. Not affiliated with or endorsed by TCGCSV.",
+    "decision": "approved",
+    "documentHash": "bd35b9dc097b109482f011663bd420682b387a95cdc7550c4045a75ed64afc86",
+    "sourceCode": "tcgcsv-community-free-access-history"
+  },
+  "task": "0.8.17-publish-history"
+}

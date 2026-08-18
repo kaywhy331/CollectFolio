@@ -668,3 +668,98 @@ test('serveBridgeObject is exported directly for callers that already resolved i
   const response = await serveBridgeObject(env, { categoryId: 3 }, new Headers());
   assert.equal(response.status, 200);
 });
+
+function historyPayload(overrides = {}) {
+  return JSON.stringify({
+    modelVersion: 'tcgcsv-history-v1',
+    categoryId: 3,
+    groupId: 604,
+    part: 1,
+    partsTotal: 1,
+    variants: [{ productId: 1, subTypeName: 'Normal', points: [['2026-06-13', 12.5], ['2026-06-20', 13]] }],
+    ...overrides
+  });
+}
+
+test('serves a published history object with gzip content-encoding and public cache headers', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const gz = gzipSync(Buffer.from(historyPayload()));
+  await env.TCGCSV_CURRENT.put('history/3/604.json.gz', gz, {
+    httpMetadata: { contentType: 'application/json' }
+  });
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/history/3/604'),
+    env
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), 'gzip');
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.match(response.headers.get('cache-control') ?? '', /public/);
+  const raw = new Uint8Array(await response.arrayBuffer());
+  const body = JSON.parse(gunzipSync(raw).toString('utf-8'));
+  assert.equal(body.groupId, 604);
+});
+
+test('serves a multi-part history object addressed by its .partN suffix', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const gz = gzipSync(Buffer.from(historyPayload({ groupId: 2374, part: 2, partsTotal: 3 })));
+  await env.TCGCSV_CURRENT.put('history/3/2374.part2.json.gz', gz);
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/history/3/2374.part2'),
+    env
+  );
+  assert.equal(response.status, 200);
+  const raw = new Uint8Array(await response.arrayBuffer());
+  const body = JSON.parse(gunzipSync(raw).toString('utf-8'));
+  assert.equal(body.part, 2);
+  assert.equal(body.partsTotal, 3);
+});
+
+test('returns 404 for an unknown history group -- absent from R2, no fabricated chart data', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/history/1/999999'),
+    env
+  );
+  assert.equal(response.status, 404);
+});
+
+test('serves the history manifest without content-encoding', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const manifest = JSON.stringify({ modelVersion: 'tcgcsv-history-v1', categories: {} });
+  await env.TCGCSV_CURRENT.put('history/manifest.json', Buffer.from(manifest), {
+    httpMetadata: { contentType: 'application/json' }
+  });
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/history/manifest'),
+    env
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), null);
+  const body = await response.json();
+  assert.equal(body.modelVersion, 'tcgcsv-history-v1');
+});
+
+test('returns 404 when the history manifest has not been published yet', async () => {
+  const env = { ...environment(), CATALOG_PUBLIC_ACCESS: 'true' };
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/history/manifest'),
+    env
+  );
+  assert.equal(response.status, 404);
+});
+
+test('history routes require a session when community free access is not enabled', async () => {
+  const env = environment();
+  const gz = gzipSync(Buffer.from(historyPayload()));
+  await env.TCGCSV_CURRENT.put('history/3/604.json.gz', gz);
+
+  const response = await worker.fetch(
+    new Request('https://refresh.example/catalog/history/3/604'),
+    env
+  );
+  assert.equal(response.status, 401);
+});
