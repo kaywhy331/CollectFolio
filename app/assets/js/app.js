@@ -8,7 +8,7 @@ import {
   isRestrictedCatalogPrice,
   PRICING_POLICY_VERSION
 } from './core/pricing-policy.js';
-import { appRouteForLegacyView, currentAppPath, parseAppRoute, primaryDestination, routeStatePatch } from './core/router.js';
+import { appRouteForLegacyView, browseSetSegment, currentAppPath, parseAppRoute, primaryDestination, routeStatePatch } from './core/router.js';
 import {
   appendSyncHistory,
   friendlyCloudError,
@@ -658,6 +658,16 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
     } });
     if (products.length) await hydrateIntelligence();
     if (!requested.setId) hydrateBrowseSetCovers();
+    // A legacy raw-id URL (/discover/<game>/3:1442) canonicalizes to its
+    // slugged form once the set's name is known, in place -- no re-route.
+    if (selectedSet && !requested.setSlug && activeRoute === route) {
+      const segment = browseSetSegment({ selectedSet, setId: requested.setId }, requested.setId);
+      const slugged = route.canonicalPath.replace(`/${encodeURIComponent(requested.setId)}`, `/${segment}`);
+      if (slugged !== route.canonicalPath && segment !== encodeURIComponent(requested.setId)) {
+        route.canonicalPath = slugged;
+        history.replaceState(history.state, '', slugged);
+      }
+    }
   } catch (error) {
     if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
     setState({ discover: {

@@ -157,11 +157,11 @@ test('history line chart renders on the full detail page with forecast projectio
   const { withForecast } = await runSearch(page);
   await withForecast.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Weekly price trend with projected estimates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Observed prices with rolling forecast' })).toBeVisible();
   const chart = page.locator('.history-chart-card svg.history-bars');
   await expect(chart).toBeVisible();
   await expect(chart.locator('polyline.history-line')).toBeVisible();
-  await expect(chart.locator('line.history-forecast-line').first()).toBeVisible();
+  await expect(chart.locator('polyline.history-forecast-line').first()).toBeVisible();
   await expect(chart.locator('line.history-bar-whisker')).toHaveCount(2);
   await expect(page.getByText('+30d est.')).toBeVisible();
   await expect(page.getByText('+90d est.')).toBeVisible();
@@ -173,11 +173,11 @@ test('history line chart renders a history-only line with no projection overlay 
   const { historyOnly } = await runSearch(page);
   await historyOnly.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Weekly price trend', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Observed prices', exact: true })).toBeVisible();
   const chart = page.locator('.history-chart-card svg.history-bars');
   await expect(chart).toBeVisible();
   await expect(chart.locator('polyline.history-line')).toBeVisible();
-  await expect(chart.locator('line.history-forecast-line')).toHaveCount(0);
+  await expect(chart.locator('polyline.history-forecast-line')).toHaveCount(0);
   await expect(page.getByText('+30d est.')).toHaveCount(0);
 });
 

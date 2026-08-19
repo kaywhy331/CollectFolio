@@ -431,12 +431,23 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .history-bar-whisker { stroke: var(--blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .trajectory-cold-start .history-bar-whisker { stroke: var(--warning); }
 .history-bar-chart .trend-chart, .history-line-chart .trend-chart { display: block; }
-.history-line { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
-.history-point { fill: var(--accent); opacity: 0.85; }
-.history-forecast-line { stroke: var(--blue); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.history-line { fill: none; stroke: var(--blue); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.history-point { fill: var(--blue); opacity: 0.85; }
+.history-latest-point { fill: var(--blue); }
+.history-line-dot { background: var(--blue); }
+.history-forecast-line { fill: none; stroke: var(--blue); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .history-forecast-line-cold-start { stroke: var(--warning); }
 .history-forecast-point { fill: var(--blue); }
 .history-forecast-point-cold-start { fill: var(--warning); }
+.history-forecast-dot { background: var(--blue); }
+/* Rolling projection trend colors (Kevin 2026-08-18): green when the
+   projected path ends at or above the last observed price, red below. */
+.history-forecast-line.history-forecast-up, line.history-forecast-up { stroke: var(--positive); }
+.history-forecast-line.history-forecast-down, line.history-forecast-down { stroke: var(--danger); }
+.history-forecast-point.history-forecast-up { fill: var(--positive); }
+.history-forecast-point.history-forecast-down { fill: var(--danger); }
+i.history-forecast-dot.history-forecast-up { background: var(--positive); }
+i.history-forecast-dot.history-forecast-down { background: var(--danger); }
 .history-chart-card .chart-legend { margin-top: .6rem; }
 .inspector-history { margin-top: .75rem; }
 .inspector-history .history-bars { max-height: 180px; }

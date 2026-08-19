@@ -38,15 +38,15 @@ test('browse routes preserve progressive game and set identity without hard-codi
   const root = parseAppRoute('/discover?mode=browse');
   assert.equal(root.mode, 'browse');
   assert.equal(root.canonicalPath, '/discover/browse');
-  assert.deepEqual(root.browse, { game: 'all', setId: '', sort: 'newest', scope: 'all', productSort: 'price-desc', productKind: 'cards' });
+  assert.deepEqual(root.browse, { game: 'all', setId: '', setSlug: '', sort: 'newest', scope: 'all', productSort: 'price-desc', productKind: 'cards' });
 
   const game = parseAppRoute('/discover/pokemon?sort=alpha&scope=main');
   assert.equal(game.canonicalPath, '/discover/pokemon?sort=alpha&scope=main');
-  assert.deepEqual(game.browse, { game: 'pokemon', setId: '', sort: 'alpha', scope: 'main', productSort: 'price-desc', productKind: 'cards' });
+  assert.deepEqual(game.browse, { game: 'pokemon', setId: '', setSlug: '', sort: 'alpha', scope: 'main', productSort: 'price-desc', productKind: 'cards' });
 
   const set = parseAppRoute('/discover/magic/mkm?sort=name');
   assert.equal(set.canonicalPath, '/discover/magic/mkm?sort=name');
-  assert.deepEqual(set.browse, { game: 'magic', setId: 'mkm', sort: 'newest', scope: 'all', productSort: 'name', productKind: 'cards' });
+  assert.deepEqual(set.browse, { game: 'magic', setId: 'mkm', setSlug: '', sort: 'newest', scope: 'all', productSort: 'name', productKind: 'cards' });
 
   const sealed = parseAppRoute('/discover/tcgcsv-category-3/3%3A100?type=sealed');
   assert.equal(sealed.canonicalPath, '/discover/tcgcsv-category-3/3%3A100?type=sealed');
@@ -137,4 +137,21 @@ test('detail routes generate SEO slug paths for catalog items', () => {
   assert.equal(route.canonicalPath, '/cards/pop-series-2-pikachu-3-1447-88081');
   const bare = appRouteForLegacyView('detail', {}, { detail: { item: { provider: 'tcgcsv', externalId: '3:1447:88081' } } });
   assert.equal(bare.canonicalPath, '/cards/3-1447-88081');
+});
+
+test('browse set routes accept SEO slug URLs and resolve the category:group identity', () => {
+  const slugged = parseAppRoute('/discover/pokemon/stellar-crown-3-1442?sort=name');
+  assert.equal(slugged.mode, 'browse');
+  assert.equal(slugged.browse.setId, '3:1442');
+  assert.equal(slugged.browse.setSlug, 'stellar-crown-3-1442');
+  // Round-trips: the canonical path keeps the decorative slug.
+  assert.equal(slugged.canonicalPath, '/discover/pokemon/stellar-crown-3-1442?sort=name');
+  // Bare numeric pair (no name prefix) also resolves.
+  const bare = parseAppRoute('/discover/pokemon/3-1442');
+  assert.equal(bare.browse.setId, '3:1442');
+  // Legacy colon ids keep resolving and stay raw when no name is known.
+  const legacy = parseAppRoute('/discover/pokemon/3%3A1442');
+  assert.equal(legacy.browse.setId, '3:1442');
+  assert.equal(legacy.browse.setSlug, '');
+  assert.equal(legacy.canonicalPath, '/discover/pokemon/3%3A1442');
 });

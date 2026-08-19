@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   downsampleHistoryPoints,
   historyLineChart,
+  interpolateDailyPath,
   normalizeHistoryPoints,
+  selectForecastMedianPath,
   selectServedForecastBars
 } from '../app/assets/js/core/history-chart.js';
 
@@ -138,4 +140,72 @@ test('historyLineChart plots every published point instead of downsampling to 32
   const html = historyLineChart(weeklyPoints(80), null, 'USD');
   const coords = /polyline points="([^"]+)"/.exec(html)[1].split(' ');
   assert.equal(coords.length, 80);
+});
+
+test('selectForecastMedianPath cleans, sorts, and timestamps the published path', () => {
+  const path = selectForecastMedianPath({ medianPath: [
+    { date: '2026-08-15', price: 12 },
+    { date: '2026-08-08', price: 10 },
+    { date: 'nope', price: 11 },
+    { date: '2026-08-22', price: -1 }
+  ] });
+  assert.deepEqual(path.map((point) => point.date), ['2026-08-08', '2026-08-15']);
+  assert.ok(path.every((point) => Number.isFinite(point.time)));
+  assert.deepEqual(selectForecastMedianPath(null), []);
+});
+
+test('interpolateDailyPath fills every calendar day between weekly checkpoints', () => {
+  const DAY = 86_400_000;
+  const start = Date.parse('2026-08-08T00:00:00.000Z');
+  const daily = interpolateDailyPath([
+    { time: start, price: 100 },
+    { time: start + (7 * DAY), price: 107 }
+  ]);
+  assert.equal(daily.length, 8); // 7 days inclusive of both endpoints
+  assert.equal(daily[3].price, 103); // straight-line resampling, no invented levels
+});
+
+test('historyLineChart draws the rolling daily projection from the published median path', () => {
+  const packet = {
+    confidence: 'standard',
+    lastKnownDate: '2026-02-24',
+    lastKnownPrice: 19,
+    medianPath: [
+      { date: '2026-02-24', price: 19 },
+      { date: '2026-03-03', price: 21 },
+      { date: '2026-03-26', price: 24 }
+    ],
+    horizons: { 30: { q10: 18, q50: 22, q90: 26 } }
+  };
+  const html = historyLineChart(weeklyPoints(8), packet, 'USD');
+  assert.match(html, /polyline points="[^"]+" class="history-forecast-line/);
+  assert.match(html, /history-forecast-up/); // 24 >= last observed -> green trend
+  assert.match(html, /history-bar-whisker/);
+  assert.match(html, /\+30d est\./);
+});
+
+test('historyLineChart marks a declining projection as a downward trend', () => {
+  const packet = {
+    confidence: 'standard',
+    lastKnownDate: '2026-02-24',
+    medianPath: [{ date: '2026-03-26', price: 5 }],
+    horizons: { 30: { q10: 3, q50: 5, q90: 8 } }
+  };
+  const html = historyLineChart(weeklyPoints(8), packet, 'USD'); // last observed 17
+  assert.match(html, /history-forecast-down/);
+  assert.doesNotMatch(html, /history-forecast-up/);
+});
+
+test('historyLineChart x-axis is proportional to calendar days across history and forecast', () => {
+  // Two observed points 7 days apart, then a 30d horizon: the axis spans 37
+  // days, so the divider (day 7) must sit at 7/37 of the plot width.
+  const points = [['2026-02-17', 10], ['2026-02-24', 12]];
+  const packet = { confidence: 'standard', lastKnownDate: '2026-02-24', horizons: { 30: { q10: 9, q50: 12, q90: 15 } } };
+  const html = historyLineChart(points, packet, 'USD');
+  const divider = /class="forecast-present"/.exec(html) && /x1="([\d.]+)" y1="18" x2="[\d.]+" y2="\d+" class="forecast-present"/.exec(html);
+  assert.ok(divider, 'today divider rendered');
+  const left = 76;
+  const right = 742;
+  const expected = left + ((7 / 37) * (right - left));
+  assert.ok(Math.abs(Number(divider[1]) - expected) < 1.5, `divider at ${divider[1]}, expected ~${expected.toFixed(1)}`);
 });

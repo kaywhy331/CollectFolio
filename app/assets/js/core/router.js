@@ -30,6 +30,14 @@ function bounded(value, max = 200) {
 // variant-UUID links, which always contain ':') keep resolving unchanged.
 const CARD_SLUG_ID = /^(?:[^:]*-)?(\d+)-(\d+)-(\d+)$/;
 
+// SEO-friendly browse-set URLs (Kevin 2026-08-18): TCGCSV sets address as
+// /discover/<game>/<set-name>-<categoryId>-<groupId>. The trailing numeric
+// pair is the identity; the slug prefix is decorative and never trusted.
+// Legacy /discover/<game>/<categoryId>:<groupId> links (which always
+// contain ':') keep resolving unchanged.
+const SET_SLUG_ID = /^(?:[^:]*-)?(\d+)-(\d+)$/;
+const TCGCSV_SET_ID = /^\d+:\d+$/;
+
 export function cardSlug(text) {
   return String(text || '')
     .toLowerCase()
@@ -63,11 +71,26 @@ function discoverCategory(value) {
   return DISCOVER_CATEGORIES.has(value) || TCGCSV_CATEGORY.test(value) ? value : 'all';
 }
 
-function browsePath(browse = {}) {
+// The path segment for a selected set: a decorated slug for TCGCSV
+// category:group ids when a set name is available (from an already-parsed
+// slug, the selected set, or the loaded sets list), otherwise the raw id.
+export function browseSetSegment(browse = {}, setId = '') {
+  if (!TCGCSV_SET_ID.test(setId)) return encodeURIComponent(setId);
+  const idTail = setId.replace(':', '-');
+  const slug = bounded(browse.setSlug, 160);
+  if (slug && (slug === idTail || slug.endsWith(`-${idTail}`)) && SET_SLUG_ID.test(slug)) return encodeURIComponent(slug);
+  const named = browse.selectedSet?.externalId === setId
+    ? browse.selectedSet
+    : (Array.isArray(browse.sets) ? browse.sets.find((set) => set.externalId === setId) : null);
+  const prefix = cardSlug(named?.name || '');
+  return encodeURIComponent(prefix ? `${prefix}-${idTail}` : setId);
+}
+
+export function browsePath(browse = {}) {
   const game = browse.game && browse.game !== 'all' ? browseSegment(browse.game, 50) : '';
   const setId = game ? browseSegment(browse.setId, 120) : '';
   const base = setId
-    ? `/discover/${encodeURIComponent(game)}/${encodeURIComponent(setId)}`
+    ? `/discover/${encodeURIComponent(game)}/${browseSetSegment(browse, setId)}`
     : game
       ? `/discover/${encodeURIComponent(game)}`
       : '/discover/browse';
@@ -91,9 +114,12 @@ function discoverRoute(url, pathname = '/discover') {
   if (mode === 'browse') {
     const requestedPathGame = suffix[0] && suffix[0] !== 'browse' ? browseSegment(suffix[0], 50) : '';
     const pathGame = ['tcgcsv', 'full-catalog'].includes(requestedPathGame) ? '' : requestedPathGame;
-    const pathSet = pathGame && suffix[1] ? browseSegment(suffix[1]) : '';
+    const rawPathSet = pathGame && suffix[1] ? browseSegment(suffix[1], 160) : '';
+    const setMatch = rawPathSet && !rawPathSet.includes(':') ? SET_SLUG_ID.exec(rawPathSet) : null;
+    const pathSet = setMatch ? `${setMatch[1]}:${setMatch[2]}` : rawPathSet;
     const game = pathGame || browseSegment(url.searchParams.get('game'), 50) || 'all';
     const setId = game === 'all' ? '' : pathSet || browseSegment(url.searchParams.get('set'));
+    const setSlug = setMatch && setId === pathSet ? rawPathSet : '';
     const requestedSort = bounded(url.searchParams.get('sort'), 30);
     const requestedScope = bounded(url.searchParams.get('scope'), 30);
     const requestedType = bounded(url.searchParams.get('type'), 20);
@@ -102,7 +128,7 @@ function discoverRoute(url, pathname = '/discover') {
       : (BROWSE_SET_SORTS.has(requestedSort) ? requestedSort : 'newest');
     const scope = BROWSE_SET_SCOPES.has(requestedScope) ? requestedScope : 'all';
     const productKind = setId && BROWSE_PRODUCT_KINDS.has(requestedType) ? requestedType : 'cards';
-    const browse = { game, setId, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'price-desc', productKind };
+    const browse = { game, setId, setSlug, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'price-desc', productKind };
     return route('discover', 'search', browsePath(browse), {
       mode: 'browse',
       browse,
