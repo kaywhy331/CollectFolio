@@ -102,7 +102,7 @@ test('Browse Sets drills from a restorable flagship game route into every card i
   await expect(page.getByText('1 set', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: /Silver Tempest/ }).click();
 
-  await expect(page).toHaveURL(/\/discover\/pokemon\/3%3A1102$/);
+  await expect(page).toHaveURL(/\/discover\/pokemon\/silver-tempest-3-1102$/);
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
   await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
   await expect(page.locator('.result-card')).toHaveCount(120);
