@@ -209,3 +209,29 @@ test('historyLineChart x-axis is proportional to calendar days across history an
   const expected = left + ((7 / 37) * (right - left));
   assert.ok(Math.abs(Number(divider[1]) - expected) < 1.5, `divider at ${divider[1]}, expected ~${expected.toFixed(1)}`);
 });
+
+test('historyLineChart embeds a hover payload with a labeled point for every plotted day', () => {
+  const packet = {
+    confidence: 'standard',
+    lastKnownDate: '2026-02-24',
+    medianPath: [{ date: '2026-03-03', price: 20 }],
+    horizons: { 30: { q10: 15, q50: 20, q90: 25 } }
+  };
+  const html = historyLineChart(weeklyPoints(4), packet, 'USD');
+  const attr = /data-chart-points="([^"]+)"/.exec(html);
+  assert.ok(attr, 'hover payload attribute present');
+  const points = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+  // 4 observed points + 7 projected days (Feb 24 -> Mar 3 daily).
+  assert.equal(points.length, 11);
+  assert.ok(points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && point.l.includes('$')));
+  assert.ok(points.some((point) => point.l.includes('(projected)')));
+  assert.ok(points.some((point) => point.l.startsWith('Jan 1')));
+});
+
+test('historyLineChart hover payload omits projection entries when no forecast is served', () => {
+  const html = historyLineChart(weeklyPoints(3), null, 'USD');
+  const attr = /data-chart-points="([^"]+)"/.exec(html);
+  const points = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+  assert.equal(points.length, 3);
+  assert.ok(points.every((point) => !point.l.includes('(projected)')));
+});

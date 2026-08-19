@@ -9,6 +9,7 @@ import {
   PRICING_POLICY_VERSION
 } from './core/pricing-policy.js';
 import { appRouteForLegacyView, browseSetSegment, currentAppPath, parseAppRoute, primaryDestination, routeStatePatch } from './core/router.js';
+import { attachChartHover } from './core/chart-hover.js';
 import {
   appendSyncHistory,
   friendlyCloudError,
@@ -51,6 +52,7 @@ import { catalogReferenceForItem } from './core/catalog-identity.js';
 import { buildComparison, COMPARE_LIMIT, toggleCompareSelection } from './core/compare.js';
 
 const root = document.querySelector('#main-content');
+attachChartHover(document.body);
 let activeDraft = null;
 let activeDetail = null;
 let activeRoute = parseAppRoute(location);

@@ -12,7 +12,7 @@
 // - Forecast projection bars are ONLY ever drawn for horizons the
 //   published packet actually carries (30d and/or 90d) -- never
 //   fabricated, never interpolated to another horizon.
-import { escapeHTML, formatCurrency } from './utils.js';
+import { escapeAttribute, escapeHTML, formatCurrency } from './utils.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -108,6 +108,10 @@ export function selectForecastMedianPath(packet) {
 }
 
 const DAY = 86_400_000;
+
+function isoDate(time) {
+  return new Date(time).toISOString().slice(0, 10);
+}
 
 // Linear day-by-day interpolation between published path checkpoints so the
 // projection reads as a rolling daily forecast: every calendar day between
@@ -279,9 +283,22 @@ export function historyLineChart(points, packet, currency = 'USD', { compact = f
       : '';
   const ariaLabel = `Historic weekly prices${forecastMarks.length ? ` with a rolling daily projection to ${forecastMarks.map((mark) => `${mark.horizon} days`).join(' and ')}` : ''}`;
 
+  // Hover payload (Kevin 2026-08-18): every plotted x-position -- observed
+  // weekly points and every projected day -- carries its date + price so a
+  // pointer over the line surfaces "date -- price" as a tooltip
+  // (core/chart-hover.js reads this attribute; no framework, no listeners
+  // in the markup itself).
+  const hoverLabel = (date, price, projected) => `${shortDate(date)} — ${formatCurrency(price, currency)}${projected ? ' (projected)' : ''}`;
+  const hoverPoints = [
+    ...history.map((point) => ({ x: Number(x(point.time).toFixed(1)), y: Number(y(point.price).toFixed(1)), l: hoverLabel(point.date, point.price, false) })),
+    ...projection
+      .filter((point) => point.time > anchorTime)
+      .map((point) => ({ x: Number(x(point.time).toFixed(1)), y: Number(y(point.price).toFixed(1)), l: hoverLabel(point.date || isoDate(point.time), point.price, true) }))
+  ];
+
   return `<div class="chart-wrap history-line-chart${isColdStart ? ' trajectory-cold-start' : ''}">
     ${(confidenceBadge || stale) && forecastMarks.length ? `<div class="trajectory-chart-labels">${confidenceBadge}${stale ? '<span class="support-badge unsupported">Price data may be out of date</span>' : ''}</div>` : ''}
-    <svg class="trend-chart history-bars" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHTML(ariaLabel)}">
+    <svg class="trend-chart history-bars" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHTML(ariaLabel)}" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
       <title>${escapeHTML(ariaLabel)}; latest observed ${escapeHTML(formatCurrency(latestHistory.price, currency))}</title>
       ${gridTicks}
       ${dateLabels}

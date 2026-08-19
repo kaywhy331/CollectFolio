@@ -449,6 +449,10 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 i.history-forecast-dot.history-forecast-up { background: var(--positive); }
 i.history-forecast-dot.history-forecast-down { background: var(--danger); }
 .history-chart-card .chart-legend { margin-top: .6rem; }
+/* Pointer tooltip for chart lines (core/chart-hover.js). */
+.chart-wrap { position: relative; }
+.chart-tooltip { position: absolute; transform: translate(-50%, -100%); padding: .3rem .55rem; background: var(--surface-raised, var(--surface)); color: var(--ink, inherit); border: 1px solid var(--border-strong); border-radius: 8px; font-size: .74rem; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 14px rgb(0 0 0 / .25); z-index: 5; }
+.chart-tooltip-marker { position: absolute; width: 10px; height: 10px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); pointer-events: none; z-index: 4; }
 .inspector-history { margin-top: .75rem; }
 .inspector-history .history-bars { max-height: 180px; }
 .trajectory-insufficient h2 { margin: .3rem 0 .35rem; }
@@ -1186,7 +1190,7 @@ span.browse-set-art.placeholder { display: flex; align-items: center; justify-co
   .detail-market-panel { position: sticky; top: 96px; }
   .detail-tabs { position: sticky; z-index: 10; top: 84px; background: color-mix(in srgb, var(--bg-raised) 94%, transparent); backdrop-filter: blur(16px); }
   .detail-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .detail-sections > .forecast-card, .detail-sections > .data-details, .detail-sections > .pricing-unavailable, .detail-sections > #detail-market, .detail-sections > #detail-forecast { grid-column: 1 / -1; }
+  .detail-sections > .forecast-card, .detail-sections > .data-details, .detail-sections > .pricing-unavailable, .detail-sections > .history-chart-card, .detail-sections > #detail-market, .detail-sections > #detail-forecast { grid-column: 1 / -1; }
 }
 
 @media (min-width: 1180px) {
