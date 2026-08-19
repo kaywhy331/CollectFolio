@@ -259,7 +259,8 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   await eligibleCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
   await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toBeVisible();
-  await expect(page.locator('.trajectory-chart svg')).toBeVisible();
+  await expect(page.locator('.trajectory-section .forecast-horizon-list')).toBeVisible();
+  await expect(page.locator('.trajectory-chart svg')).toHaveCount(0);
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 
   // Drill into the cold-start card's detail view (fresh search: a
@@ -361,6 +362,7 @@ test('bugfix (0.8.17): a card-detail deep link with no prior search still hydrat
   // Quick Inspector drawer / "Open full details" step in between).
   await expect(page.getByRole('heading', { name: 'Trajectory Eligible Card' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toBeVisible();
-  await expect(page.locator('.trajectory-chart svg')).toBeVisible();
+  await expect(page.locator('.trajectory-section .forecast-horizon-list')).toBeVisible();
+  await expect(page.locator('.trajectory-chart svg')).toHaveCount(0);
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 });
