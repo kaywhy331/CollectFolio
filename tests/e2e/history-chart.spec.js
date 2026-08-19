@@ -165,6 +165,28 @@ test('history line chart renders on the full detail page with forecast projectio
   await expect(chart.locator('line.history-bar-whisker')).toHaveCount(2);
   await expect(page.getByText('+30d est.')).toBeVisible();
   await expect(page.getByText('+90d est.')).toBeVisible();
+
+  // Full-width card (Kevin 2026-08-18): the chart card spans the whole
+  // detail grid, not one of the two columns.
+  const cardBox = await page.locator('.history-chart-card').boundingBox();
+  const gridBox = await page.locator('.detail-sections').boundingBox();
+  expect(cardBox.width).toBeGreaterThan(gridBox.width * 0.9);
+
+  // Hover tooltips (Kevin 2026-08-18): pointing at any x-position on the
+  // chart surfaces the date it represents and the plotted price.
+  await chart.scrollIntoViewIfNeeded();
+  const box = await chart.boundingBox();
+  await page.mouse.move(box.x + (box.width * 0.4), box.y + (box.height * 0.5));
+  const tooltip = page.locator('.chart-tooltip');
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toHaveText(/[A-Z][a-z]{2} \d{1,2} — \$\d/);
+  // Pointing into the projection region (right of the today divider)
+  // surfaces a projected-day reading.
+  await page.mouse.move(box.x + (box.width * 0.97), box.y + (box.height * 0.5));
+  await expect(tooltip).toHaveText(/\(projected\)/);
+  // Leaving the chart hides the tooltip.
+  await page.mouse.move(box.x + (box.width / 2), box.y + box.height + 120);
+  await expect(tooltip).toBeHidden();
 });
 
 test('history line chart renders a history-only line with no projection overlay when no forecast is published', async ({ page }) => {
