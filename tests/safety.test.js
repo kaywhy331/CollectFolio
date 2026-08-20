@@ -71,6 +71,41 @@ test('external card images eagerly load visible candidates and retain a fallback
   }
 });
 
+test('legacy TCGCSV identities reconstruct card art from persisted catalog attributes', () => {
+  const previousLocation = globalThis.location;
+  globalThis.location = { href: 'https://collectfolio.example/collection' };
+  try {
+    const html = externalImage({
+      provider: 'tcgcsv',
+      externalId: '3:604:42402',
+      name: 'Pikachu'
+    }, 'holding-image');
+    assert.match(html, /src="https:\/\/tcgplayer-cdn\.tcgplayer\.com\/product\/42402_in_400x400\.jpg"/);
+    assert.match(html, /data-fallback-src="https:\/\/tcgplayer-cdn\.tcgplayer\.com\/product\/42402_in_1000x1000\.jpg"/);
+    assert.match(html, /srcset="[^\"]+42402_in_400x400\.jpg 350w, [^\"]+42402_in_1000x1000\.jpg 700w"/);
+  } finally {
+    if (previousLocation === undefined) delete globalThis.location;
+    else globalThis.location = previousLocation;
+  }
+});
+
+test('legacy TCGCSV image attributes remain preferred over reconstructed art', () => {
+  const previousLocation = globalThis.location;
+  globalThis.location = { href: 'https://collectfolio.example/collection' };
+  try {
+    const html = externalImage({
+      id: 'tcgcsv:3:604:42402',
+      name: 'Pikachu',
+      extendedData: [{ name: 'Image URL', value: 'https://images.example/legacy-pikachu.jpg' }]
+    });
+    assert.match(html, /src="https:\/\/images\.example\/legacy-pikachu\.jpg"/);
+    assert.match(html, /data-fallback-src="https:\/\/tcgplayer-cdn\.tcgplayer\.com\/product\/42402_in_400x400\.jpg"/);
+  } finally {
+    if (previousLocation === undefined) delete globalThis.location;
+    else globalThis.location = previousLocation;
+  }
+});
+
 test('collectible image frames reserve type-aware ratios and intentional empty states', () => {
   const sealed = externalImage({ name: 'Collector Booster Box', productFormat: 'booster box' }, 'product-image');
   const comic = externalImage({ name: 'Amazing Issue 1', category: 'comic' }, 'product-image');

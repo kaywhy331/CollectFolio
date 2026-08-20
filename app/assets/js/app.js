@@ -49,6 +49,7 @@ import { renderQuickInspector } from './views/quick-inspector.js';
 import { BROWSE_PRODUCTS_PAGE_SIZE, BROWSE_SETS_PAGE_SIZE, DISCOVER_RESULTS_PAGE_SIZE, DISCOVER_VIEWS, renderSearch } from './views/search.js';
 import { renderScanReview } from './views/scan.js';
 import { catalogReferenceForItem } from './core/catalog-identity.js';
+import { catalogImageSources } from './core/catalog-images.js';
 import { buildComparison, COMPARE_LIMIT, toggleCompareSelection } from './core/compare.js';
 
 const root = document.querySelector('#main-content');
@@ -1938,7 +1939,16 @@ root.addEventListener('click', async (event) => {
     holdingForm(null, { title: 'Add item to collection', item: { ...activeDetail.item, canonicalVariantId: activeDetail.catalogRef.canonicalVariantId } });
   }
   if (action.dataset.action === 'zoom-detail-image' && activeDetail) {
-    const imageUrl = safeImageUrl(activeDetail.holding?.userImage || activeDetail.item?.image || activeDetail.item?.imageSmall || activeDetail.catalogRef?.image || activeDetail.catalogRef?.imageSmall);
+    const imageUrl = catalogImageSources({
+      ...(activeDetail.catalogRef || {}),
+      ...(activeDetail.item || {}),
+      provider: activeDetail.item?.provider || activeDetail.catalogRef?.provider || '',
+      externalId: activeDetail.item?.externalId || activeDetail.catalogRef?.externalId || '',
+      productId: activeDetail.item?.productId || activeDetail.catalogRef?.productId || '',
+      image: activeDetail.item?.image || activeDetail.catalogRef?.image || '',
+      imageSmall: activeDetail.item?.imageSmall || activeDetail.catalogRef?.imageSmall || '',
+      userImage: activeDetail.holding?.userImage || activeDetail.item?.userImage || activeDetail.catalogRef?.userImage || ''
+    }).zoom;
     if (!imageUrl) showToast('No card image is available to zoom', 'warning');
     else openModal({ title: activeDetail.item?.name || 'Card image', content: `<div class="detail-image-zoom"><img src="${escapeAttribute(imageUrl)}" alt="${escapeAttribute(activeDetail.item?.name || 'Collectible')}" referrerpolicy="no-referrer"></div>`, actions: '<button class="button" type="button" data-close-modal>Close</button>' });
   }

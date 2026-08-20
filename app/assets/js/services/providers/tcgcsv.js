@@ -1,12 +1,13 @@
 import { validSession } from '../supabase.js';
+import { tcgcsvProductImageUrl } from '../../core/catalog-images.js';
+
+export { tcgcsvProductImageUrl } from '../../core/catalog-images.js';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 200;
 const PRIVATE_TEST_ENTITLEMENT = 'authenticated-private-test';
 const FREE_ACCESS_ENTITLEMENT = 'community-free-access';
-const TCGPLAYER_IMAGE_CDN = 'https://tcgplayer-cdn.tcgplayer.com/product';
-const TCGPLAYER_IMAGE_SIZES = Object.freeze([200, 400, 600, 800, 1000]);
 const PRICE_FIELDS = Object.freeze([
   ['marketPrice', 'market'],
   ['midPrice', 'mid'],
@@ -133,13 +134,6 @@ function extendedValue(product, names) {
   const expected = new Set(names.map((name) => name.toLowerCase()));
   return (Array.isArray(product?.extendedData) ? product.extendedData : [])
     .find((entry) => expected.has(String(entry?.name || entry?.displayName || '').toLowerCase()))?.value || '';
-}
-
-export function tcgcsvProductImageUrl(productId, size = 400) {
-  const id = Number(productId);
-  if (!Number.isSafeInteger(id) || id <= 0) return '';
-  const scale = TCGPLAYER_IMAGE_SIZES.includes(Number(size)) ? Number(size) : 400;
-  return `${TCGPLAYER_IMAGE_CDN}/${id}_in_${scale}x${scale}.jpg`;
 }
 
 function imageFromExtendedData(product) {

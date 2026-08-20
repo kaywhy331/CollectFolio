@@ -1,4 +1,5 @@
-import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from './utils.js';
+import { escapeAttribute, escapeHTML, formatCurrency } from './utils.js';
+import { catalogImageSources } from './catalog-images.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from './pricing-policy.js';
 
 export function pageHeader(eyebrow, title, description = '', action = '') {
@@ -30,8 +31,7 @@ function placeholderMark(item = {}, kind = 'card') {
 }
 
 export function externalImage(item, className = '', { loading = 'lazy' } = {}) {
-  const modern = [item?.imageAvif, item?.imageWebp];
-  const sources = [...new Set([item?.userImage, ...modern, item?.imageSmall, item?.image].map(safeImageUrl).filter(Boolean))];
+  const { sources, small, large } = catalogImageSources(item);
   const [url, fallback = ''] = sources;
   const label = item?.name || 'Collectible';
   const loadingMode = loading === 'eager' ? 'eager' : 'lazy';
@@ -39,8 +39,6 @@ export function externalImage(item, className = '', { loading = 'lazy' } = {}) {
   const [width, height] = mediaDimensions(kind);
   const mark = placeholderMark(item, kind);
   const classes = [className, `media-${kind}`].filter(Boolean).join(' ');
-  const small = safeImageUrl(item?.imageSmall);
-  const large = safeImageUrl(item?.image);
   const srcset = !item?.userImage && small && large && small !== large
     ? ` srcset="${escapeAttribute(small)} ${Math.min(width, 350)}w, ${escapeAttribute(large)} ${Math.max(width * 2, 700)}w"`
     : '';
