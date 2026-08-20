@@ -4,7 +4,7 @@ import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-c
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart } from '../core/ui.js';
-import { historyLineChart, normalizeHistoryPoints } from '../core/history-chart.js';
+import { HISTORY_CHART_RANGES, historyLineChart, normalizeHistoryPoints } from '../core/history-chart.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
 import { historyKeyForItem } from '../services/history-trajectory.js';
@@ -385,8 +385,8 @@ function trajectorySection(item, state, sectionId) {
   return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
 }
 
-// 0.8.17: observed weekly price-history bar chart, with published
-// trajectory-v1 estimates overlaid at their served horizons when
+// Observed weekly price history, with the latest published trajectory-v1
+// estimates overlaid at their served horizons when
 // available. Fail-closed and independent of trajectorySection above --
 // an item with no published history object renders nothing here even if
 // it has a forecast, and an item with history but no forecast still gets
@@ -402,9 +402,23 @@ function historySection(item, state) {
   const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
   const packet = trajectoryEntry?.eligibility === 'published' ? trajectoryEntry.packet : null;
   const stale = packet ? isTrajectoryStale(packet, trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf) : false;
-  const chart = historyLineChart(validPoints.map((point) => [point.date, point.price]), packet, state.settings?.currency || 'USD', { stale });
+  const selectedRange = HISTORY_CHART_RANGES.includes(state.priceHistory?.range) ? state.priceHistory.range : '1Y';
+  const showForecast = state.priceHistory?.showForecast !== false;
+  const chart = historyLineChart(
+    validPoints.map((point) => [point.date, point.price]),
+    packet,
+    state.settings?.currency || 'USD',
+    { stale, range: selectedRange, showForecast }
+  );
   if (!chart) return '';
-  return `<section class="card history-chart-card" id="detail-history"><div class="section-heading"><div><p class="eyebrow">Price timeline</p><h2>Observed prices${packet ? ' with rolling forecast' : ''}</h2><p class="muted">Observed weekly market prices for this exact printing, on a day-scaled timeline.${packet ? ' The dashed path is the published rolling projection: green when trending up, red when trending down.' : ''}</p></div></div>${chart}</section>`;
+  const rangeControls = HISTORY_CHART_RANGES.map((range) => `<button type="button" data-history-range="${escapeAttribute(range)}" aria-pressed="${range === selectedRange}">${escapeHTML(range)}</button>`).join('');
+  const forecastControl = packet
+    ? `<button type="button" class="history-forecast-toggle" data-history-forecast aria-label="Show forecast" aria-pressed="${showForecast}"><span class="history-forecast-toggle-dot" aria-hidden="true"></span><span>Forecast</span><small aria-hidden="true">${showForecast ? 'On' : 'Off'}</small></button>`
+    : '';
+  const explainer = packet
+    ? 'Observed weekly prices for this exact printing. Forecast shows one latest as-of path; daily hover values interpolate between weekly model checkpoints, while uncertainty is calibrated at 30 and 90 days.'
+    : 'Observed weekly market prices for this exact printing, positioned on a calendar-time axis.';
+  return `<section class="card history-chart-card" id="detail-history"><div class="section-heading history-chart-heading"><div><p class="eyebrow">Price timeline</p><h2>${packet ? 'Price history &amp; latest forecast' : 'Price history'}</h2><p class="muted">${explainer}</p></div></div><div class="history-chart-toolbar"><div><span class="history-chart-control-label">History range</span><div class="range-control history-range-control" role="group" aria-label="History range">${rangeControls}</div></div>${forecastControl}</div>${chart}</section>`;
 }
 
 function priceHistoryPendingSection() {

@@ -543,7 +543,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.23` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, and local Collection Sets modules plus the visual-index manifest. Navigation
+`collectfolio-shell-v0.8.24` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth. The
@@ -629,6 +629,16 @@ Pokémon category 3 only while hashing all full-archive exclusions; games cannot
 share folds or coefficients.
 Full packets remain in private object storage, and the public-repository Actions
 artifact exposes sanitized receipts only.
+
+Trajectory-v1 forecasts are fitted on the weekly panel and serve calibrated
+30-day and 90-day quantile checkpoints plus a weekly median path. Component
+weights selected at those two horizons are blended continuously across the
+intermediate weekly path, avoiding the former nearest-horizon switch around
+day 60. The detail chart resamples that single latest path into daily hover
+values; those values are interpolation, not independent daily refits. Its
+1M/3M/6M/1Y/All controls change observed-history context only, while the
+forecast overlay remains independently switchable and never extends beyond
+the served horizon.
 
 Search-result hydration now includes canonical variants represented by the
 current search result set in addition to Holdings and Watchlist. The result

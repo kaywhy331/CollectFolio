@@ -26,10 +26,10 @@ const PRODUCTS = [
 
 function weeklyPoints(count, startPrice) {
   const points = [];
+  const end = Date.parse('2026-08-10T00:00:00.000Z');
   for (let week = 0; week < count; week += 1) {
-    const day = String(1 + (week % 28)).padStart(2, '0');
-    const month = String(1 + Math.floor(week / 28)).padStart(2, '0');
-    points.push([`2026-${month}-${day}`, startPrice + week]);
+    const time = end - ((count - 1 - week) * 7 * 86_400_000);
+    points.push([new Date(time).toISOString().slice(0, 10), startPrice + week]);
   }
   return points;
 }
@@ -68,7 +68,11 @@ function forecastGroupPayload() {
       confidence: 'standard',
       lastKnownPrice: 120,
       lastKnownDate: '2026-08-10',
-      medianPath: [{ date: '2026-08-10', price: 120 }, { date: '2026-09-09', price: 128 }],
+      medianPath: [
+        { date: '2026-08-10', price: 120 },
+        { date: '2026-09-09', price: 128 },
+        { date: '2026-11-08', price: 140 }
+      ],
       horizons: {
         30: { q10: 108, q25: 115, q50: 128, q75: 138, q90: 148 },
         90: { q10: 100, q25: 118, q50: 140, q75: 160, q90: 180 }
@@ -157,7 +161,7 @@ test('history line chart renders on the full detail page with forecast projectio
   const { withForecast } = await runSearch(page);
   await withForecast.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Observed prices with rolling forecast' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Price history & latest forecast' })).toBeVisible();
   const chart = page.locator('.history-chart-card svg.history-bars');
   await expect(chart).toBeVisible();
   await expect(chart.locator('polyline.history-line')).toBeVisible();
@@ -165,6 +169,25 @@ test('history line chart renders on the full detail page with forecast projectio
   await expect(chart.locator('line.history-bar-whisker')).toHaveCount(2);
   await expect(page.getByText('+30d est.')).toBeVisible();
   await expect(page.getByText('+90d est.')).toBeVisible();
+  await expect(chart.locator('polygon.history-forecast-band')).toBeVisible();
+
+  // Forecast is an independent overlay, while range controls affect only
+  // the observed history window.
+  const forecastToggle = page.getByRole('button', { name: 'Show forecast' });
+  await expect(forecastToggle).toHaveAttribute('aria-pressed', 'true');
+  await forecastToggle.click();
+  await expect(forecastToggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(chart.locator('polyline.history-forecast-line')).toHaveCount(0);
+  await expect(chart.locator('polygon.history-forecast-band')).toHaveCount(0);
+  await expect(chart.locator('line.history-bar-whisker')).toHaveCount(0);
+  await forecastToggle.click();
+  await expect(chart.locator('polyline.history-forecast-line')).toBeVisible();
+
+  await page.getByRole('button', { name: '1M', exact: true }).click();
+  await expect(page.locator('.history-line-chart')).toHaveAttribute('data-history-range', '1M');
+  await expect(chart.locator('circle.history-point')).toHaveCount(5);
+  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await expect(chart.locator('circle.history-point')).toHaveCount(20);
 
   // Full-width card (Kevin 2026-08-18): the chart card spans the whole
   // detail grid, not one of the two columns.
@@ -179,7 +202,7 @@ test('history line chart renders on the full detail page with forecast projectio
   await page.mouse.move(box.x + (box.width * 0.4), box.y + (box.height * 0.5));
   const tooltip = page.locator('.chart-tooltip');
   await expect(tooltip).toBeVisible();
-  await expect(tooltip).toHaveText(/[A-Z][a-z]{2} \d{1,2} — \$\d/);
+  await expect(tooltip).toHaveText(/[A-Z][a-z]{2} \d{1,2}, 2026 — \$\d/);
   // Pointing into the projection region (right of the today divider)
   // surfaces a projected-day reading.
   await page.mouse.move(box.x + (box.width * 0.97), box.y + (box.height * 0.5));
@@ -195,12 +218,13 @@ test('history line chart renders a history-only line with no projection overlay 
   const { historyOnly } = await runSearch(page);
   await historyOnly.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Observed prices', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Price history', exact: true })).toBeVisible();
   const chart = page.locator('.history-chart-card svg.history-bars');
   await expect(chart).toBeVisible();
   await expect(chart.locator('polyline.history-line')).toBeVisible();
   await expect(chart.locator('polyline.history-forecast-line')).toHaveCount(0);
   await expect(page.getByText('+30d est.')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show forecast' })).toHaveCount(0);
 });
 
 test('history line chart fails closed (no chart at all) when no history object was ever published', async ({ page }) => {

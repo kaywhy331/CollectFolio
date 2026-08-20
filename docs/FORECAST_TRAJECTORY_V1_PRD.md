@@ -10,9 +10,11 @@ performed by the supervisor/Kevin, never by the lane.
 ## 1. Product definition
 
 For every covered card variant, CollectFolio shows a **predicted price** — a
-concrete currency amount — at 30-day and 90-day horizons, with the modeled
-daily trajectory and a calibrated q10/q25/q50/q75/q90 band, derived from real
-historical statistics. No fixed ±% bands. Cards or cohorts whose model fails
+concrete currency amount — at 30-day and 90-day horizons, with a weekly model
+path resampled into daily display values and calibrated q10/q25/q50/q75/q90
+bands at the served horizons, derived from real historical statistics. Daily
+display points are interpolation, not separately refitted forecast vintages.
+No fixed ±% bands. Cards or cohorts whose model fails
 the evaluation gate are **not served a prediction** (fail closed, labeled
 "insufficient evidence"), never served a pretend range.
 
@@ -47,7 +49,10 @@ residuals pooled by (category × volatility bucket × horizon), scaled by the
 card's MAD volatility, emitted as noncrossing q10/q25/q50/q75/q90
 (`quantiles.py` contract). Cold start uses a per-category hedonic log-price
 regression (rarity, finish, release age, set family, sealed/single kind)
-as the shrinkage prior with wide honest bands.
+as the shrinkage prior with wide honest bands. The weekly median path preserves
+the exact component weights selected at the 30-day and 90-day checkpoints and
+linearly blends those weights between checkpoints; it never switches to the
+nearest horizon's parameter set at the midpoint.
 
 ## 3. Data contract
 
@@ -98,7 +103,7 @@ horizons (calendar days, mapped onto the weekly grid).
   shrinkage limits (n=0 → pure prior; n→∞ → own drift), noncrossing
   quantiles, conformal coverage on synthetic residuals.
 - Full covered-universe run completes on this host ≤ 45 min and emits one
-  packet per covered variant with q10–q90 + daily median path.
+  packet per covered variant with q10–q90 + weekly median path checkpoints.
 - `npm run test:analytics` green.
 
 ### T3 — Hedonic cold start
@@ -135,7 +140,7 @@ existing publication tooling; `cloudflare/tcgcsv-refresh` worker serves
 `CATALOG_PUBLIC_ACCESS`, same headers/CORS/limits as other catalog routes.
 **Complete when:**
 - Packet schema documented in the PRD appendix section of the final PR;
-  includes per-variant: q10–q90 at 30/90d, median daily path (downsampled
+  includes per-variant: q10–q90 at 30/90d, median weekly path (downsampled
   ≤ 32 points), asOf, modelVersion `trajectory-v1`, confidence label,
   coverage stats pointer.
 - Worker unit tests (`npm run test:tcgcsv-refresh`) cover the new route:

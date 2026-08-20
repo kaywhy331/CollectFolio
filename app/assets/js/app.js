@@ -10,6 +10,7 @@ import {
 } from './core/pricing-policy.js';
 import { appRouteForLegacyView, browseSetSegment, currentAppPath, parseAppRoute, primaryDestination, routeStatePatch } from './core/router.js';
 import { attachChartHover } from './core/chart-hover.js';
+import { HISTORY_CHART_RANGES } from './core/history-chart.js';
 import {
   appendSyncHistory,
   friendlyCloudError,
@@ -466,7 +467,7 @@ async function hydratePriceHistory() {
     if (key && !byKey.has(key)) byKey.set(key, item);
   }
   if (!byKey.size) {
-    setState({ priceHistory: { byKey: {}, loading: false, error: '' } });
+    setState({ priceHistory: { ...getState().priceHistory, byKey: {}, loading: false, error: '' } });
     return;
   }
   setState({ priceHistory: { ...getState().priceHistory, loading: true, error: '' } });
@@ -478,7 +479,7 @@ async function hydratePriceHistory() {
     }
   }));
   if (hydrationId !== historyHydrationId) return;
-  setState({ priceHistory: { byKey: Object.fromEntries(entries), loading: false, error: '' } });
+  setState({ priceHistory: { ...getState().priceHistory, byKey: Object.fromEntries(entries), loading: false, error: '' } });
 }
 
 async function hydrateIntelligence() {
@@ -1665,6 +1666,16 @@ function customCropForm(cropId) {
 }
 
 root.addEventListener('click', async (event) => {
+  const historyRange = event.target.closest('[data-history-range]');
+  if (historyRange && HISTORY_CHART_RANGES.includes(historyRange.dataset.historyRange)) {
+    setState({ priceHistory: { ...getState().priceHistory, range: historyRange.dataset.historyRange } });
+    return;
+  }
+  const historyForecast = event.target.closest('[data-history-forecast]');
+  if (historyForecast) {
+    setState({ priceHistory: { ...getState().priceHistory, showForecast: getState().priceHistory?.showForecast === false } });
+    return;
+  }
   const overviewRange = event.target.closest('[data-overview-range]');
   if (overviewRange && OVERVIEW_RANGES.includes(overviewRange.dataset.overviewRange)) {
     setState({ overview: { ...getState().overview, range: overviewRange.dataset.overviewRange } });

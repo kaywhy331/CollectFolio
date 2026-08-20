@@ -43,7 +43,7 @@ let state = {
   // TCGCSV identity keying as trajectoryForecasts, but observed data with
   // no eligibility gate -- an absent key simply means no history object
   // was ever published for that item, never "excluded".
-  priceHistory: { byKey: {}, loading: false, error: '' },
+  priceHistory: { byKey: {}, loading: false, error: '', range: '1Y', showForecast: true },
   tcgcsvRefresh: {
     status: 'disabled', sourceUpdatedAt: '', lastSuccessfulSourceBuild: null,
     lastSuccessfulAt: null, error: ''
