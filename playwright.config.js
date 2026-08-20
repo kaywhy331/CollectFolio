@@ -5,6 +5,7 @@ const hostedBaseURL = process.env.PLAYWRIGHT_BASE_URL?.replace(/\/$/, '');
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
+  expect: { timeout: 10_000 },
   outputDir: 'test-results',
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}-{projectName}-{platform}{ext}',
   fullyParallel: true,

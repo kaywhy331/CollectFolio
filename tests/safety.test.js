@@ -61,11 +61,24 @@ test('external card images eagerly load visible candidates and retain a fallback
     assert.match(html, /data-external-image/);
     assert.match(html, /loading="eager"/);
     assert.match(html, /decoding="async"/);
+    assert.match(html, /srcset="[^"]+ 350w, [^"]+ 700w"/);
+    assert.match(html, /sizes="\(max-width: 479px\) 44vw/);
+    assert.match(html, /width="350" height="490"/);
     assert.match(html, /data-fallback-src="https:\/\/images\.pokemontcg\.io\/basep\/P-001_hires\.png"/);
   } finally {
     if (previousLocation === undefined) delete globalThis.location;
     else globalThis.location = previousLocation;
   }
+});
+
+test('collectible image frames reserve type-aware ratios and intentional empty states', () => {
+  const sealed = externalImage({ name: 'Collector Booster Box', productFormat: 'booster box' }, 'product-image');
+  const comic = externalImage({ name: 'Amazing Issue 1', category: 'comic' }, 'product-image');
+  assert.match(sealed, /image-placeholder product-image media-sealed/);
+  assert.match(sealed, /aria-label="No image available for Collector Booster Box"/);
+  assert.match(sealed, />BOX<\/span>/);
+  assert.match(comic, /media-comic/);
+  assert.match(comic, />ISSUE<\/span>/);
 });
 
 test('queued and interrupted persisted identification restart automatically after reload', () => {

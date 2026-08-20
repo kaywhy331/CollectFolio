@@ -7,7 +7,7 @@ const TCGCSV_ORIGIN = 'https://tcgcsv-e2e.example.test';
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -105,8 +105,8 @@ async function configureEnrichmentStubs(page) {
 }
 
 async function runSearch(page) {
-  await page.goto('/discover?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Card, set, number, character, or player').fill('Bridge Card');
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Bridge Card');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const mappedCard = page.locator('.result-card', { hasText: 'Enriched Bridge Card' });
   const unmappedCard = page.locator('.result-card', { hasText: 'Unmapped Bridge Card' });

@@ -7,7 +7,7 @@ const TCGCSV_ORIGIN = 'https://tcgcsv-history-e2e.example.test';
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -139,8 +139,8 @@ async function configureStubs(page) {
 }
 
 async function runSearch(page) {
-  await page.goto('/discover?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Card, set, number, character, or player').fill('Card');
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Card');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const withForecast = page.locator('.result-card', { hasText: 'History And Forecast Card' });
   const historyOnly = page.locator('.result-card', { hasText: 'History Only Card' });

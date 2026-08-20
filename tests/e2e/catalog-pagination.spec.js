@@ -31,13 +31,13 @@ function tcgcsvProduct(index) {
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
     await expect(onboarding).toBeHidden();
   }
-  await page.goto('/discover?mode=search');
+  await page.goto('/discover/search');
   await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
 }
 
@@ -47,7 +47,7 @@ test('Discover follows every TCGCSV cursor page up to the search cap, with no de
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
       SUPABASE_URL: window.location.origin + '/__pagination-cloud',
       SUPABASE_ANON_KEY: 'synthetic-browser-key',
-      APP_VERSION: '0.8.21-test',
+      APP_VERSION: '0.8.22-test',
       TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
       ENABLE_TESSERACT: false,
       ENABLE_PRICE_INTELLIGENCE: false,
@@ -75,8 +75,6 @@ test('Discover follows every TCGCSV cursor page up to the search cap, with no de
   });
 
   await skipOnboarding(page);
-  await page.locator('details.discover-filters > summary').click();
-  await page.locator('#catalog-search [name="category"]').selectOption('magic');
   await page.locator('#catalog-query').fill('dragon');
   await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
 

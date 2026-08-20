@@ -1,8 +1,9 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
-import { holdingMarketCurrency, holdingMarketValue, portfolioAllocation, portfolioSummary, snapshotFor } from '../core/calculations.js';
+import { holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioAllocation, portfolioSummary, snapshotFor } from '../core/calculations.js';
+import { collectionFreshness } from '../core/data-freshness.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
-import { localPortfolioInsights, localPortfolioScenario } from '../core/local-scenarios.js';
-import { allocationChart, trendChart } from '../core/ui.js';
+import { localPortfolioInsights } from '../core/local-scenarios.js';
+import { trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForHolding } from '../core/market-series.js';
@@ -50,7 +51,7 @@ function dailySnapshotSeries(holdings = [], snapshots = [], now = new Date(), cu
       .filter((entry) => String(entry.currency || 'USD').toUpperCase() === String(currency).toUpperCase())
       .map((entry) => [entry.date, { ...entry }])
   );
-  byDay.set(current.date, current);
+  if (holdings.some((holding) => holdingPricingStatus(holding) !== 'unpriced')) byDay.set(current.date, current);
   return [...byDay.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
@@ -123,7 +124,7 @@ export function pricingCoverage(holdings = [], byVariant = {}) {
 // PRD Sec 10.3 compact Overview modules. Both render nothing at all when no
 // approved intelligence or alert data exists, so dormant capabilities do not
 // create empty dashboard chrome.
-export function portfolioMovers(holdings = [], byVariant = {}) {
+export function portfolioMovers(holdings = [], byVariant = {}, limit = 3) {
   return holdings
     .map((holding) => ({
       holding,
@@ -135,7 +136,7 @@ export function portfolioMovers(holdings = [], byVariant = {}) {
     .map(({ holding, publication }) => ({ holding, intelligence: normalizeIntelligencePayload(publication) }))
     .filter(({ intelligence }) => intelligence.supportTier >= 2 && intelligence.trend.return30d !== null)
     .sort((left, right) => Math.abs(right.intelligence.trend.return30d) - Math.abs(left.intelligence.trend.return30d))
-    .slice(0, 3);
+    .slice(0, Math.max(0, Number(limit) || 0));
 }
 
 export function watchlistSignals(alerts = [], watchlistItems = []) {
@@ -156,26 +157,10 @@ function movementMarkup(change, range, currency) {
   return `<p class="overview-movement ${tone}"><span aria-hidden="true">${glyph}</span><span class="sr-only">${direction}</span> ${escapeHTML(formatCurrency(Math.abs(change.amount), currency))}${escapeHTML(percent)} <span class="muted">${escapeHTML(range)}</span></p>`;
 }
 
-function forecastCoverage(state) {
-  const currency = state.settings.currency || 'USD';
-  const scenario = localPortfolioScenario(state.holdings, state.localValueObservations || [], 90, { currency });
-  const published = state.featureFlags?.publicPriceIntelligence
-    ? state.holdings.filter((holding) => {
-      const publication = holding.canonicalVariantId
-        ? selectPublicationForHolding(state.intelligence?.byVariant?.[holding.canonicalVariantId], holding, currency)
-        : null;
-      return publication && holdingViewModel(holding, { publication }).forecasts.length > 0;
-    }).length
-    : 0;
-  return scenario.coveredHoldings
-    ? { count: scenario.coveredHoldings, label: `${scenario.coveredHoldings} of ${state.holdings.length}`, detail: `Local 90-day scenarios · ${published} published market outlook${published === 1 ? '' : 's'}.` }
-    : { count: 0, label: 'Needs values', detail: 'Add a current value to start manual scenarios.' };
-}
-
 function attentionModule(state, coverage) {
   const signals = watchlistSignals(state.alerts, state.watchlistItems);
   const items = [];
-  if (coverage.unpriced) items.push(`<button class="attention-item" type="button" data-go="portfolio"><span class="attention-icon warning" aria-hidden="true">!</span><span><strong>${coverage.unpriced} unpriced holding${coverage.unpriced === 1 ? '' : 's'}</strong><small>Add a manual value or review the exact printing.</small></span><span aria-hidden="true">→</span></button>`);
+  if (coverage.unpriced) items.push(`<button class="attention-item" type="button" data-go="portfolio"><span class="attention-icon warning" aria-hidden="true">!</span><span><strong>${coverage.unpriced} unpriced item${coverage.unpriced === 1 ? '' : 's'}</strong><small>Add a manual value or review the exact printing.</small></span><span aria-hidden="true">→</span></button>`);
   if (state.scanDraftCount) items.push(`<button class="attention-item" type="button" data-action="resume-scan"><span class="attention-icon" aria-hidden="true">↥</span><span><strong>Saved scan ready</strong><small>Continue reviewing ${state.scanDraftCount} local draft${state.scanDraftCount === 1 ? '' : 's'}.</small></span><span aria-hidden="true">→</span></button>`);
   if (signals.length) items.push(`<button class="attention-item" type="button" data-insights-view="alerts"><span class="attention-icon positive" aria-hidden="true">◆</span><span><strong>${signals.length} Watchlist alert${signals.length === 1 ? '' : 's'}</strong><small>${escapeHTML(signals[0].message)}</small></span><span aria-hidden="true">→</span></button>`);
   if (!items.length) return '';
@@ -189,7 +174,7 @@ function moversModule(state) {
     <div class="overview-card-list">${movers.map(({ holding, intelligence }) => {
       const change = intelligence.trend.return30d;
       const tone = change >= 0 ? 'positive' : 'negative';
-      return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Mapped card')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Exact holding')}</small><span class="${tone}"><span aria-hidden="true">${change >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(change) * 100))} · ${escapeHTML(trendLabel(intelligence.trend.status))}</span></span><span aria-hidden="true">→</span></button>`;
+      return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Mapped card')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Exact item')}</small><span class="${tone}"><span aria-hidden="true">${change >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(change) * 100))} · ${escapeHTML(trendLabel(intelligence.trend.status))}</span></span><span aria-hidden="true">→</span></button>`;
     }).join('')}</div></section>`;
 }
 
@@ -198,37 +183,56 @@ function recentHoldingsModule(state, currency) {
     .sort((left, right) => String(right.updatedAt || right.createdAt || '').localeCompare(String(left.updatedAt || left.createdAt || '')))
     .slice(0, 4);
   if (!recent.length) return '';
-  return `<section class="card overview-module"><div class="section-heading compact"><div><p class="eyebrow">Collection</p><h2>Recent holdings</h2></div><button class="button ghost small" type="button" data-go="portfolio">View all</button></div><div class="overview-card-list">${recent.map((holding) => {
+  return `<section class="card overview-module"><div class="section-heading compact"><div><p class="eyebrow">Collection</p><h2>Recent items</h2></div><button class="button ghost small" type="button" data-go="portfolio">View all</button></div><div class="overview-card-list">${recent.map((holding) => {
     const valueCurrency = holdingMarketCurrency(holding);
-    return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Unnamed item')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Custom holding')}</small><span>${escapeHTML(formatCurrency(holdingMarketValue(holding), valueCurrency))}${valueCurrency !== currency ? ` · outside ${escapeHTML(currency)} total` : ''} · Qty ${escapeHTML(String(holding.quantity || 0))}</span></span><span aria-hidden="true">→</span></button>`;
+    const pricing = holdingPricingStatus(holding);
+    const value = pricing === 'unpriced' ? 'Unpriced' : formatCurrency(holdingMarketValue(holding), valueCurrency);
+    const valueType = pricing === 'manual' ? 'Manual value' : pricing === 'market' ? 'Market value' : '';
+    return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Unnamed item')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Custom item')}</small><span>${escapeHTML(value)}${valueType ? ` · ${escapeHTML(valueType)}` : ''}${pricing !== 'unpriced' && valueCurrency !== currency ? ` · outside ${escapeHTML(currency)} total` : ''} · Qty ${escapeHTML(String(holding.quantity || 0))}</span></span><span aria-hidden="true">→</span></button>`;
   }).join('')}</div></section>`;
 }
 
 function allocationModule(state, currency) {
-  const allocation = portfolioAllocation(state.holdings, { currency });
-  if (!Object.values(allocation).some((value) => value > 0)) return '';
-  return `<section class="card overview-module"><div class="section-heading compact"><div><p class="eyebrow">By market value</p><h2>Collection mix</h2></div></div>${allocationChart(allocation)}</section>`;
+  const entries = Object.entries(portfolioAllocation(state.holdings, { currency }))
+    .filter(([, value]) => value > 0)
+    .sort((left, right) => right[1] - left[1]);
+  const total = entries.reduce((sum, [, value]) => sum + value, 0);
+  if (!total) return '';
+  const segments = entries.map(([label, value], index) => {
+    const percent = (value / total) * 100;
+    return `<span class="allocation-segment mix-tone-${index % 6}" style="--allocation-share:${percent.toFixed(2)}%"><span class="sr-only">${escapeHTML(label)} ${percent.toFixed(0)}%</span></span>`;
+  }).join('');
+  const ranked = entries.map(([label, value], index) => {
+    const percent = (value / total) * 100;
+    return `<li><i class="mix-tone-${index % 6}" aria-hidden="true"></i><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(formatCurrency(value, currency))}</small></span><b>${percent.toFixed(0)}%</b></li>`;
+  }).join('');
+  return `<section class="card overview-module"><div class="section-heading compact"><div><p class="eyebrow">By accepted value</p><h2>Collection mix</h2></div></div><div class="allocation-stack" role="img" aria-label="Collection value mix by category">${segments}</div><ol class="allocation-ranking">${ranked}</ol></section>`;
 }
 
 function refreshStatusMarkup(refresh = {}) {
   if (!refresh.status || refresh.status === 'disabled') return '';
   const labels = {
-    loading: ['Checking market data', 'Reading the latest private refresh receipt.'],
-    current: ['Market data is current', 'The latest market data build completed successfully.'],
-    in_progress: ['Market data is updating', 'One deterministic full-cohort refresh is in progress.'],
-    update_required: ['New market data is queued', 'The hourly refresh lane will process this source build.'],
-    unavailable: ['Refresh status unavailable', 'The portfolio remains usable with its existing local data.']
+    loading: ['Checking price freshness', 'Your saved collection remains available while this finishes.'],
+    current: ['Prices updated recently', 'The latest available price refresh completed successfully.'],
+    in_progress: ['Prices are updating', 'Saved values remain visible during the update.'],
+    update_required: ['Price update scheduled', 'Your current saved values remain available.'],
+    unavailable: ['Refresh status unavailable', 'Your collection remains usable with its saved local data.']
   };
   const [label, detail] = labels[refresh.status] || labels.unavailable;
   const successful = refresh.lastSuccessfulSourceBuild
     ? validDate(refresh.lastSuccessfulSourceBuild)
     : null;
   const receipt = successful
-    ? ` Last successful build: ${successful.toLocaleString(undefined, {
-      dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC'
-    })} UTC.`
+    ? ` Last successful refresh: ${successful.toLocaleString(undefined, {
+      dateStyle: 'medium', timeStyle: 'short'
+    })}.`
     : '';
   return `<section class="source-refresh-status" data-source-refresh-status="${escapeAttribute(refresh.status)}" role="status"><span class="source-refresh-dot" aria-hidden="true"></span><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(detail + receipt)}</small></span></section>`;
+}
+
+function dataHealthModule(state, coverage, historyCoverage, freshness) {
+  const historyPercent = Number(historyCoverage?.percent) || 0;
+  return `<details class="card data-health"><summary><span><strong>Data Health</strong><small>${coverage.percent.toFixed(0)}% pricing coverage · ${freshness.stale} stale</small></span><span aria-hidden="true">⌄</span></summary><div class="data-health-grid"><div><span>Market-price coverage</span><strong>${coverage.market} of ${coverage.total}</strong></div><div><span>History coverage</span><strong>${historyPercent}%</strong></div><div><span>Stale values</span><strong>${freshness.stale}</strong></div><div><span>Manual values</span><strong>${coverage.manual}</strong></div><div><span>Last price update</span><strong>${escapeHTML(freshness.latest.label)}</strong></div></div>${refreshStatusMarkup(state.tcgcsvRefresh)}</details>`;
 }
 
 export function renderHome(state) {
@@ -240,39 +244,37 @@ export function renderHome(state) {
     state.holdings, state.snapshots, historyPoints, range, new Date(), currency
   );
   const change = overviewChange(series);
-  const gainTone = summary.gain >= 0 ? 'positive' : 'negative';
   const coverage = pricingCoverage(state.holdings, state.intelligence?.byVariant);
-  const forecast = forecastCoverage(state);
   const localInsights = localPortfolioInsights(state.holdings, currency);
-  const asOf = series.at(-1)?.date
-    ? new Date(`${series.at(-1).date}T00:00:00.000Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
-    : '';
+  const freshness = collectionFreshness(state.holdings);
+  const chartSeries = series.map((point) => ({ ...point, costBasis: summary.costBasisItems ? point.costBasis : null }));
+  const gainValid = summary.gainEligibleItems > 0 && summary.returnPercent !== null;
+  const gainTone = gainValid && summary.gain < 0 ? 'negative' : 'positive';
 
-  const header = pageHeader('Portfolio', 'Overview', state.holdings.length
-    ? `${summary.uniqueItems} unique items · ${summary.totalQuantity} total pieces`
+  const header = pageHeader(state.settings.collectionName || 'Personal Collection', 'Home', state.holdings.length
+    ? `${summary.uniqueItems} unique items · ${summary.totalQuantity} total quantity`
     : 'A clear view of what you own and what needs attention', '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>');
-  const sourceRefresh = refreshStatusMarkup(state.tcgcsvRefresh);
+  const dataHealth = dataHealthModule(state, coverage, historyCoverage, freshness);
 
   if (!state.holdings.length) {
-    return `${header}${sourceRefresh}<div class="overview-empty">${emptyState('Build your first portfolio view', 'Add one collectible to begin tracking value, cost basis, and collection mix.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Add first collectible</button><button class="button ghost" type="button" data-go="search">Search cards</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}`;
+    return `${header}<div class="overview-empty">${emptyState('Build your collection', 'Scan or search for one collectible to begin tracking accepted values and collection mix.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan first item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}${dataHealth}`;
   }
 
-  return `${header}${sourceRefresh}
-    <section class="overview-hero" aria-label="Portfolio performance">
+  return `${header}
+    <section class="overview-hero" aria-label="Collection performance">
       <article class="card overview-performance">
-        <div class="overview-performance-head"><div><p class="metric-label">Estimated market value · ${escapeHTML(currency)} only</p><strong class="overview-value">${escapeHTML(formatCurrency(summary.marketValue, currency))}</strong>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Portfolio chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
-        ${trendChart(series, currency)}
-        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> pricing coverage</span>${historyCoverage.total ? `<span><strong>${historyCoverage.percent}%</strong> chart history coverage across this portfolio</span>` : ''}<span>${asOf ? `Updated ${escapeHTML(asOf)}` : 'Waiting for the first snapshot'}</span></div>
+        <div class="overview-performance-head"><div><p class="metric-label">Estimated collection value · ${escapeHTML(currency)} only</p><strong class="overview-value">${coverage.covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : 'Value not available'}</strong><p class="overview-hero-support">${coverage.covered} of ${coverage.total} items priced · ${gainValid ? `${escapeHTML(formatCurrency(summary.gain, currency))} estimated gain` : 'Gain unavailable'}</p><span class="freshness-badge" data-freshness="${escapeAttribute(freshness.latest.state)}">${escapeHTML(freshness.latest.label)}</span>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Collection chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
+        ${trendChart(chartSeries, currency)}
+        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> coverage · ${coverage.covered} of ${coverage.total} priced</span>${historyCoverage.total ? `<span><strong>${historyCoverage.percent}%</strong> history coverage</span>` : ''}</div>
       </article>
-      <aside class="overview-summary" aria-label="Portfolio summary">
-        <article class="summary-stat"><span>Cost basis</span><strong>${escapeHTML(formatCurrency(summary.costBasis, currency))}</strong><small>Purchase price + fees</small></article>
-        <article class="summary-stat"><span>Comparable unrealized gain or loss</span><strong class="${gainTone}"><span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}</strong><small>${escapeHTML(formatPercent(summary.returnPercent))} all time${summary.excludedGainItems ? ` · ${summary.excludedGainItems} mixed-currency excluded` : ''}</small></article>
-        <article class="summary-stat forecast"><span>Scenario coverage</span><strong>${escapeHTML(forecast.label)}</strong><small>${escapeHTML(forecast.detail)}</small></article>
-        <article class="summary-stat"><span>Pricing sources</span><strong>${coverage.covered} of ${coverage.total}</strong><small>${coverage.market} market · ${coverage.manual} manual · ${coverage.unpriced} unpriced</small></article>
-        <article class="summary-stat"><span>Value concentration</span><strong>${escapeHTML(localInsights.concentration[0].toUpperCase() + localInsights.concentration.slice(1))}</strong><small>${localInsights.topHolding ? `${escapeHTML(localInsights.topHolding.name)} is ${escapeHTML(formatPercent(localInsights.topHolding.share * 100))}` : 'Add a locally valued holding'}</small></article>
+      <aside class="overview-summary" aria-label="Collection summary">
+        <article class="summary-stat"><span>Cost basis</span><strong>${summary.costBasisItems ? escapeHTML(formatCurrency(summary.costBasis, currency)) : 'Unavailable'}</strong><small>${summary.costBasisItems ? `${summary.costBasisItems} of ${summary.uniqueItems} purchases include cost` : 'Add purchase details to calculate'}</small></article>
+        <article class="summary-stat"><span>Estimated gain</span><strong class="${gainValid ? gainTone : ''}">${gainValid ? `<span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}` : 'Unavailable'}</strong><small>${gainValid ? `${escapeHTML(formatPercent(summary.returnPercent))} · ${summary.gainEligibleItems} comparable purchase${summary.gainEligibleItems === 1 ? '' : 's'}` : 'Needs both current value and cost basis'}</small></article>
+        <article class="summary-stat"><span>Pricing coverage</span><strong>${coverage.percent.toFixed(0)}%</strong><small>${coverage.market} market · ${coverage.manual} manual · ${coverage.unpriced} unpriced</small></article>
+        <article class="summary-stat"><span>Value concentration</span><strong>${escapeHTML(localInsights.concentration[0].toUpperCase() + localInsights.concentration.slice(1))}</strong><small>${localInsights.topHolding ? `${escapeHTML(localInsights.topHolding.name)} is ${(localInsights.topHolding.share * 100).toFixed(1)}%` : 'Add a value to an item'}</small></article>
       </aside>
     </section>
     ${attentionModule(state, coverage)}
     ${summary.excludedMarketItems || summary.excludedCostItems ? `<p class="fine-print" role="status">Amounts in ${escapeHTML(summary.excludedCurrencies.join(', '))} stay in their source currency and are excluded from ${escapeHTML(currency)} totals. No exchange rate was guessed.</p>` : ''}
-    <div class="overview-modules">${moversModule(state)}${recentHoldingsModule(state, currency)}${allocationModule(state, currency)}</div>`;
+    <div class="overview-modules">${moversModule(state)}${recentHoldingsModule(state, currency)}${allocationModule(state, currency)}</div>${dataHealth}`;
 }

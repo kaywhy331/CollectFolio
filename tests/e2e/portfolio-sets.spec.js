@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -72,16 +72,16 @@ async function seedSetHoldings(page) {
   }, rows);
 }
 
-test('Portfolio Sets restores, filters, and drills into the exact local holdings', async ({ page }) => {
+test('Collection Sets restores, filters, and drills into the exact local items', async ({ page }) => {
   await skipOnboarding(page);
   await seedSetHoldings(page);
-  await page.goto('/portfolio?view=sets');
+  await page.goto('/collection/sets');
 
-  await expect(page).toHaveURL(/\/portfolio\?view=sets$/);
+  await expect(page).toHaveURL(/\/collection\/sets$/);
   await expect(page.getByRole('heading', { name: 'Sets', exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Sets' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.portfolio-set-card')).toHaveCount(3);
-  await expect(page.getByText('1 distinct printing · 3 copies across 2 acquisition lots')).toBeVisible();
+  await expect(page.getByText('1 distinct printing · 3 copies across 2 purchases')).toBeVisible();
   await expect(page.getByText(/completion percentage is intentionally unavailable/).first()).toBeVisible();
 
   await page.reload();
@@ -90,11 +90,12 @@ test('Portfolio Sets restores, filters, and drills into the exact local holdings
   await page.getByPlaceholder('Search collected sets').fill('Alpha');
   await expect(page.locator('.portfolio-set-card')).toHaveCount(2);
   const alphaCard = page.locator('.portfolio-set-card').filter({ has: page.getByRole('heading', { name: 'Alpha Set', exact: true }) });
-  await alphaCard.getByRole('button', { name: 'View holdings' }).click();
+  await alphaCard.getByRole('button', { name: 'View items' }).click();
 
-  await expect(page).toHaveURL(/\/portfolio\?view=holdings$/);
+  await expect(page).toHaveURL(/\/collection\/items$/);
   await expect(page.getByText('Set: Alpha Set')).toBeVisible();
-  await expect(page.locator('.portfolio-holding-card')).toHaveCount(2);
+  await expect(page.locator('.portfolio-holding-card')).toHaveCount(1);
+  await expect(page.locator('.portfolio-holding-card')).toContainText('2 purchases');
 
   await page.getByRole('tab', { name: 'Sets' }).click();
   const report = await new AxeBuilder({ page })

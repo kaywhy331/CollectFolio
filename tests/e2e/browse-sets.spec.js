@@ -30,7 +30,7 @@ function pokemonProducts(groupId, count) {
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -89,11 +89,14 @@ async function mockFlagshipCatalog(page) {
 }
 
 test('Browse Sets drills from a restorable flagship game route into every card in a set', async ({ page }) => {
+  // This intentionally exercises a 121-card render, state restoration, and a
+  // full axe pass. Allow cold browser startup without weakening any assertion.
+  test.setTimeout(90_000);
   await mockFlagshipCatalog(page);
   await skipOnboarding(page);
   await page.goto('/discover/pokemon');
 
-  await expect(page).toHaveURL(/\/discover\/pokemon$/);
+  await expect(page).toHaveURL(/\/games\/pokemon$/);
   await expect(page.getByRole('button', { name: 'Browse sets' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: /Silver Tempest/ })).toBeVisible();
   await expect(page.getByText('2 sets', { exact: true })).toBeVisible();
@@ -102,7 +105,7 @@ test('Browse Sets drills from a restorable flagship game route into every card i
   await expect(page.getByText('1 set', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: /Silver Tempest/ }).click();
 
-  await expect(page).toHaveURL(/\/discover\/pokemon\/silver-tempest-3-1102$/);
+  await expect(page).toHaveURL(/\/sets\/silver-tempest-3-1102\?game=pokemon$/);
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
   await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
   await expect(page.locator('.result-card')).toHaveCount(120);
@@ -119,6 +122,8 @@ test('Browse Sets drills from a restorable flagship game route into every card i
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
   await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
+  await page.getByPlaceholder('Search this set…').fill('Card 121');
+  await expect(page.locator('.result-card')).toHaveCount(1);
 
   const report = await new AxeBuilder({ page })
     .include('#main-content')
@@ -127,23 +132,19 @@ test('Browse Sets drills from a restorable flagship game route into every card i
   expect(report.violations.filter((entry) => ['serious', 'critical'].includes(entry.impact))).toEqual([]);
 });
 
-test('Browse Sets keeps flagship games pinned as quick chips and the rest of the TCGCSV cohort searchable', async ({ page }) => {
+test('Browse Sets keeps popular games visible and opens the complete searchable category picker', async ({ page }) => {
   await mockFlagshipCatalog(page);
   await skipOnboarding(page);
   await page.goto('/discover/browse');
 
-  // catalog-v2 B1: Pokémon/Magic/Yu-Gi-Oh! are TCGCSV-identified now too,
-  // but they stay pinned quick chips -- they must not double up inside the
-  // searchable 87-category directory.
-  const chips = page.locator('.browse-game-chips');
-  await expect(chips.getByRole('button', { name: 'Pokémon' })).toBeVisible();
-  await expect(chips.getByRole('button', { name: 'Magic', exact: true })).toBeVisible();
-  await expect(chips.getByRole('button', { name: 'Yu-Gi-Oh!' })).toBeVisible();
-
+  const popular = page.getByRole('group', { name: 'Popular games' });
+  await expect(popular.getByRole('button', { name: /Pokémon/ })).toBeVisible();
+  await expect(popular.getByRole('button', { name: /Magic/ })).toBeVisible();
+  await expect(popular.getByRole('button', { name: /Yu-Gi-Oh!/ })).toBeVisible();
+  await page.getByRole('button', { name: /View All/ }).click();
+  await expect(page.getByRole('dialog', { name: 'All games and categories' })).toBeVisible();
   const categories = page.locator('[data-game-search-text]');
-  await expect(categories).toHaveCount(87);
-  await expect(page.getByText('87 game categories · free community access')).toBeVisible();
-  await expect(page.locator('#browse-game-options').getByRole('button', { name: 'Pokémon', exact: true })).toHaveCount(0);
+  await expect(categories).toHaveCount(90);
 
   await page.getByPlaceholder('Find Dragon Ball, One Piece, Digimon…').fill('one piece');
   await expect(categories.filter({ visible: true })).toHaveCount(1);
@@ -152,7 +153,7 @@ test('Browse Sets keeps flagship games pinned as quick chips and the rest of the
   await expect(page.getByRole('button', { name: /Dragon Ball Z TCG/ })).toBeHidden();
 
   await onePiece.click();
-  await expect(page).toHaveURL(/\/discover\/tcgcsv-category-68$/);
+  await expect(page).toHaveURL(/\/games\/tcgcsv-category-68$/);
   await expect(page.getByRole('dialog')).toBeHidden();
 
   // Drilled into a category: the directory collapses into breadcrumbs.
@@ -161,7 +162,9 @@ test('Browse Sets keeps flagship games pinned as quick chips and the rest of the
   await expect(categories).toHaveCount(0);
   await page.getByRole('button', { name: 'All games', exact: true }).click();
   await expect(page).toHaveURL(/\/discover\/browse$/);
-  await expect(page.locator('[data-game-search-text]')).toHaveCount(87);
+  await expect(page.locator('[data-game-search-text]')).toHaveCount(0);
+  await page.getByRole('button', { name: /View All/ }).click();
+  await expect(page.locator('[data-game-search-text]')).toHaveCount(90);
 });
 
 test('Browse Sets filters a flagship game by selected years and groups sets into families', async ({ page }) => {

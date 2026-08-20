@@ -12,7 +12,7 @@ async function expectAccessible(page) {
 
 async function skipOnboarding(page) {
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview' });
+  const overview = page.getByRole('heading', { name: 'Home' });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -56,7 +56,7 @@ async function configureCloud(page, { failSync = false } = {}) {
   });
 }
 
-test('three-step onboarding survives refresh and completes after the first Add action', async ({ page }) => {
+test('three-step onboarding survives refresh and completes after the first collection add', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Set up CollectFolio' })).toBeVisible();
   await expect(page.getByText('Step 1 of 3')).toBeVisible();
@@ -65,25 +65,25 @@ test('three-step onboarding survives refresh and completes after the first Add a
   await page.getByLabel('Display currency').selectOption('CAD');
   await page.getByRole('button', { name: 'Save and continue' }).click();
   await expect(page.getByText('Step 3 of 3')).toBeVisible();
-  await expect(page.getByText('CAD portfolio currency')).toBeVisible();
+  await expect(page.getByText('CAD collection currency')).toBeVisible();
 
   await page.reload();
   await expect(page.getByText('Step 3 of 3')).toBeVisible();
-  await expect(page.getByText('CAD portfolio currency')).toBeVisible();
+  await expect(page.getByText('CAD collection currency')).toBeVisible();
   await expectAccessible(page);
 
   await page.getByRole('button', { name: 'Choose how to add' }).click();
-  await expect(page).toHaveURL(/\/add$/);
+  await expect(page).toHaveURL(/\/scan$/);
   await page.getByRole('button', { name: /Create custom item/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Add a custom collectible' });
   await dialog.getByLabel('Name').fill('First onboarding collectible');
-  await dialog.getByRole('button', { name: 'Add to portfolio' }).click();
+  await dialog.getByRole('button', { name: 'Add to collection' }).click();
   await expect(dialog).toHaveCount(0);
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Overview' }).click();
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' }).click();
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
   await expect(page.getByText('First onboarding collectible', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Set up CollectFolio' })).toHaveCount(0);
 });
 
@@ -102,7 +102,7 @@ test('a shared provider card URL hydrates without local card data', async ({ pag
   await page.goto('/cards/scryfall%3Ashared-card-id');
   await expect(page.getByRole('heading', { name: 'Shared Archive Card' })).toBeVisible();
   await expect(page.getByText('Linked Set · #42 · rare')).toBeVisible();
-  await expect(page).toHaveURL(/\/cards\/scryfall%3Ashared-card-id$/);
+  await expect(page).toHaveURL(/\/items\/scryfall%3Ashared-card-id$/);
 });
 
 test('guest settings are responsive, accessible, textual, and modal focus stays contained', async ({ page }) => {
@@ -164,7 +164,7 @@ test('synchronization errors preserve local data and expose a recovery reference
   await page.getByRole('button', { name: 'Synchronize now' }).click();
   const status = page.locator('[data-account-status="error"]');
   await expect(status).toContainText('Synchronization needs attention');
-  await expect(status).toContainText('local portfolio is unchanged');
+  await expect(status).toContainText('local collection is unchanged');
   await page.getByText('Recovery details').click();
   await expect(page.locator('.diagnostic-details code')).toContainText(/^SYNC-/);
   await expect(page.getByRole('button', { name: 'Synchronize now' })).toBeEnabled();

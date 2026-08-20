@@ -31,7 +31,7 @@ function baseState(overrides = {}) {
 test('portfolio exposes supported collection sections while forecasts remain under Insights', () => {
   const html = renderPortfolio(baseState());
   assert.match(html, /role="tablist"/);
-  assert.match(html, />Holdings</);
+  assert.match(html, />Items</);
   assert.match(html, />Watchlist</);
   assert.doesNotMatch(html, />Forecasts</);
   const insights = renderInsights(baseState());
@@ -67,7 +67,7 @@ test('watchlist surfaces only escaped approved-intelligence alert messages', () 
 test('search shows watching state and forecast center publishes no invented number', () => {
   const catalogRef = catalogReferenceForItem(item);
   const legacyPricedItem = {
-    ...item,
+    ...item, matchBucket: 'exact', matchScore: 1,
     priceSource: 'Pokémon TCG API · TCGplayer market',
     priceOptions: [
       { finish: 'holofoil', price: 90, source: 'TCGplayer market' },
@@ -92,7 +92,7 @@ test('search shows watching state and forecast center publishes no invented numb
 
 test('conditionless search results recognize condition-aware mapped watches', () => {
   const variantId = '123e4567-e89b-42d3-a456-426614174000';
-  const mappedItem = { ...item, canonicalVariantId: variantId };
+  const mappedItem = { ...item, canonicalVariantId: variantId, matchBucket: 'exact', matchScore: 1 };
   const catalogRef = catalogReferenceForItem(mappedItem, { marketCondition: 'Near Mint' });
   const search = renderSearch(baseState({
     watchlistItems: [{
@@ -112,7 +112,7 @@ test('multi-finish search results require an explicit finish choice before watch
   const search = renderSearch(baseState({
     search: {
       query: 'Sol Ring', category: 'magic', provider: 'scryfall', loading: false, warnings: [],
-      results: [{ ...item, provider: 'scryfall', category: 'magic', game: 'Magic', name: 'Sol Ring', priceSource: 'Scryfall daily price', priceOptions: [{ finish: 'regular', price: 90 }, { finish: 'foil', price: 105 }] }]
+      results: [{ ...item, provider: 'scryfall', category: 'magic', game: 'Magic', name: 'Sol Ring', matchBucket: 'exact', matchScore: 1, priceSource: 'Scryfall daily price', priceOptions: [{ finish: 'regular', price: 90 }, { finish: 'foil', price: 105 }] }]
     }
   }));
   assert.match(search, /Choose finish/);
@@ -136,12 +136,11 @@ test('forecast center renders only a validated approved publication contract', (
       }
     } }, history: [], loading: false, error: '' }
   }));
-  assert.match(html, /30-day outlook/);
-  assert.match(html, /Approved forecast projection/);
-  assert.match(html, /Observed now/);
-  assert.match(html, /1 of 1 holdings/);
+  assert.match(html, /Published Forecasts/);
+  assert.match(html, /Current market/);
+  assert.match(html, /Middle 50%/);
+  assert.match(html, /1 covered/);
   assert.match(html, /\$105\.00/);
-  assert.match(html, /60%/);
-  assert.match(html, /baseline-v1/);
-  assert.match(html, /Approved source/);
+  assert.match(html, /Limited evidence/);
+  assert.doesNotMatch(html, /Approved forecast projection|60%|baseline-v1/);
 });

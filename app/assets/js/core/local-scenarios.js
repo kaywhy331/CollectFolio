@@ -1,3 +1,5 @@
+import { catalogPriceForValuation } from './pricing-policy.js';
+
 export const LOCAL_SCENARIO_HORIZONS = Object.freeze([7, 30, 90, 180, 365]);
 export const LOCAL_SCENARIO_MODEL_VERSION = 'local-scenario-v1';
 
@@ -149,7 +151,7 @@ export function buildLocalScenario(records = [], horizon = 90, {
   const latest = observations.at(-1) || null;
   if (!latest) return {
     kind: 'local-scenario', status: 'unavailable', horizon: selectedHorizon, observationCount: 0,
-    reason: 'Add a current value to start a local scenario.', nextAction: 'Save a catalog or manual unit value for this holding.'
+    reason: 'Add a current value to start your scenario.', nextAction: 'Save a catalog or manual unit value for this item.'
   };
   const asOfTime = new Date(asOf).valueOf();
   const sourceUpdatedTime = latest.source === 'catalog' ? timestamp(latest.sourceUpdatedAt) : null;
@@ -227,8 +229,8 @@ export function buildHoldingLocalScenario(holding = {}, observations = [], horiz
       kind: 'local-scenario', status: 'unavailable',
       horizon: LOCAL_SCENARIO_HORIZONS.includes(Number(horizon)) ? Number(horizon) : 90,
       observationCount: 0,
-      reason: 'Manual scenario is a manual/custom-item model; it does not apply to catalog-linked items.',
-      nextAction: 'Check this item’s published trajectory forecast instead.'
+      reason: 'Scenarios are available for custom items; this catalog item uses published outlooks when enough evidence is available.',
+      nextAction: 'Check this item’s published outlook instead.'
     };
   }
   const subjectId = localScenarioSubject(holding);
@@ -270,7 +272,7 @@ export function localPortfolioInsights(holdings = [], currency = 'USD') {
   const rows = holdings.map((holding) => {
     const quantity = Math.max(0, finite(holding.quantity) ?? 0);
     const manual = finite(holding.manualMarketPrice);
-    const catalog = finite(holding.item?.price);
+    const catalog = catalogPriceForValuation(holding.item);
     const unit = manual ?? catalog ?? 0;
     const valueCurrency = currencyCode(manual !== null ? holding.manualMarketCurrency : holding.item?.currency);
     const value = valueCurrency === currencyCode(currency) ? unit * quantity : 0;
@@ -288,6 +290,6 @@ export function localPortfolioInsights(holdings = [], currency = 'USD') {
   return {
     totalValue, totalCost, gain: totalValue - totalCost, hhi, topFiveShare,
     concentration: hhi >= 0.35 || (top && top.value / totalValue >= 0.50) ? 'high' : hhi >= 0.20 ? 'moderate' : 'spread',
-    topHolding: top ? { name: top.holding.item?.name || 'Unnamed holding', share: top.value / totalValue, value: top.value } : null
+    topHolding: top ? { name: top.holding.item?.name || 'Unnamed item', share: top.value / totalValue, value: top.value } : null
   };
 }

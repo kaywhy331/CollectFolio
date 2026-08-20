@@ -10,7 +10,7 @@ import { discoverVisualCandidates } from './visual-index.js';
 
 export const ACQUISITION_FIELDS = Object.freeze([
   'quantity', 'condition', 'marketCondition', 'gradeCompany', 'grade', 'purchasePrice', 'purchaseCurrency', 'fees',
-  'purchaseDate', 'seller', 'folder', 'manualMarketPrice', 'manualMarketCurrency', 'notes'
+  'purchaseDate', 'seller', 'folder', 'manualMarketPrice', 'manualMarketCurrency', 'language', 'retainPhoto', 'notes'
 ]);
 export const COMPLETED_SCAN_RETENTION_DAYS = 30;
 export const COMPLETED_SCAN_RECEIPT_LIMIT = 20;
@@ -52,7 +52,7 @@ export async function identifyDraftCrops(draft, { concurrency = 1, identify = id
         await identify(draft, crop.id, '');
       } catch (error) {
         crop.status = 'error';
-        crop.error = error?.message || 'Identification failed. Enter a query or retry automatic OCR.';
+        crop.error = error?.message || 'Identification failed. Enter a query or retry text recognition.';
         await saveScanDraft(draft).catch(() => {});
       }
     }
@@ -76,6 +76,8 @@ export function normalizeAcquisition(value = {}) {
     folder: text(value.folder, 80),
     manualMarketPrice: moneyOrBlank(value.manualMarketPrice),
     manualMarketCurrency: currency(value.manualMarketCurrency || value.currency || value.purchaseCurrency),
+    language: /^[a-z]{2,8}(?:-[a-z0-9]{2,8})*$/i.test(String(value.language || '')) ? String(value.language).toLowerCase() : 'en',
+    retainPhoto: value.retainPhoto === true || value.retainPhoto === 'true' || value.retainPhoto === 'on',
     notes: text(value.notes, 2000)
   };
 }
@@ -327,13 +329,14 @@ export async function batchAddApproved(draft, currency = 'USD') {
       const item = selectedCropItem(crop);
       if (!item) continue;
       const acquisition = normalizeAcquisition(crop.acquisition);
+      const { language, retainPhoto, ...ownership } = acquisition;
       const holding = await saveHolding({
         id: crop.holdingId,
         catalogId: item.provider === 'custom' ? `custom:${item.id}` : item.id,
-        item,
-        ...acquisition,
-        userImage: crop.image,
-        notes: [acquisition.notes, `Added from scan ${draft.id}`].filter(Boolean).join('\n')
+        item: { ...item, language: language || item.language || 'en' },
+        ...ownership,
+        userImage: retainPhoto ? crop.image : '',
+        notes: [acquisition.notes, 'Added from Scan'].filter(Boolean).join('\n')
       });
       crop.addedHoldingId = holding.id;
       await saveScanDraft(draft);

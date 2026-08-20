@@ -90,15 +90,16 @@ export function browsePath(browse = {}) {
   const game = browse.game && browse.game !== 'all' ? browseSegment(browse.game, 50) : '';
   const setId = game ? browseSegment(browse.setId, 120) : '';
   const base = setId
-    ? `/discover/${encodeURIComponent(game)}/${browseSetSegment(browse, setId)}`
+    ? `/sets/${browseSetSegment(browse, setId)}`
     : game
-      ? `/discover/${encodeURIComponent(game)}`
+      ? `/games/${encodeURIComponent(game)}`
       : '/discover/browse';
   const params = new URLSearchParams();
   const setSort = BROWSE_SET_SORTS.has(browse.sort) ? browse.sort : 'newest';
   const setScope = BROWSE_SET_SCOPES.has(browse.scope) ? browse.scope : 'all';
   const productSort = BROWSE_PRODUCT_SORTS.has(browse.productSort) ? browse.productSort : 'price-desc';
   const productKind = BROWSE_PRODUCT_KINDS.has(browse.productKind) ? browse.productKind : 'cards';
+  if (setId) params.set('game', game);
   if (!setId && setSort !== 'newest') params.set('sort', setSort);
   if (!setId && setScope !== 'all') params.set('scope', setScope);
   if (setId && productSort !== 'price-desc') params.set('sort', productSort);
@@ -108,7 +109,9 @@ export function browsePath(browse = {}) {
 
 function discoverRoute(url, pathname = '/discover') {
   const requestedMode = bounded(url.searchParams.get('mode'), 30) || 'search';
-  const suffix = pathname.slice('/discover'.length).split('/').filter(Boolean);
+  const suffix = pathname === '/discover/search'
+    ? []
+    : pathname.slice('/discover'.length).split('/').filter(Boolean);
   const pathRequestsBrowse = suffix.length > 0;
   const mode = pathRequestsBrowse || requestedMode === 'browse' ? 'browse' : 'search';
   if (mode === 'browse') {
@@ -140,34 +143,53 @@ function discoverRoute(url, pathname = '/discover') {
   const requestedProvider = bounded(url.searchParams.get('provider'), 30) || 'all';
   const category = discoverCategory(requestedCategory);
   const provider = DISCOVER_PROVIDERS.has(requestedProvider) ? requestedProvider : 'all';
-  const params = new URLSearchParams({ mode: 'search' });
+  const params = new URLSearchParams();
   if (query) params.set('q', query);
   if (category !== 'all') params.set('category', category);
   if (provider !== 'all') params.set('provider', provider);
-  return route('discover', 'search', `/discover?${params}`, {
+  const searchPath = params.size ? `/discover/search?${params}` : '/discover';
+  return route('discover', 'search', searchPath, {
     mode: 'search',
     search: { query, category, provider },
     unsupported: DISCOVER_MODES.has(requestedMode) ? '' : `discover-${requestedMode}`
   });
 }
 
-function portfolioRoute(url) {
-  const requested = bounded(url.searchParams.get('view'), 30) || 'holdings';
+function collectionPath(section = 'holdings') {
+  return `/collection/${section === 'holdings' ? 'items' : section}`;
+}
+
+function portfolioRoute(url, pathname = '/collection') {
+  const pathSection = pathname.startsWith('/collection/')
+    ? pathname.slice('/collection/'.length).split('/')[0]
+    : '';
+  const requested = pathSection === 'items'
+    ? 'holdings'
+    : pathSection || bounded(url.searchParams.get('view'), 30) || 'holdings';
   const section = PORTFOLIO_SECTIONS.has(requested) ? requested : 'holdings';
-  return route('portfolio', 'portfolio', `/portfolio?view=${section}`, {
+  return route('portfolio', 'portfolio', collectionPath(section), {
     portfolioSection: section,
     unsupported: PORTFOLIO_SECTIONS.has(requested) ? '' : `portfolio-${requested}`
   });
 }
 
-function insightsRoute(url) {
-  const requested = bounded(url.searchParams.get('view'), 40) || 'forecasts';
-  const view = INSIGHTS_VIEWS.includes(requested) ? requested : 'forecasts';
+function insightsPath(insights = {}) {
+  const view = INSIGHTS_VIEWS.includes(insights.view) ? insights.view : 'performance';
+  const horizon = INSIGHTS_HORIZONS.includes(Number(insights.horizon)) ? Number(insights.horizon) : 90;
+  const suffix = view === 'performance' ? '' : view === 'forecasts' ? '/scenarios' : `/${view}`;
+  const params = new URLSearchParams();
+  if (view === 'forecasts' && horizon !== 90) params.set('horizon', String(horizon));
+  return `/insights${suffix}${params.size ? `?${params}` : ''}`;
+}
+
+function insightsRoute(url, pathname = '/insights') {
+  const pathView = pathname.slice('/insights'.length).split('/').filter(Boolean)[0] || '';
+  const mappedPathView = pathView === 'scenarios' ? 'forecasts' : pathView;
+  const requested = mappedPathView || bounded(url.searchParams.get('view'), 40) || 'performance';
+  const view = INSIGHTS_VIEWS.includes(requested) ? requested : 'performance';
   const requestedHorizon = Number(url.searchParams.get('horizon'));
   const horizon = INSIGHTS_HORIZONS.includes(requestedHorizon) ? requestedHorizon : 90;
-  const params = new URLSearchParams({ view });
-  if (view === 'forecasts' && horizon !== 90) params.set('horizon', String(horizon));
-  return route('insights', 'insights', `/insights?${params}`, {
+  return route('insights', 'insights', insightsPath({ view, horizon }), {
     insights: { view, horizon },
     unsupported: INSIGHTS_VIEWS.includes(requested) ? '' : `insights-${requested}`
   });
@@ -176,46 +198,64 @@ function insightsRoute(url) {
 export function parseAppRoute(input = '/') {
   const url = asURL(input);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
-  if (pathname === '/') return route('overview', 'home', '/');
-  if (pathname === '/portfolio') return portfolioRoute(url);
+  if (pathname === '/' || pathname === '/home') return route('overview', 'home', '/home');
+  if (pathname === '/portfolio' || pathname === '/collection' || pathname.startsWith('/collection/')) return portfolioRoute(url, pathname);
   if (pathname === '/discover' || pathname.startsWith('/discover/')) return discoverRoute(url, pathname);
-  if (pathname === '/insights') return insightsRoute(url);
-  if (pathname === '/settings') return route('settings', 'profile', '/settings');
-  if (pathname === '/add') {
-    const review = url.searchParams.get('step') === 'review';
-    return route(review ? 'add-review' : 'add', review ? 'scan' : 'add', review ? '/add?step=review' : '/add');
+  if (pathname.startsWith('/games/')) {
+    const game = browseSegment(pathname.slice('/games/'.length), 50);
+    if (game) return discoverRoute(new URL(`/discover/${encodeURIComponent(game)}${url.search}`, APP_ORIGIN), `/discover/${encodeURIComponent(game)}`);
+  }
+  if (pathname.startsWith('/sets/')) {
+    const setSegment = browseSegment(pathname.slice('/sets/'.length), 160);
+    const setMatch = setSegment && !setSegment.includes(':') ? SET_SLUG_ID.exec(setSegment) : null;
+    const fallbackGame = setMatch ? `tcgcsv-category-${setMatch[1]}` : '';
+    const game = browseSegment(url.searchParams.get('game'), 50) || fallbackGame;
+    if (game && setSegment) {
+      const translated = new URL(`/discover/${encodeURIComponent(game)}/${encodeURIComponent(setSegment)}${url.search}`, APP_ORIGIN);
+      translated.searchParams.delete('game');
+      return discoverRoute(translated, translated.pathname);
+    }
+  }
+  if (pathname === '/insights' || pathname.startsWith('/insights/')) return insightsRoute(url, pathname);
+  if (pathname === '/settings' || pathname === '/settings/data') {
+    const settingsSection = pathname === '/settings/data' ? 'data' : 'general';
+    return route('settings', 'profile', pathname, { settingsSection });
+  }
+  if (pathname === '/add' || pathname === '/scan' || pathname === '/scan/review') {
+    const review = pathname === '/scan/review' || url.searchParams.get('step') === 'review';
+    return route(review ? 'add-review' : 'add', review ? 'scan' : 'add', review ? '/scan/review' : '/scan');
   }
 
-  const cardMatch = pathname.match(/^\/cards\/([^/]+)$/);
+  const cardMatch = pathname.match(/^\/(?:cards|items)\/([^/]+)$/);
   if (cardMatch) {
     const id = entityId(cardMatch[1]);
     const slugged = id && !id.includes(':') ? CARD_SLUG_ID.exec(id) : null;
     if (slugged) {
-      return route('card-detail', 'detail', `/cards/${encodeURIComponent(id)}`, {
+      return route('card-detail', 'detail', `/items/${encodeURIComponent(id)}`, {
         entityId: `tcgcsv:${slugged[1]}:${slugged[2]}:${slugged[3]}`,
         origin: 'search'
       });
     }
-    if (id) return route('card-detail', 'detail', `/cards/${encodeURIComponent(id)}`, { entityId: id, origin: 'search' });
+    if (id) return route('card-detail', 'detail', `/items/${encodeURIComponent(id)}`, { entityId: id, origin: 'search' });
   }
   const holdingMatch = pathname.match(/^\/holdings\/([^/]+)$/);
   if (holdingMatch) {
     const id = entityId(holdingMatch[1]);
     if (id) return route('holding-detail', 'detail', `/holdings/${encodeURIComponent(id)}`, { entityId: id, origin: 'portfolio' });
   }
-  return route('overview', 'home', '/', { notFound: pathname });
+  return route('overview', 'home', '/home', { notFound: pathname });
 }
 
 function discoverPath(search = {}, discover = {}) {
   if (discover.mode === 'browse') return browsePath(discover);
-  const params = new URLSearchParams({ mode: 'search' });
+  const params = new URLSearchParams();
   const query = bounded(search.query);
   const category = discoverCategory(search.category);
   const provider = DISCOVER_PROVIDERS.has(search.provider) ? search.provider : 'all';
   if (query) params.set('q', query);
   if (category !== 'all') params.set('category', category);
   if (provider !== 'all') params.set('provider', provider);
-  return `/discover?${params}`;
+  return params.size ? `/discover/search?${params}` : '/discover';
 }
 
 function detailPath(detail = {}) {
@@ -225,7 +265,7 @@ function detailPath(detail = {}) {
   const externalId = bounded(selected.item?.externalId || selected.catalogRef?.externalId, 400);
   if (provider === 'tcgcsv' && /^\d+:\d+:\d+$/.test(externalId)) {
     const slug = cardSlug(`${selected.item?.setName || selected.catalogRef?.setName || ''} ${selected.item?.name || selected.catalogRef?.name || ''}`);
-    return `/cards/${slug ? `${slug}-` : ''}${externalId.replace(/:/g, '-')}`;
+    return `/items/${slug ? `${slug}-` : ''}${externalId.replace(/:/g, '-')}`;
   }
   const providerId = provider && externalId ? `${provider}:${externalId}` : '';
   const id = selected.watched?.watchKey
@@ -233,27 +273,19 @@ function detailPath(detail = {}) {
     || selected.catalogRef?.canonicalVariantId
     || selected.catalogRef?.watchKey
     || selected.item?.id;
-  return id ? `/cards/${encodeURIComponent(id)}` : '/portfolio?view=holdings';
-}
-
-function insightsPath(insights = {}) {
-  const view = INSIGHTS_VIEWS.includes(insights.view) ? insights.view : 'forecasts';
-  const horizon = INSIGHTS_HORIZONS.includes(Number(insights.horizon)) ? Number(insights.horizon) : 90;
-  const params = new URLSearchParams({ view });
-  if (view === 'forecasts' && horizon !== 90) params.set('horizon', String(horizon));
-  return `/insights?${params}`;
+  return id ? `/items/${encodeURIComponent(id)}` : '/collection/items';
 }
 
 export function appRouteForLegacyView(view, state = {}, context = {}) {
   const portfolioSection = context.portfolioSection || state.portfolio?.section || 'holdings';
   const paths = {
-    home: '/',
+    home: '/home',
     search: discoverPath(context.search || state.search, context.discover || { mode: 'search' }),
-    add: '/add',
-    scan: '/add?step=review',
+    add: '/scan',
+    scan: '/scan/review',
     portfolio: portfolioSection === 'forecasts'
       ? insightsPath(context.insights || state.insights)
-      : `/portfolio?view=${PORTFOLIO_SECTIONS.has(portfolioSection) ? portfolioSection : 'holdings'}`,
+      : collectionPath(PORTFOLIO_SECTIONS.has(portfolioSection) ? portfolioSection : 'holdings'),
     insights: insightsPath(context.insights || state.insights),
     profile: '/settings',
     detail: detailPath(context.detail)
@@ -291,6 +323,7 @@ export function routeStatePatch(appRoute, state = {}) {
       ...current,
       ...appRoute.browse,
       mode: 'browse',
+      categoryPickerOpen: false,
       query: gameChanged ? '' : current.query || '',
       setLimit: gameChanged ? 120 : current.setLimit || 120,
       productQuery: setChanged ? '' : current.productQuery || '',
@@ -306,9 +339,10 @@ export function routeStatePatch(appRoute, state = {}) {
 }
 
 export function primaryDestination(appRoute) {
-  if (appRoute.key === 'add-review') return 'add';
+  if (['add', 'add-review'].includes(appRoute.key)) return 'scan';
   if (appRoute.key === 'card-detail') return 'discover';
-  if (appRoute.key === 'holding-detail') return 'portfolio';
+  if (['portfolio', 'holding-detail'].includes(appRoute.key)) return 'collection';
+  if (appRoute.key === 'overview') return 'home';
   return appRoute.key;
 }
 

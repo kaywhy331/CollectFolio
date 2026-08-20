@@ -60,7 +60,7 @@ test('Discover groups customer-facing match quality without exposing raw percent
 });
 
 test('Discover adapts filters and keeps provider choice under Data source', () => {
-  const sports = renderSearch(state({ search: { query: '', category: 'sports', provider: 'all', filters: {}, view: 'list', loading: false, results: [], warnings: [] } }));
+  const sports = renderSearch(state({ discover: { mode: 'search', searchFiltersOpen: true }, search: { query: '', category: 'sports', provider: 'all', filters: {}, view: 'list', loading: false, results: [], warnings: [] } }));
   assert.match(sports, /Player/);
   assert.match(sports, /Set \/ product/);
   assert.match(sports, /Grade/);
@@ -83,16 +83,40 @@ test('Discover retains a complete result set while rendering large catalogs in b
   }));
   assert.match(html, /Showing 200 of 205 results/);
   assert.match(html, /data-action="load-more-results">Show 5 more/);
-  assert.match(html, /data-action="show-all-results">Show all 205/);
+  assert.doesNotMatch(html, /show-all-results/);
   assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
 });
 
-test('Discover browse exposes all 87 non-flagship source categories with free community access signed out', () => {
+test('Discover keeps a 5,000-item catalog interaction bounded to the visible 200-card page', () => {
+  const results = Array.from({ length: 5_000 }, (_, index) => ({
+    ...item,
+    externalId: `scale-${index}`,
+    id: `scryfall:scale-${index}`,
+    name: `Scale Card ${String(index).padStart(4, '0')}`
+  }));
+  const started = performance.now();
+  const html = renderSearch(state({
+    search: {
+      query: 'Scale', category: 'magic', provider: 'tcgcsv', filters: {}, view: 'gallery',
+      limit: 200, loading: false, warnings: [], results
+    }
+  }));
+  const duration = performance.now() - started;
+  assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
+  assert.match(html, /Showing 200 of 5,000 results/);
+  assert.match(html, /Show 200 more/);
+  assert.ok(duration < 1_000, `bounded 5,000-item render took ${duration.toFixed(1)}ms`);
+});
+
+test('Discover limits browse tiles and moves the complete category directory into a dedicated picker', () => {
+  const browseState = {
+    mode: 'browse', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
+    sets: [{ id: 'pokemon:swsh12', externalId: 'swsh12', gameId: 'pokemon', game: 'Pokémon', name: 'Silver Tempest', code: 'SIT', year: '2022', releasedAt: '2022-11-11', cardCount: 195, series: 'Sword & Shield', supplemental: false }],
+    products: []
+  };
   const html = renderSearch(state({
     discover: {
-      mode: 'browse', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
-      sets: [{ id: 'pokemon:swsh12', externalId: 'swsh12', gameId: 'pokemon', game: 'Pokémon', name: 'Silver Tempest', code: 'SIT', year: '2022', releasedAt: '2022-11-11', cardCount: 195, series: 'Sword & Shield', supplemental: false }],
-      products: []
+      ...browseState
     }
   }));
   assert.match(html, /aria-label="Discover mode"/);
@@ -100,24 +124,24 @@ test('Discover browse exposes all 87 non-flagship source categories with free co
   assert.match(html, /data-set-id="swsh12"/);
   assert.match(html, /Silver Tempest/);
   assert.match(html, /SIT · 2022 · 195 cards/);
-  assert.match(html, /All games and categories/);
-  assert.match(html, /87 game categories · free community access/);
-  assert.equal((html.match(/data-game-search-text=/g) || []).length, 87);
+  assert.match(html, /Popular games/);
+  assert.match(html, /data-action="open-category-picker">View All/);
+  assert.equal((html.match(/class="discover-category-tile"/g) || []).length, 3);
+  assert.equal((html.match(/data-game-search-text=/g) || []).length, 0);
+  assert.doesNotMatch(html, /class="category-picker"/);
+
+  const picker = renderSearch(state({ discover: { ...browseState, categoryPickerOpen: true } }));
+  assert.match(picker, /class="category-picker" role="dialog" aria-modal="true"/);
+  assert.match(picker, /All games and categories/);
+  assert.equal((picker.match(/data-game-search-text=/g) || []).length, 90);
   assert.equal((html.match(/data-catalog-locked="true"/g) || []).length, 0);
-  // catalog-v2 B1: flagship games are pinned as quick chips, not the
-  // searchable directory -- they must not appear twice.
-  const chipsSection = html.match(/class="browse-game-chips"[^>]*>([\s\S]*?)<\/div>\s*<div class="browse-game-directory"/)?.[1] || '';
-  assert.match(chipsSection, /data-game="pokemon"/);
-  assert.match(chipsSection, /data-game="magic"/);
-  assert.match(chipsSection, /data-game="yugioh"/);
-  const directorySection = html.match(/id="browse-game-options"[^>]*>([\s\S]*?)<p class="browse-game-empty"/)?.[1] || '';
-  assert.doesNotMatch(directorySection, /data-game="pokemon"/);
-  assert.doesNotMatch(directorySection, /data-game="magic"/);
-  assert.doesNotMatch(directorySection, /data-game="yugioh"/);
-  assert.match(html, /data-game="tcgcsv-category-23"[^>]*>[\s\S]*?Dragon Ball Z TCG/);
-  assert.match(html, /data-game="tcgcsv-category-68"[^>]*>[\s\S]*?One Piece Card Game/);
-  assert.match(html, /data-game="tcgcsv-category-90"[^>]*>[\s\S]*?CookieRun: Braverse TCG/);
-  assert.match(html, /free to browse for the whole community/);
+  assert.match(picker, /data-game="pokemon"/);
+  assert.match(picker, /data-game="magic"/);
+  assert.match(picker, /data-game="yugioh"/);
+  assert.match(picker, /data-game="tcgcsv-category-23"[^>]*>[\s\S]*?Dragon Ball Z TCG/);
+  assert.match(picker, /data-game="tcgcsv-category-68"[^>]*>[\s\S]*?One Piece Card Game/);
+  assert.match(picker, /data-game="tcgcsv-category-90"[^>]*>[\s\S]*?CookieRun: Braverse TCG/);
+  assert.match(html, /Availability and price coverage vary by item/);
   assert.doesNotMatch(html, /Data source/);
   assert.doesNotMatch(html, /catalog-search/);
 
@@ -132,7 +156,7 @@ test('Discover browse exposes all 87 non-flagship source categories with free co
   assert.match(drilled, /data-action="browse-all-games">Discover</);
   assert.match(drilled, /<h2>Pokémon<\/h2>/);
   assert.match(drilled, /data-action="browse-all-games">All games</);
-  assert.doesNotMatch(drilled, /All games and categories/);
+  assert.doesNotMatch(drilled, /class="category-picker"/);
   assert.equal((drilled.match(/data-game-search-text=/g) || []).length, 0);
   assert.match(drilled, /data-set-id="swsh12"/);
 
@@ -174,7 +198,8 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
   }));
   assert.match(browse, /class="browse-breadcrumbs"/);
   assert.match(browse, /<h2>One Piece Card Game<\/h2>/);
-  assert.match(browse, /TCGCSV category 68/);
+  assert.match(browse, /Catalog category/);
+  assert.doesNotMatch(browse, /TCGCSV category 68/);
   assert.match(browse, /data-action="browse-all-games">All games</);
   assert.doesNotMatch(browse, /All games and categories/);
   assert.equal((browse.match(/data-game-search-text=/g) || []).length, 0);
@@ -183,7 +208,7 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
 
   const search = renderSearch(state({
     auth: { session: { access_token: 'personal-test' } },
-    discover: { mode: 'search', games },
+    discover: { mode: 'search', games, searchFiltersOpen: true },
     search: {
       query: 'Luffy', category: 'tcgcsv-category-68', provider: 'tcgcsv', filters: {}, view: 'gallery', loading: false, warnings: [],
       results: [{ ...item, provider: 'tcgcsv', externalId: '68:1000:2000', category: 'tcgcsv-category-68', game: 'One Piece Card Game', name: 'Monkey.D.Luffy' }]
@@ -198,7 +223,7 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
     discover: { mode: 'search' },
     search: { query: 'Luffy', category: 'tcgcsv-category-68', provider: 'tcgcsv', filters: {}, view: 'gallery', loading: false, warnings: [], results: [] }
   }));
-  assert.match(signedOutSearch, /value="tcgcsv-category-68" selected>One Piece Card Game/);
+  assert.match(signedOutSearch, /data-filter="category">One Piece Card Game/);
   assert.doesNotMatch(signedOutSearch, /sign in/i);
   assert.doesNotMatch(signedOutSearch, /catalog-auth-gate/);
 });
@@ -221,7 +246,7 @@ test('Discover browse retains a complete set manifest while rendering bounded ti
   }));
   assert.match(html, /Showing 120 of 121 sets/);
   assert.match(html, /data-action="load-more-browse-sets">Show 1 more/);
-  assert.match(html, /data-action="show-all-browse-sets">Show all 121/);
+  assert.doesNotMatch(html, /show-all-browse-sets/);
   assert.equal((html.match(/class="browse-set-tile"/g) || []).length, 120);
 });
 
@@ -280,22 +305,91 @@ test('Discover shows approved 30-day trend and 1/3/6/12-month estimates on resul
   assert.match(html, /\$165\.00/);
 });
 
-test('Quick Inspector shows exact identity and truthful unavailable states with all required actions', () => {
+test('Discover landing limits recognizable categories and keeps the universal search primary', () => {
+  const html = renderSearch(state({
+    search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', loading: false, results: [], warnings: [] },
+    discover: { mode: 'search', games: [], sets: [], products: [] }
+  }));
+  assert.match(html, /placeholder="Search cards, sets, players, products, or set codes"/);
+  assert.match(html, /Popular games/);
+  assert.equal((html.match(/class="discover-category-tile"/g) || []).length, 3);
+  assert.match(html, /data-action="open-category-picker">View All/);
+  assert.doesNotMatch(html, /class="category-picker"/);
+  assert.doesNotMatch(html, /Find an exact printing/);
+});
+
+test('Discover exposes removable filter chips and only supported result sorting', () => {
+  const html = renderSearch(state({
+    search: {
+      query: 'Lotus', category: 'magic', provider: 'all', filters: { setName: 'Alpha', year: '2026' },
+      view: 'gallery', sort: 'price-desc', loading: false, warnings: [],
+      results: [{ ...item, price: null, priceSource: '', priceUpdatedAt: '' }]
+    }
+  }));
+  assert.match(html, /Filters <span>3<\/span>/);
+  assert.match(html, /data-filter="category">Magic: The Gathering/);
+  assert.match(html, /data-filter="setName">Set or series: Alpha/);
+  assert.match(html, /data-filter="year">Year: 2026/);
+  assert.match(html, /data-action="clear-search-filters">Clear all/);
+  assert.doesNotMatch(html, /value="price-desc"/);
+  assert.match(html, /Price sorting is unavailable/);
+  assert.doesNotMatch(html, /result-market-outlook/);
+});
+
+test('Discover groups related sealed formats into a named product family', () => {
+  const products = [
+    ['pack', 'Strike of Illusionary Shadows Booster Pack', 5],
+    ['box', 'Strike of Illusionary Shadows Booster Box', 90],
+    ['case', 'Strike of Illusionary Shadows 16-Box Case', 1200]
+  ].map(([id, name, price]) => ({
+    ...item, id, externalId: id, provider: 'tcgcsv', category: 'tcgcsv-category-1', game: 'Magic',
+    name, number: '', rarity: '', productKind: 'sealed', price
+  }));
+  const html = renderSearch(state({
+    discover: {
+      mode: 'browse', game: 'magic', setId: '1:42', productKind: 'sealed', productSort: 'name',
+      selectedSet: { externalId: '1:42', gameId: 'magic', name: 'Strike of Illusionary Shadows', year: '2026' },
+      sets: [], products, loading: false, warnings: [], error: ''
+    }
+  }));
+  assert.match(html, /Product family/);
+  assert.match(html, /<h3[^>]*>Strike of Illusionary Shadows<\/h3>/);
+  assert.match(html, />3 formats</);
+  assert.match(html, /product-format-badge">Booster pack/);
+  assert.match(html, /product-format-badge">Booster box/);
+  assert.match(html, /product-format-badge">Case/);
+});
+
+test('Quick Inspector requires identity confirmation, hides empty metrics, and supports both mobile detents', () => {
   const catalogRef = catalogReferenceForItem({ ...item, name: '<script>bad</script>' });
   const html = renderQuickInspector({ origin: 'search', item: { ...item, name: '<script>bad</script>' }, catalogRef }, state());
   assert.doesNotMatch(html, /<script>bad<\/script>/);
   assert.match(html, /Synthetic Alpha · #001 · foil · english · Rare/i);
-  assert.match(html, /No approved outlook published/);
-  assert.match(html, /data-action="add-from-detail"/);
-  assert.match(html, /data-action="toggle-watch"/);
+  assert.match(html, /Identity unresolved/);
+  assert.match(html, /data-action="confirm-detail-identity">Confirm exact item/);
+  assert.doesNotMatch(html, /No approved outlook published/);
+  assert.doesNotMatch(html, /data-action="add-from-detail"/);
+  assert.doesNotMatch(html, /data-action="toggle-watch"/);
   assert.match(html, /data-action="open-full-detail"/);
   assert.match(html, /role="dialog" aria-modal="true"/);
+  assert.match(html, /data-sheet-detent="medium"/);
+
+  const confirmed = renderQuickInspector({ origin: 'search', item, catalogRef, identityConfirmed: true, detent: 'expanded' }, state());
+  assert.match(confirmed, /confirmed by you/i);
+  assert.match(confirmed, /data-action="add-from-detail"/);
+  assert.match(confirmed, /data-action="toggle-watch"/);
+  assert.match(confirmed, /data-sheet-detent="expanded"/);
 });
 
-test('Add begins with one automatic image intake instead of asking single versus multiple', () => {
+test('Scan separates camera and upload, previews the workflow, and keeps export in Settings', () => {
   const html = renderAdd(state());
-  assert.match(html, /Scan or upload cards/);
-  assert.match(html, /detects whether it contains one item or several/);
-  assert.equal((html.match(/data-action="start-multi-scan"/g) || []).length, 1);
-  assert.doesNotMatch(html, /Scan one item|Scan multiple items/);
+  assert.match(html, /<h1>Scan<\/h1>/);
+  assert.match(html, /Open Camera/);
+  assert.match(html, /Upload Photo/);
+  assert.match(html, /Scan or upload[\s\S]*Review detected items[\s\S]*Confirm and add/);
+  assert.match(html, /data-scan-dropzone/);
+  assert.match(html, /drop an image here or paste one/);
+  assert.match(html, /Import collection/);
+  assert.doesNotMatch(html, /data-action="export-json"/);
+  assert.doesNotMatch(html, /data-action="start-multi-scan"/);
 });

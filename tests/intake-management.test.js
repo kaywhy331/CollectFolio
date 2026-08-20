@@ -58,10 +58,12 @@ test('bulk acquisition applies normalized shared fields without approving any cr
 test('scan acquisition retains explicit currencies and excludes mismatched cost totals', () => {
   const acquisition = normalizeAcquisition({
     quantity: 2, purchasePrice: 10, fees: 2, purchaseCurrency: 'cad',
-    manualMarketPrice: 15, manualMarketCurrency: 'eur'
+    manualMarketPrice: 15, manualMarketCurrency: 'eur', language: 'ja', retainPhoto: true
   });
   assert.equal(acquisition.purchaseCurrency, 'CAD');
   assert.equal(acquisition.manualMarketCurrency, 'EUR');
+  assert.equal(acquisition.language, 'ja');
+  assert.equal(acquisition.retainPhoto, true);
 
   const draft = reviewDraft();
   draft.crops[0].acquisition = acquisition;
@@ -72,19 +74,28 @@ test('scan acquisition retains explicit currencies and excludes mismatched cost 
 });
 
 test('redesigned review exposes bulk editing, exact identity, cost basis, and explicit confirmation', () => {
-  const html = renderScanReview(reviewDraft(), {
+  const draft = reviewDraft();
+  draft.sourceImage = 'data:image/jpeg;base64,source';
+  const html = renderScanReview(draft, {
     settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }
   });
   assert.match(html, /Review queue summary/);
-  assert.match(html, /Apply acquisition details to all/);
+  assert.match(html, /Apply purchase details to all/);
   assert.match(html, /Exact source identity/);
   assert.match(html, /data-crop-acquisition="purchasePrice"/);
   assert.match(html, /data-crop-acquisition="purchaseCurrency"/);
   assert.match(html, /data-crop-acquisition="manualMarketCurrency"/);
   assert.match(html, /data-crop-acquisition="marketCondition"/);
+  assert.match(html, /data-crop-acquisition="language"/);
+  assert.match(html, /data-crop-acquisition="retainPhoto"/);
   assert.match(html, /\$22\.00 USD cost basis/);
-  assert.match(html, /Add 1 approved/);
-  assert.match(html, /Unapproved and unmatched items are skipped/);
+  assert.match(html, /Add 1 confirmed/);
+  assert.match(html, /Unconfirmed and unmatched items are skipped/);
+  assert.match(html, /Full source photo saved on this device during review/);
+  assert.match(html, /data-action="delete-source-photo"/);
+  assert.match(html, /data-action="edit-crop"/);
+  assert.match(html, /Edit crop boundary/);
+  assert.match(html, /only text queries and catalog identifiers may reach enabled catalog sources/i);
 });
 
 test('scan review recognizes a condition-aware mapped watch', () => {
@@ -108,14 +119,14 @@ test('scan review recognizes a condition-aware mapped watch', () => {
   assert.match(html, /★ Watching/);
 });
 
-test('review labels candidates as similarity evidence rather than calibrated confidence', () => {
+test('review labels candidates as similarity evidence and requires explicit identity confirmation', () => {
   const draft = reviewDraft();
   draft.crops[0].approved = false;
   const html = renderScanReview(draft, {
     settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }
   });
-  assert.match(html, /Selected catalog candidate/);
-  assert.match(html, /Use this card/);
+  assert.match(html, /Proposed match/);
+  assert.match(html, /Confirm exact item/);
   assert.match(html, /Strong similarity/);
   assert.doesNotMatch(html, /100%/);
   assert.doesNotMatch(html, /Approve this exact item/);
@@ -211,9 +222,11 @@ test('completed scan receipts discard images and obey count and age retention', 
   completed.completedAt = '2026-08-10T00:00:00.000Z';
   completed.updatedAt = completed.completedAt;
   completed.result = { added: 1 };
+  completed.sourceImage = 'data:image/jpeg;base64,raw-source';
   const compact = compactCompletedScanDraft(completed);
   assert.deepEqual(compact.crops, []);
   assert.equal(JSON.stringify(compact).includes('data:image'), false);
+  assert.equal('sourceImage' in compact, false);
   assert.equal(compact.result.added, 1);
 
   const older = { ...completed, id: 'older', completedAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z' };

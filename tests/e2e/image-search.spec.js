@@ -54,7 +54,7 @@ const rotatedCardPNG = rotatedTexturedCardPNG();
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview' });
+  const overview = page.getByRole('heading', { name: 'Home' });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -70,7 +70,7 @@ async function openImageReview(page, buffer = rotatedCardPNG) {
   });
   const workbench = page.getByRole('dialog', { name: 'Frame this card' });
   await workbench.getByRole('button', { name: 'Straighten and identify' }).click();
-  await expect(page).toHaveURL(/\/add\?step=review$/);
+  await expect(page).toHaveURL(/\/scan\/review$/);
 }
 
 test('search by image starts in an invariant one-card crop workflow', async ({ page }) => {
@@ -85,15 +85,15 @@ test('search by image starts in an invariant one-card crop workflow', async ({ p
 
   const workbench = page.getByRole('dialog', { name: 'Frame this card' });
   await expect(workbench).toContainText('saved crop is straightened automatically');
-  await expect(workbench.getByText(/1 detected card outline/)).toBeVisible();
+  await expect(workbench.getByText(/1 detected item outline/)).toBeVisible();
   await expect(workbench.getByRole('button', { name: 'Draw new' })).toHaveCount(0);
   await expect(workbench.getByRole('button', { name: 'Delete selected' })).toHaveCount(0);
   await expect(workbench.getByRole('button', { name: 'Apply grid' })).toHaveCount(0);
   await workbench.getByRole('button', { name: 'Retry corner detection' }).click();
-  await expect(workbench.getByText(/1 detected card outline/)).toBeVisible();
+  await expect(workbench.getByText(/1 detected item outline/)).toBeVisible();
   await workbench.getByRole('button', { name: 'Straighten and identify' }).click();
 
-  await expect(page).toHaveURL(/\/add\?step=review$/);
+  await expect(page).toHaveURL(/\/scan\/review$/);
   await expect(page.locator('[data-crop-id]')).toHaveCount(1);
   await expect(page.getByText(/Identifying automatically on this device|Couldn’t read a reliable card name/)).toBeVisible();
 });
@@ -151,7 +151,7 @@ test('low-quality native OCR falls through and never exposes random characters',
   await expect(page.locator('.review-card [role="status"]')).toContainText(/Text was unclear|tighter, well-lit crop/);
   await expect(page.locator('[data-crop-query]')).toHaveValue('');
   await expect(page.getByText('||| 1lI rrrr ???')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Retry automatic OCR' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Retry text recognition' })).toBeEnabled();
   await expect.poll(() => page.evaluate(() => window.__tesseractRecognized)).toBe(7);
 });
 

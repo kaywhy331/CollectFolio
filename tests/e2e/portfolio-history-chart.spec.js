@@ -7,7 +7,7 @@ const TCGCSV_ORIGIN = 'https://tcgcsv-portfolio-history-e2e.example.test';
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -91,26 +91,31 @@ async function configureStubs(page) {
   }));
 }
 
-async function addProductToPortfolio(page) {
-  await page.goto('/discover?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Card, set, number, character, or player').fill('Retro History');
+async function addProductToCollection(page) {
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Retro History');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const result = page.locator('.result-card', { hasText: PRODUCT.name });
   await expect(result).toBeVisible();
-  await result.getByRole('button', { name: 'Add', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add to portfolio' });
+  await result.getByRole('button', { name: 'Confirm exact item', exact: true }).click();
+  const inspector = page.getByRole('dialog', { name: PRODUCT.name });
+  await inspector.getByRole('button', { name: 'Confirm exact item', exact: true }).click();
+  await inspector.getByRole('button', { name: 'Add to collection', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add item to collection' });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: 'Add to portfolio' }).click();
+  await dialog.getByRole('button', { name: 'Add to collection' }).click();
   await expect(dialog).toHaveCount(0);
+  await inspector.getByRole('button', { name: 'Close item inspector' }).click();
+  await expect(inspector).toHaveCount(0);
 }
 
 test('the overview line graph renders from retro-reconstructed TCGCSV history when no local snapshot exists', async ({ page }) => {
   await configureStubs(page);
   await skipOnboarding(page);
-  await addProductToPortfolio(page);
+  await addProductToCollection(page);
 
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Overview' }).click();
-  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+  await page.goto('/home');
+  await expect(page.getByRole('heading', { name: 'Home', exact: true })).toBeVisible();
   const chart = page.locator('.overview-performance svg.trend-chart');
   await expect(chart).toBeVisible();
   // A real reconstructed series has many points; a bare single "today"
@@ -118,21 +123,20 @@ test('the overview line graph renders from retro-reconstructed TCGCSV history wh
   // one coordinate pair, which is functionally invisible as a line.
   const marketPoints = await chart.locator('polyline.chart-market').getAttribute('points');
   expect(marketPoints.trim().split(/\s+/).length).toBeGreaterThan(2);
-  await expect(page.getByText(/chart history coverage/)).toBeVisible();
+  await expect(page.getByText(/history coverage/)).toBeVisible();
 });
 
-test('a new portfolio-page value trend module renders the same retro-reconstructed line graph', async ({ page }) => {
+test('Collection keeps reconstructed history compact instead of duplicating the Home chart', async ({ page }) => {
   await configureStubs(page);
   await skipOnboarding(page);
-  await addProductToPortfolio(page);
+  await addProductToCollection(page);
 
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Portfolio' }).click();
-  await expect(page.getByRole('heading', { name: 'Portfolio', exact: true })).toBeVisible();
-  const module = page.locator('.portfolio-value-trend');
-  await expect(module).toBeVisible();
-  const chart = module.locator('svg.trend-chart');
+  await page.goto('/collection/items');
+  await expect(page.getByRole('heading', { name: 'Collection', exact: true })).toBeVisible();
+  await expect(page.locator('.portfolio-value-trend')).toHaveCount(0);
+  const chart = page.locator('svg.collection-sparkline');
   await expect(chart).toBeVisible();
-  const marketPoints = await chart.locator('polyline.chart-market').getAttribute('points');
+  const marketPoints = await chart.locator('polyline').getAttribute('points');
   expect(marketPoints.trim().split(/\s+/).length).toBeGreaterThan(2);
-  await expect(module.getByText(/chart history coverage/)).toBeVisible();
+  await expect(chart).toHaveAttribute('aria-label', /Collection value/);
 });

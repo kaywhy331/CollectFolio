@@ -26,7 +26,7 @@ function state(overrides = {}) {
   };
 }
 
-test('Overview starts a truthful single-point series after the first holding', () => {
+test('Home starts a truthful single-point series after the first holding', () => {
   const points = overviewSeries([holding('h1')], [], '3M', new Date('2026-08-10T12:00:00.000Z'));
   assert.equal(points.length, 1);
   assert.equal(points[0].date, '2026-08-10');
@@ -34,7 +34,7 @@ test('Overview starts a truthful single-point series after the first holding', (
   assert.deepEqual(overviewChange(points), { amount: null, percent: null });
 });
 
-test('Overview ranges filter real snapshots and calculate selected-range movement', () => {
+test('Home ranges filter real snapshots and calculate selected-range movement', () => {
   const points = overviewSeries([holding('h1')], [
     { id: 'portfolio:2026-07-01', date: '2026-07-01', marketValue: 10, costBasis: 10 },
     { id: 'portfolio:2026-08-05', date: '2026-08-05', marketValue: 20, costBasis: 10 }
@@ -43,7 +43,7 @@ test('Overview ranges filter real snapshots and calculate selected-range movemen
   assert.deepEqual(overviewChange(points), { amount: 5, percent: 25 });
 });
 
-test('Overview pricing coverage keeps market, manual, and unpriced values distinct', () => {
+test('Home pricing coverage keeps market, manual, and unpriced values distinct', () => {
   const coverage = pricingCoverage([
     holding('market'),
     holding('manual', { provider: 'custom', category: 'other', name: 'Manual item' }, { manualMarketPrice: 12 }),
@@ -52,17 +52,34 @@ test('Overview pricing coverage keeps market, manual, and unpriced values distin
   assert.deepEqual({ ...coverage, percent: Math.round(coverage.percent) }, { market: 1, manual: 1, unpriced: 1, covered: 2, total: 3, percent: 67 });
 });
 
-test('Overview discloses partial pricing and never fabricates forecast coverage', () => {
+test('Home discloses partial pricing without duplicating Scenario Lab', () => {
   const html = renderHome(state({
     holdings: [holding('market'), holding('manual', { provider: 'custom', category: 'other', name: 'Manual item' }, { manualMarketPrice: 12 })]
   }));
   assert.match(html, /1 market · 1 manual · 0 unpriced/);
-  assert.match(html, /Local 90-day scenarios/);
+  assert.match(html, /<h1>Home<\/h1>/);
+  assert.match(html, /<span>Pricing coverage<\/span><strong>100%<\/strong>/);
+  assert.doesNotMatch(html, /Scenario coverage|Local 90-day scenarios/);
+  assert.equal((html.match(/class="summary-stat"/g) || []).length, 4);
+  assert.match(html, /<details class="card data-health">/);
+  assert.doesNotMatch(html, /<details class="card data-health" open/);
   assert.match(html, /data-overview-range="3M" aria-pressed="true"/);
   assert.match(html, /Tracking began today/);
 });
 
-test('Overview displays refresh state without exposing storage details', () => {
+test('Home never turns an entirely unpriced collection into a zero-dollar value', () => {
+  const unpriced = holding('unknown', {
+    provider: 'custom', category: 'other', name: 'Unpriced keepsake', price: null,
+    currency: 'USD', priceSource: '', priceUpdatedAt: ''
+  }, { purchasePrice: '', manualMarketPrice: '' });
+  const html = renderHome(state({ holdings: [unpriced] }));
+  assert.match(html, /class="overview-value">Value not available</);
+  assert.match(html, /0 of 1 items priced/);
+  assert.match(html, /1 unpriced item/);
+  assert.doesNotMatch(html, /\$0\.00/);
+});
+
+test('Home keeps readable refresh status inside collapsed Data Health', () => {
   const html = renderHome(state({
     tcgcsvRefresh: {
       status: 'current',
@@ -72,7 +89,7 @@ test('Overview displays refresh state without exposing storage details', () => {
       error: ''
     }
   }));
-  assert.match(html, /Market data is current/);
-  assert.match(html, /Last successful build:/);
-  assert.doesNotMatch(html, /R2|artifact|runs\//);
+  assert.match(html, /Prices updated recently/);
+  assert.match(html, /Last successful refresh:/);
+  assert.doesNotMatch(html, /market data build|R2|artifact|runs\//i);
 });

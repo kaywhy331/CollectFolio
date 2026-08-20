@@ -189,42 +189,85 @@ test('alert history keeps read, muted, exact-variant, and system states textual'
   assert.equal(muted[0].item.name, 'Pikachu ex');
 });
 
-test('Insights renders actual and forecast values separately with an accessible ribbon summary', () => {
+test('Insights uses the four primary PRD sections and keeps approved forecasts compact and separate', () => {
   const html = renderInsights(state());
-  assert.match(html, /Current recorded portfolio value/);
-  assert.match(html, /90-day likely modeled range/);
-  assert.match(html, /Current market observation/);
-  assert.match(html, /Present boundary/);
-  assert.match(html, /Forecast values are modeled ranges, not observed history/);
-  assert.match(html, /History is complete enough/);
-  assert.match(html, /Sustained collector demand/);
-  assert.match(html, /never added to current portfolio value/);
-});
-
-test('Insights keeps published forecasts fail closed while manual scenarios remain available for manual/custom holdings', () => {
-  // local-scenario-v1 is demoted to manual/custom items only (T6): a
-  // catalog-linked holding (provider 'pokemon', as the shared `item`
-  // fixture is) must show "unavailable", not a modeled range -- so this
-  // holding is overridden to a manual/custom provider to exercise the
-  // manual-scenario-still-available path this test is actually about.
-  const base = state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } });
-  const manualHolding = { ...base.holdings[0], item: { ...item, provider: 'custom' } };
-  const html = renderInsights({ ...base, holdings: [manualHolding] });
-  assert.match(html, /Manual scenario outlook/);
-  assert.match(html, /Published market forecasts remain gated/);
-  assert.match(html, /local-scenario-chart/);
+  for (const label of ['Overview', 'Alerts', 'Scenario Lab', 'Track Record']) assert.match(html, new RegExp(`>${label}(?:<| )`));
+  assert.match(html, /Published Forecasts/);
+  assert.match(html, /Current market/);
+  assert.match(html, /Median/);
+  assert.match(html, /Middle 50%/);
+  assert.match(html, /Limited evidence/);
+  assert.doesNotMatch(html, /Present boundary/);
   assert.doesNotMatch(html, /Approved forecast projection/);
-  assert.doesNotMatch(html, /Probability of gain/);
 });
 
-test('local-scenario-v1 no longer produces a per-holding range for a catalog-linked holding', () => {
-  // The portfolio-wide "Manual scenario outlook" summary section is a
-  // static heading that always renders in the forecasts tab (T6 doesn't
-  // remove it) -- what must change is that a catalog-linked holding's own
-  // card shows the demotion reason instead of a modeled range, and that no
-  // observation from it is folded into the portfolio-wide range.
+test('Scenario Lab exposes all assumptions, outputs, evidence, sorting, and one disclosure', () => {
+  const base = state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } });
+  const manualHolding = { ...base.holdings[0], manualMarketPrice: 100, item: { ...item, provider: 'custom' } };
+  const html = renderInsights({ ...base, holdings: [manualHolding] });
+  for (const control of ['marketDirection', 'category', 'categoryDirection', 'volatility', 'itemId', 'itemDirection', 'manualValues']) {
+    assert.match(html, new RegExp(`data-scenario-assumption="${control}"`));
+  }
+  for (const output of ['Current saved value', 'Median scenario value', 'Middle 50% range', 'Broad 80% range', 'Difference from current', 'Coverage', 'Evidence level']) assert.match(html, new RegExp(output));
+  for (const sort of ['Largest upside', 'Largest downside', 'Widest uncertainty', 'Strongest evidence', 'Highest value']) assert.match(html, new RegExp(sort));
+  assert.match(html, /Unchanged scenario/);
+  assert.match(html, /Based on 1 observation from 1 source/);
+  assert.match(html, /<details class="data-details scenario-methodology">/);
+  assert.match(html, /Model version/);
+  assert.match(html, /Calculation timestamp/);
+  assert.match(html, /Published market forecasts remain gated/);
+  assert.doesNotMatch(html, /local-scenario-chart/);
+  const disclosure = 'Scenarios are assumption-based estimates and are not appraisals, market observations, investment recommendations, or guaranteed outcomes.';
+  assert.equal(html.split(disclosure).length - 1, 1);
+});
+
+test('Scenario Lab draws a scaled, scrubbable chart only after an assumption changes value', () => {
+  const base = state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } });
+  const first = { ...base.holdings[0], manualMarketPrice: 100, item: { ...item, provider: 'custom' } };
+  const second = { ...first, id: 'h2', manualMarketPrice: 50, item: { ...first.item, name: 'Raichu ex', number: '2' } };
+  const html = renderInsights({
+    ...base,
+    holdings: [first, second],
+    insights: {
+      ...base.insights,
+      expandedScenarioId: 'h2',
+      scenarioAssumptions: { marketDirection: 'up', volatility: 'high', manualValues: 'follow' }
+    }
+  });
+  assert.match(html, /local-scenario-chart/);
+  assert.match(html, /data-chart-points=/);
+  assert.doesNotMatch(html, /scenario-neutral-state/);
+  assert.equal((html.match(/aria-expanded="true"/g) || []).length, 1);
+  assert.match(html, /Applied assumptions/);
+  assert.match(html, /Market up/);
+});
+
+test('Scenario Lab excludes restricted catalog prices instead of turning them into modeled value', () => {
   const html = renderInsights(state({ featureFlags: { publicPriceIntelligence: false, watchlists: true } }));
-  assert.match(html, /does not apply to catalog-linked items/);
-  assert.doesNotMatch(html, /local-scenario-card/);
-  assert.match(html, /0 of 1 holdings/);
+  assert.match(html, /Scenario unavailable/);
+  assert.match(html, /No valued items to model/);
+  assert.doesNotMatch(html, /data-scenario-expand="h1"/);
+});
+
+test('Insights Overview is a concise actionable list without a duplicate dashboard chart', () => {
+  const base = state();
+  const html = renderInsights({ ...base, insights: { ...base.insights, view: 'performance' } });
+  for (const label of ['Largest value increase', 'Largest value decrease', 'Highest concentration', 'Missing prices', 'Stale prices', 'Watchlist alerts', 'Coverage improvement', 'Recently completed sets']) assert.match(html, new RegExp(label));
+  assert.doesNotMatch(html, /trend-chart/);
+});
+
+test('Alerts use plain supported-kind labels and hide internal variant IDs', () => {
+  const kinds = ['target_price', 'percent_change', 'new_catalog_price', 'price_stale', 'became_unpriced', 'set_release', 'watchlist_change', 'forecast_change'];
+  const labels = ['Price target reached', 'Price movement threshold', 'New catalog price', 'Price became stale', 'Item became unpriced', 'Set release or availability', 'Watchlist change', 'Model-based forecast change'];
+  const base = state();
+  const html = renderInsights({
+    ...base,
+    insights: { ...base.insights, view: 'alerts' },
+    watchlistItems: [{ watchKey: 'watch:1', canonicalVariantId: variantId, catalogRef: { ...item } }],
+    alerts: kinds.map((kind, index) => ({ id: `alert-${index}`, watchKey: 'watch:1', variantId, kind, message: `${kind} happened`, triggeredAt: '2026-08-10T00:00:00Z', readAt: '' }))
+  });
+  for (const label of labels) assert.match(html, new RegExp(label));
+  assert.doesNotMatch(html, new RegExp(variantId));
+  assert.match(html, /Mark all read/);
+  assert.match(html, /Mute notification/);
 });

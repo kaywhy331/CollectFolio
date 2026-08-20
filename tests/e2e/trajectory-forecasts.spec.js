@@ -7,7 +7,7 @@ const TCGCSV_ORIGIN = 'https://tcgcsv-e2e.example.test';
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -209,8 +209,8 @@ async function configureTrajectoryStubs(page) {
 }
 
 async function runSearch(page) {
-  await page.goto('/discover?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Card, set, number, character, or player').fill('Trajectory');
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Trajectory');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const eligibleCard = page.locator('.result-card', { hasText: 'Trajectory Eligible Card' });
   const coldStartCard = page.locator('.result-card', { hasText: 'Trajectory Cold Start Card' });
@@ -243,15 +243,12 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   await expect(coldStartCard.locator('.result-outlook-note')).toContainText('Cold start estimate');
 
   // State 3 -- excluded (collapses with "unknown" per the fail-closed
-  // manifest map): no fabricated band, no local-scenario-v1 standing in.
-  // Uniform template (Kevin 2026-08-18): the outlook block still renders
-  // with the same 1 mo / 3 mo slots as every other card, but with explicit
-  // "—" placeholders instead of values.
-  await expect(excludedCard.getByText('No published outlook', { exact: true })).toBeVisible();
-  await expect(excludedCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(excludedCard.getByText('1 mo est.', { exact: true })).toBeVisible();
-  await expect(excludedCard.getByText('3 mo est.', { exact: true })).toBeVisible();
-  await expect(excludedCard.getByText('Not enough data yet').first()).toBeVisible();
+  // manifest map): the result card omits the outlook component entirely
+  // instead of drawing empty slots or allowing a local scenario to stand in.
+  await expect(excludedCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
+  await expect(excludedCard.locator('.result-market-outlook')).toHaveCount(0);
+  await expect(excludedCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  await expect(excludedCard.getByText('3 mo est.', { exact: true })).toHaveCount(0);
   await expect(excludedCard.locator('.result-market-outlook dd', { hasText: '$' })).toHaveCount(0);
 
   // Drill into the eligible card's detail view for the full trajectory
@@ -297,10 +294,10 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
 
   await expect(ninetyDayOnlyCard.locator('.result-market-outlook')).toBeVisible();
   await expect(ninetyDayOnlyCard.getByText('3 mo est.', { exact: true })).toBeVisible();
-  // Uniform template (Kevin 2026-08-18): the 1 mo slot still renders, but
-  // as an explicit placeholder -- never a fabricated 30-day value.
-  await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toBeVisible();
-  await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(1);
+  // Only a gate-passed horizon is rendered; a missing horizon does not
+  // reserve a chart/value slot that could be mistaken for an estimate.
+  await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(0);
   await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toBeVisible();
 
   await ninetyDayOnlyCard.click();

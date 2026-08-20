@@ -110,6 +110,8 @@ test('forecast adapter fails closed below the approved publication tier', () => 
 });
 
 test('shell adapter reports only supported local and cloud states', () => {
-  assert.equal(shellViewModel({ auth: { session: null, syncing: false } }).syncLabel, 'Saved on this device');
+  const local = shellViewModel({ auth: { session: null, syncing: false }, settings: { collectionName: 'Personal Collection' } });
+  assert.equal(local.syncLabel, 'Saved on this device');
+  assert.equal(local.portfolioLabel, 'Personal Collection');
   assert.equal(shellViewModel({ auth: { session: { user: { email: 'collector@example.test' } }, syncing: true } }).syncStatus, 'syncing');
 });

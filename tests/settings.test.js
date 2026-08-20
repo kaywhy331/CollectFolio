@@ -13,12 +13,14 @@ import {
 test('settings normalization resolves invalid values without retaining unknown keys', () => {
   const settings = normalizeSettings({
     currency: 'BTC', theme: 'neon', defaultCondition: 'Dusty',
+    collectionName: '  Archive Room  ',
     recentSearches: ['  Charizard ', 'Charizard', '', 'Lotus'],
     defaultForecastHorizon: '30', unknownBackendValue: 'hidden'
   });
   assert.equal(settings.currency, SETTINGS_DEFAULTS.currency);
   assert.equal(settings.theme, SETTINGS_DEFAULTS.theme);
   assert.equal(settings.defaultCondition, SETTINGS_DEFAULTS.defaultCondition);
+  assert.equal(settings.collectionName, 'Archive Room');
   assert.equal(settings.defaultForecastHorizon, 30);
   assert.deepEqual(settings.recentSearches, ['Charizard', 'Lotus']);
   assert.equal('unknownBackendValue' in settings, false);

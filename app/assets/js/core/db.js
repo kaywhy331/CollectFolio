@@ -306,6 +306,8 @@ function validScanRecord(record) {
   if (!optionalString(record.mode) || typeof record.status !== 'string'
       || !optionalString(record.createdAt) || !optionalString(record.updatedAt)
       || !optionalString(record.completedAt) || !optionalString(record.submissionError)
+      || !optionalString(record.sourceImage) || !optionalString(record.sourceImageRetainedAt)
+      || !optionalString(record.sourceImageDeletedAt)
       || !optionalPlain(record.bulkAcquisition) || !optionalPlain(record.result)
       || !Array.isArray(record.crops)) return false;
   return record.crops.every((crop) => plainRecord(crop)

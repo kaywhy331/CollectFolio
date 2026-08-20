@@ -2,12 +2,16 @@ import { clamp } from '../core/utils.js';
 import { detectBoundaries, gridBoxes, mapBox, quadBox } from './image-algorithms.js';
 
 export class ScanWorkbench {
-  constructor(canvas, image, { single = false, onChange = () => {} } = {}) {
+  constructor(canvas, image, { single = false, onChange = () => {}, onStatus = () => {} } = {}) {
     this.canvas = canvas;
     this.context = canvas.getContext('2d', { willReadFrequently: true });
     this.image = image;
     this.onChange = onChange;
+    this.onStatus = onStatus;
     this.single = single;
+    this.detectionWorker = null;
+    this.detectionJob = 0;
+    this.destroyed = false;
     const width = image.naturalWidth || image.width;
     const height = image.naturalHeight || image.height;
     this.boxes = [this.manualFallback(width, height)];
@@ -31,6 +35,10 @@ export class ScanWorkbench {
   }
 
   destroy() {
+    this.destroyed = true;
+    this.detectionJob += 1;
+    this.detectionWorker?.terminate();
+    this.detectionWorker = null;
     this.canvas.removeEventListener('pointerdown', this.pointerDown);
     this.canvas.removeEventListener('pointermove', this.pointerMove);
     this.canvas.removeEventListener('pointerup', this.pointerUp);
@@ -183,7 +191,41 @@ export class ScanWorkbench {
     this.render();
   }
 
-  detect() {
+  async detectWithWorker(imageData, maximumCards) {
+    if (typeof Worker !== 'function') return null;
+    const job = ++this.detectionJob;
+    const worker = new Worker(new URL('./scan-detection-worker.js', import.meta.url), { type: 'module' });
+    this.detectionWorker?.terminate();
+    this.detectionWorker = worker;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        worker.terminate();
+        if (this.detectionWorker === worker) this.detectionWorker = null;
+        if (job !== this.detectionJob || this.destroyed) return resolve(null);
+        callback(value);
+      };
+      const timeout = setTimeout(() => finish(reject, new Error('Boundary detection took too long.')), 20_000);
+      worker.addEventListener('message', (event) => {
+        if (event.data?.error) finish(reject, new Error(event.data.error));
+        else finish(resolve, event.data?.boxes || []);
+      }, { once: true });
+      worker.addEventListener('error', () => finish(reject, new Error('Boundary worker could not start.')), { once: true });
+      worker.postMessage({
+        id: job,
+        buffer: imageData.data.buffer,
+        width: imageData.width,
+        height: imageData.height,
+        maximumCards
+      }, [imageData.data.buffer]);
+    });
+  }
+
+  async detect() {
+    if (this.destroyed) return this.boxes;
     const max = 1000;
     const scale = Math.min(1, max / Math.max(this.canvas.width, this.canvas.height));
     const analysis = document.createElement('canvas');
@@ -191,13 +233,28 @@ export class ScanWorkbench {
     analysis.height = Math.max(1, Math.round(this.canvas.height * scale));
     const context = analysis.getContext('2d', { willReadFrequently: true });
     context.drawImage(this.image, 0, 0, analysis.width, analysis.height);
-    const detected = detectBoundaries(context.getImageData(0, 0, analysis.width, analysis.height), {
-      maximumCards: this.single ? 1 : 24
-    }).map((box) => mapBox(box, 1 / scale, 1 / scale));
+    this.onStatus('detecting');
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const maximumCards = this.single ? 1 : 24;
+    const pixels = context.getImageData(0, 0, analysis.width, analysis.height);
+    let detected;
+    try {
+      detected = await this.detectWithWorker(pixels, maximumCards);
+    } catch {
+      // A worker is preferred, but a yielded main-thread fallback keeps scan
+      // available in browsers that block module workers or transferable pixels.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const fallbackContext = analysis.getContext('2d', { willReadFrequently: true });
+      fallbackContext.drawImage(this.image, 0, 0, analysis.width, analysis.height);
+      detected = detectBoundaries(fallbackContext.getImageData(0, 0, analysis.width, analysis.height), { maximumCards });
+    }
+    if (detected === null || this.destroyed) return this.boxes;
+    detected = detected.map((box) => mapBox(box, 1 / scale, 1 / scale));
     this.boxes = this.single ? [detected[0] || this.manualFallback()] : detected;
     this.selected = 0;
     this.onChange(this.boxes);
     this.render();
+    this.onStatus('complete');
     return this.boxes;
   }
 

@@ -85,16 +85,56 @@ root.addEventListener('error', (event) => {
   const fallback = safeImageUrl(image.dataset.fallbackSrc);
   if (fallback && !image.dataset.fallbackAttempted && fallback !== image.src) {
     image.dataset.fallbackAttempted = 'true';
+    image.removeAttribute('srcset');
     image.src = fallback;
     return;
   }
   const placeholder = document.createElement('div');
   placeholder.className = image.className;
-  placeholder.classList.add('image-placeholder');
+  placeholder.classList.add('image-placeholder', 'image-retry');
+  placeholder.setAttribute('role', 'group');
   placeholder.setAttribute('aria-label', `${image.alt || 'Collectible'} image unavailable`);
-  placeholder.innerHTML = '<span>CF</span>';
+  const mark = document.createElement('span');
+  mark.setAttribute('aria-hidden', 'true');
+  mark.textContent = image.dataset.placeholderMark || 'IMAGE';
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'image-retry-button';
+  retry.dataset.action = 'retry-image';
+  retry.dataset.src = image.dataset.retrySrc || image.currentSrc || image.src;
+  retry.dataset.fallbackSrc = image.dataset.fallbackSrc || '';
+  retry.dataset.imageClass = image.className;
+  retry.dataset.imageLabel = image.dataset.imageLabel || image.alt || 'Collectible';
+  retry.dataset.placeholderMark = image.dataset.placeholderMark || 'IMAGE';
+  retry.dataset.loading = image.loading || 'lazy';
+  retry.dataset.width = image.getAttribute('width') || '';
+  retry.dataset.height = image.getAttribute('height') || '';
+  retry.dataset.sizes = image.getAttribute('sizes') || '';
+  retry.textContent = 'Retry image';
+  placeholder.append(mark, retry);
   image.replaceWith(placeholder);
 }, true);
+
+function retryExternalImage(button) {
+  const source = safeImageUrl(button.dataset.src);
+  if (!source) return;
+  const image = document.createElement('img');
+  image.className = button.dataset.imageClass || '';
+  image.src = source;
+  image.alt = button.dataset.imageLabel || 'Collectible';
+  image.loading = button.dataset.loading === 'eager' ? 'eager' : 'lazy';
+  image.decoding = 'async';
+  image.referrerPolicy = 'no-referrer';
+  image.dataset.externalImage = '';
+  image.dataset.retrySrc = source;
+  image.dataset.imageLabel = image.alt;
+  image.dataset.placeholderMark = button.dataset.placeholderMark || 'IMAGE';
+  if (safeImageUrl(button.dataset.fallbackSrc)) image.dataset.fallbackSrc = safeImageUrl(button.dataset.fallbackSrc);
+  if (button.dataset.width) image.width = Number(button.dataset.width);
+  if (button.dataset.height) image.height = Number(button.dataset.height);
+  if (button.dataset.sizes) image.sizes = button.dataset.sizes;
+  button.closest('.image-retry')?.replaceWith(image);
+}
 
 // Every state change re-renders via innerHTML, which used to recreate all
 // img nodes -- even cache-hit images repaint asynchronously after decode,
@@ -122,8 +162,13 @@ function renderRoot(html) {
       decoded.className = image.className;
       decoded.alt = image.alt;
       decoded.loading = image.loading;
-      if (image.dataset.fallbackSrc) decoded.dataset.fallbackSrc = image.dataset.fallbackSrc;
-      else delete decoded.dataset.fallbackSrc;
+      ['srcset', 'sizes', 'width', 'height', 'data-fallback-src', 'data-retry-src', 'data-image-label', 'data-placeholder-mark']
+        .forEach((attribute) => {
+          const value = image.getAttribute(attribute);
+          if (value === null) decoded.removeAttribute(attribute);
+          else decoded.setAttribute(attribute, value);
+        });
+      delete decoded.dataset.fallbackAttempted;
       image.replaceWith(decoded);
     });
   }
@@ -137,7 +182,7 @@ function render(state = getState()) {
     && !state.settings.onboardingComplete
     && !state.settings.onboardingSkipped
     && !['add', 'scan'].includes(state.activeView);
-  if (!state.ready) renderRoot('<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local portfolio…</p></section>');
+  if (!state.ready) renderRoot('<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local collection…</p></section>');
   else if (onboardingVisible) renderRoot(renderOnboarding(state));
   else if (inspectorOpen) {
     const underlay = activeDetail.origin === 'search' ? renderSearch(state) : activeDetail.origin === 'insights' ? renderInsights(state) : renderPortfolio(state);
@@ -149,6 +194,21 @@ function render(state = getState()) {
     button.classList.toggle('active', selected);
     if (selected) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   });
+  const appShell = document.querySelector('#app');
+  const primaryNavigation = document.querySelector('.primary-nav');
+  const topbar = document.querySelector('.shell-topbar');
+  const transientLayer = root.querySelector(':scope > .category-picker-layer, :scope > .search-filter-layer');
+  const transientLayerOpen = Boolean(transientLayer);
+  if (transientLayer) {
+    [...root.children].forEach((child) => {
+      if (child === transientLayer) return;
+      child.inert = true;
+      child.setAttribute('aria-hidden', 'true');
+    });
+  }
+  appShell?.classList.toggle('inspector-open', inspectorOpen || transientLayerOpen);
+  if (primaryNavigation) primaryNavigation.inert = inspectorOpen || transientLayerOpen;
+  if (topbar) topbar.inert = inspectorOpen || transientLayerOpen;
   const shell = shellViewModel(state);
   document.querySelectorAll('[data-portfolio-label]').forEach((element) => { element.textContent = shell.portfolioLabel; });
   document.querySelectorAll('[data-sync-label]').forEach((element) => { element.textContent = shell.syncLabel; });
@@ -717,7 +777,7 @@ function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = tru
   const detailTitle = ['card-detail', 'holding-detail'].includes(route.key) && activeDetail?.item?.name
     ? [activeDetail.item.name, activeDetail.item.setName].filter(Boolean).join(' · ')
     : '';
-  document.title = `${detailTitle || ({ overview: 'Overview', portfolio: 'Portfolio', discover: 'Discover', insights: 'Insights', add: 'Add', 'add-review': 'Add review', settings: 'Settings', 'card-detail': 'Card detail', 'holding-detail': 'Holding detail' })[route.key] || 'CollectFolio'} · CollectFolio`;
+  document.title = `${detailTitle || ({ overview: 'Home', portfolio: 'Collection', discover: 'Discover', insights: 'Insights', add: 'Scan', 'add-review': 'Scan review', settings: 'Settings', 'card-detail': 'Item detail', 'holding-detail': 'Item detail' })[route.key] || 'CollectFolio'} · CollectFolio`;
   if (focus) root.focus({ preventScroll: true });
   if (scroll) window.scrollTo({ top: 0, behavior: 'auto' });
   if (state.ready && route.key === 'card-detail' && !activeDetail) hydrateCardRoute(route);
@@ -742,7 +802,7 @@ function catalogActionItem(action) {
 
 function holdingForm(holding = null, { title = '', image = '', item: proposedItem = null } = {}) {
   const item = holding?.item || proposedItem || {};
-  const modalTitle = title || (holding ? `Edit ${item.name || 'holding'}` : item.provider === 'custom' || !item.provider ? 'Add a custom collectible' : 'Add to portfolio');
+  const modalTitle = title || (holding ? `Edit ${item.name || 'item'}` : item.provider === 'custom' || !item.provider ? 'Add a custom collectible' : 'Add to collection');
   const content = renderHoldingForm(holding, {
     image,
     item: proposedItem,
@@ -750,7 +810,7 @@ function holdingForm(holding = null, { title = '', image = '', item: proposedIte
     defaultLanguage: getState().settings.defaultLanguage,
     currency: getState().settings.currency
   });
-  openModal({ title: modalTitle, content, actions: `<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="holding-form">${holding ? 'Save changes' : 'Add to portfolio'}</button>`, onOpen(layer) {
+  openModal({ title: modalTitle, content, actions: `<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="holding-form">${holding ? 'Save changes' : 'Add to collection'}</button>`, onOpen(layer) {
     layer.querySelector('#holding-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const submit = layer.querySelector('[type="submit"]');
@@ -777,9 +837,9 @@ function holdingForm(holding = null, { title = '', image = '', item: proposedIte
         closeModal();
         await loadLocal();
         await hydrateIntelligence();
-        showToast(holding ? 'Holding updated' : `${data.name} added to your portfolio`);
+        showToast(holding ? 'Item updated' : `${data.name} added to your collection`);
       } catch (error) {
-        showToast(error.message || 'Could not save holding', 'error');
+        showToast(error.message || 'Could not save item', 'error');
         submit.disabled = false;
       }
     });
@@ -795,13 +855,13 @@ async function fileToPortfolioImage(file) {
 async function confirmDelete(id) {
   const holding = getState().holdings.find((entry) => entry.id === id);
   if (!holding) return;
-  openModal({ title: 'Delete holding?', content: `<p><strong>${escapeHTML(holding.item?.name || 'This holding')}</strong> will be removed and a deletion tombstone will be saved for optional sync.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-delete>Delete holding</button>', onOpen(layer) {
+  openModal({ title: 'Delete item?', content: `<p><strong>${escapeHTML(holding.item?.name || 'This item')}</strong> and its purchase record will be removed. A deletion record will be saved for optional sync.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-delete>Delete item</button>', onOpen(layer) {
     layer.querySelector('[data-confirm-delete]').addEventListener('click', async () => {
       await removeHolding(id);
       closeModal();
       await loadLocal();
       await hydrateIntelligence();
-      showToast('Holding deleted');
+      showToast('Item deleted');
     });
   }});
 }
@@ -826,20 +886,20 @@ async function importJSON(file) {
 
 async function exportCSV(holdingIds = null) {
   downloadFile(`collectfolio-holdings-${new Date().toISOString().slice(0, 10)}.csv`, await exportHoldingsCSV(holdingIds), 'text/csv;charset=utf-8');
-  showToast(holdingIds?.length ? `${holdingIds.length} selected holdings exported` : 'Holdings CSV exported');
+  showToast(holdingIds?.length ? `${holdingIds.length} selected purchases exported` : 'Collection CSV exported');
 }
 
 function confirmBulkDelete(ids) {
   const holdings = ids.map((id) => getState().holdings.find((entry) => entry.id === id)).filter(Boolean);
   if (!holdings.length) return;
-  openModal({ title: `Delete ${holdings.length} selected holding${holdings.length === 1 ? '' : 's'}?`, content: '<p>Each selected holding will be removed and a deletion tombstone will be saved for optional sync. This cannot be undone on this device.</p>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-bulk-delete>Delete selected</button>', onOpen(layer) {
+  openModal({ title: `Delete ${holdings.length} selected purchase${holdings.length === 1 ? '' : 's'}?`, content: '<p>Each selected purchase will be removed and a deletion record will be saved for optional sync. This cannot be undone on this device.</p>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-bulk-delete>Delete selected</button>', onOpen(layer) {
     layer.querySelector('[data-confirm-bulk-delete]').addEventListener('click', async () => {
       closeModal();
       for (const holding of holdings) await removeHolding(holding.id);
       setState({ portfolio: { ...getState().portfolio, selected: [] } });
       await loadLocal();
       await hydrateIntelligence();
-      showToast(`${holdings.length} holding${holdings.length === 1 ? '' : 's'} deleted`);
+      showToast(`${holdings.length} purchase${holdings.length === 1 ? '' : 's'} deleted`);
     });
   }});
 }
@@ -861,8 +921,8 @@ function bulkMoveForm(ids) {
   if (!holdings.length) return;
   const folders = [...new Set(getState().holdings.map((holding) => holding.folder).filter(Boolean))].sort();
   openModal({
-    title: `Move ${holdings.length} selected holding${holdings.length === 1 ? '' : 's'}`,
-    content: `<form id="bulk-move-form"><label>Storage location<input name="folder" maxlength="80" list="holding-folders" required placeholder="Binder, box, shelf…"></label><datalist id="holding-folders">${folders.map((folder) => `<option value="${escapeAttribute(folder)}"></option>`).join('')}</datalist><p class="fine-print">This updates organization only. Each acquisition lot remains separate.</p></form>`,
+    title: `Move ${holdings.length} selected purchase${holdings.length === 1 ? '' : 's'}`,
+    content: `<form id="bulk-move-form"><label>Storage location<input name="folder" maxlength="80" list="holding-folders" required placeholder="Binder, box, shelf…"></label><datalist id="holding-folders">${folders.map((folder) => `<option value="${escapeAttribute(folder)}"></option>`).join('')}</datalist><p class="fine-print">This updates organization only. Each purchase remains separate.</p></form>`,
     actions: '<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="bulk-move-form">Move selected</button>',
     onOpen(layer) {
       layer.querySelector('#bulk-move-form').addEventListener('submit', async (event) => {
@@ -872,7 +932,7 @@ function bulkMoveForm(ids) {
         layer.querySelector('[type="submit"]').disabled = true;
         for (const holding of holdings) await saveHolding({ ...holding, folder });
         closeModal();
-        await finishBulkHoldingUpdate(`${holdings.length} holding${holdings.length === 1 ? '' : 's'} moved`);
+        await finishBulkHoldingUpdate(`${holdings.length} purchase${holdings.length === 1 ? '' : 's'} moved`);
       });
     }
   });
@@ -882,8 +942,8 @@ function bulkTagForm(ids) {
   const holdings = selectedHoldings(ids);
   if (!holdings.length) return;
   openModal({
-    title: `Tag ${holdings.length} selected holding${holdings.length === 1 ? '' : 's'}`,
-    content: '<form id="bulk-tag-form"><label>Tags<input name="tags" maxlength="480" required placeholder="trade, favorite, rookie"></label><p class="fine-print">Comma-separated tags are added to each selected holding without removing existing tags.</p></form>',
+    title: `Tag ${holdings.length} selected purchase${holdings.length === 1 ? '' : 's'}`,
+    content: '<form id="bulk-tag-form"><label>Tags<input name="tags" maxlength="480" required placeholder="trade, favorite, rookie"></label><p class="fine-print">Comma-separated tags are added to each selected purchase without removing existing tags.</p></form>',
     actions: '<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="submit" form="bulk-tag-form">Add tags</button>',
     onOpen(layer) {
       layer.querySelector('#bulk-tag-form').addEventListener('submit', async (event) => {
@@ -893,7 +953,7 @@ function bulkTagForm(ids) {
         layer.querySelector('[type="submit"]').disabled = true;
         for (const holding of holdings) await saveHolding({ ...holding, tags: [...(holding.tags || []), ...tags] });
         closeModal();
-        await finishBulkHoldingUpdate(`Tags added to ${holdings.length} holding${holdings.length === 1 ? '' : 's'}`);
+        await finishBulkHoldingUpdate(`Tags added to ${holdings.length} purchase${holdings.length === 1 ? '' : 's'}`);
       });
     }
   });
@@ -903,15 +963,15 @@ function confirmBulkDuplicate(ids) {
   const holdings = selectedHoldings(ids);
   if (!holdings.length) return;
   openModal({
-    title: `Duplicate ${holdings.length} acquisition lot${holdings.length === 1 ? '' : 's'}?`,
-    content: '<p>Each copy will be a separate holding with the same identity, quantity, acquisition details, tags, and local image.</p>',
+    title: `Duplicate ${holdings.length} purchase${holdings.length === 1 ? '' : 's'}?`,
+    content: '<p>Each copy will be a separate purchase with the same identity, quantity, purchase details, tags, and local image.</p>',
     actions: '<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button" type="button" data-confirm-bulk-duplicate>Create copies</button>',
     onOpen(layer) {
       layer.querySelector('[data-confirm-bulk-duplicate]').addEventListener('click', async (event) => {
         event.currentTarget.disabled = true;
         for (const holding of holdings) await saveHolding({ ...holding, id: '', createdAt: '' });
         closeModal();
-        await finishBulkHoldingUpdate(`${holdings.length} acquisition lot${holdings.length === 1 ? '' : 's'} duplicated`);
+        await finishBulkHoldingUpdate(`${holdings.length} purchase${holdings.length === 1 ? '' : 's'} duplicated`);
       });
     }
   });
@@ -920,8 +980,8 @@ function confirmBulkDuplicate(ids) {
 async function loadDemo() {
   const now = new Date();
   const demo = [
-    { id: '00000000-0000-4000-8000-000000000001', catalogId: 'demo:black-lotus', item: { id: 'demo:black-lotus', externalId: 'demo-1', provider: 'custom', category: 'magic', game: 'Magic', name: 'Black Lotus — Proxy Demo', setName: 'Demo catalog', number: '#233', variant: 'Display only', rarity: 'Rare', year: '1993', image: '', imageSmall: '', price: 720, priceOptions: [{ finish: 'regular', price: 720 }], currency: 'USD', priceSource: 'Demo price', priceUrl: '', priceUpdatedAt: now.toISOString() }, quantity: 1, condition: 'Near Mint', purchasePrice: 500, fees: 0, folder: 'Main collection', notes: 'Demonstration record; not a genuine appraisal.' },
-    { id: '00000000-0000-4000-8000-000000000002', catalogId: 'demo:charizard', item: { id: 'demo:charizard', externalId: 'demo-2', provider: 'custom', category: 'pokemon', game: 'Pokémon', name: 'Charizard — Base Set', setName: 'Base Set', number: '4/102', variant: 'Holo', rarity: 'Rare Holo', year: '1999', image: '', imageSmall: '', price: 385, priceOptions: [], currency: 'USD', priceSource: 'Demo price', priceUrl: '', priceUpdatedAt: now.toISOString() }, quantity: 1, condition: 'Good', purchasePrice: 250, fees: 20, folder: 'Main collection' },
+    { id: '00000000-0000-4000-8000-000000000001', catalogId: 'demo:black-lotus', item: { id: 'demo:black-lotus', externalId: 'demo-1', provider: 'custom', category: 'magic', game: 'Magic', name: 'Black Lotus — Proxy Demo', setName: 'Demo catalog', number: '#233', variant: 'Display only', rarity: 'Rare', year: '1993', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Near Mint', purchasePrice: 500, fees: 0, manualMarketPrice: 720, manualMarketCurrency: 'USD', folder: 'Main collection', notes: 'Demonstration record; not a genuine appraisal.' },
+    { id: '00000000-0000-4000-8000-000000000002', catalogId: 'demo:charizard', item: { id: 'demo:charizard', externalId: 'demo-2', provider: 'custom', category: 'pokemon', game: 'Pokémon', name: 'Charizard — Base Set', setName: 'Base Set', number: '4/102', variant: 'Holo', rarity: 'Rare Holo', year: '1999', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Good', purchasePrice: 250, fees: 20, manualMarketPrice: 385, manualMarketCurrency: 'USD', folder: 'Main collection' },
     { id: '00000000-0000-4000-8000-000000000003', catalogId: 'demo:sports', item: { id: 'demo:sports', externalId: 'demo-3', provider: 'custom', category: 'sports', game: 'Basketball', name: 'Smoke Test Sports Card', setName: 'Rookie showcase', number: '23', variant: 'Base', rarity: '', year: '1996', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Graded', gradeCompany: 'PSA', grade: '9', purchasePrice: 75, fees: 5, manualMarketPrice: 142, folder: 'Slabs' },
     { id: '00000000-0000-4000-8000-000000000004', catalogId: 'demo:comic', item: { id: 'demo:comic', externalId: 'demo-4', provider: 'custom', category: 'comics', game: 'Comic', name: 'Demo Variant Comic', setName: 'Collector issue', number: '1', variant: 'Cover B', rarity: '', year: '2024', image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD', priceSource: '', priceUrl: '', priceUpdatedAt: '' }, quantity: 1, condition: 'Near Mint', purchasePrice: 10, fees: 0, manualMarketPrice: 85, folder: 'Comics' }
   ];
@@ -953,7 +1013,7 @@ async function runCatalogSearch(form) {
     .map((key) => [key, String(data[key] || '').trim()]));
   if (catalogGameRequiresSession(data.category, getState().discover.games, getState().auth.session)) {
     const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: false, results: [], warnings: [], cached: false };
-    setState({ search });
+    setState({ search, discover: { ...getState().discover, searchFiltersOpen: false } });
     navigate('search', { search });
     openAuth();
     return;
@@ -961,7 +1021,7 @@ async function runCatalogSearch(form) {
   const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: true, results: [], warnings: [], cached: false };
   const recentSearches = [String(data.query || '').trim(), ...(getState().settings.recentSearches || [])]
     .filter(Boolean).filter((query, index, all) => all.findIndex((entry) => entry.toLowerCase() === query.toLowerCase()) === index).slice(0, 5);
-  setState({ search });
+  setState({ search, discover: { ...getState().discover, searchFiltersOpen: false } });
   setState({ settings: { ...getState().settings, recentSearches } });
   await putRecord('settings', { key: 'recentSearches', value: recentSearches });
   navigate('search', { search });
@@ -981,8 +1041,8 @@ async function runCatalogSearch(form) {
 
 async function refreshPrices() {
   const holdings = getState().holdings.filter((holding) => holding.item?.provider && holding.item.provider !== 'custom');
-  if (!holdings.length) { showToast('There are no market-linked holdings to refresh', 'warning'); return; }
-  showToast(`Refreshing ${holdings.length} market-linked holding${holdings.length === 1 ? '' : 's'}…`, 'warning');
+  if (!holdings.length) { showToast('There are no market-linked items to refresh', 'warning'); return; }
+  showToast(`Refreshing ${holdings.length} market-linked item${holdings.length === 1 ? '' : 's'}…`, 'warning');
   let refreshed = 0;
   let failed = 0;
   for (const holding of holdings) {
@@ -1024,7 +1084,7 @@ function confirmClear() {
 }
 
 function openAuth() {
-  openModal({ title: 'Optional cloud account', content: `<form id="auth-form"><div class="field-grid"><label class="span-all">Email<input name="email" type="email" autocomplete="email" required></label><label class="span-all">Password<input name="password" type="password" autocomplete="current-password" minlength="6"></label></div><p class="fine-print">Your local portfolio remains available if you cancel or sign out.</p></form>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button secondary" type="button" data-magic-link>Send magic link</button><button class="button secondary" type="submit" name="authAction" value="signup" form="auth-form">Create account</button><button class="button" type="submit" name="authAction" value="signin" form="auth-form">Sign in</button>', onOpen(layer) {
+  openModal({ title: 'Optional cloud account', content: `<form id="auth-form"><div class="field-grid"><label class="span-all">Email<input name="email" type="email" autocomplete="email" required></label><label class="span-all">Password<input name="password" type="password" autocomplete="current-password" minlength="6"></label></div><p class="fine-print">Your local collection remains available if you cancel or sign out.</p></form>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button secondary" type="button" data-magic-link>Send magic link</button><button class="button secondary" type="submit" name="authAction" value="signup" form="auth-form">Create account</button><button class="button" type="submit" name="authAction" value="signin" form="auth-form">Sign in</button>', onOpen(layer) {
     const form = layer.querySelector('#auth-form');
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -1090,7 +1150,7 @@ async function syncNow() {
     const deletionCount = result.deletions + (result.watchlist?.deletions || 0);
     if (result.watchlistError) {
       const reference = syncDiagnosticReference(at);
-      const message = 'Holdings were synchronized, but the Watchlist still needs attention. Retry to finish.';
+      const message = 'Collection purchases were synchronized, but the Watchlist still needs attention. Retry to finish.';
       await persistSettings({
         lastSyncedAt: at,
         lastSyncError: message,
@@ -1108,7 +1168,7 @@ async function syncNow() {
         syncDiagnostic: '',
         syncHistory: appendSyncHistory(getState().settings.syncHistory, {
           status: 'success', at,
-          summary: `Synchronized ${result.holdings} holding${result.holdings === 1 ? '' : 's'} and ${watchlistCount} watched card${watchlistCount === 1 ? '' : 's'}.`,
+          summary: `Synchronized ${result.holdings} purchase${result.holdings === 1 ? '' : 's'} and ${watchlistCount} watched item${watchlistCount === 1 ? '' : 's'}.`,
           counts: { holdings: result.holdings, watchlist: watchlistCount, deletions: deletionCount }
         })
       });
@@ -1116,7 +1176,7 @@ async function syncNow() {
     await loadLocal();
     await hydrateIntelligence();
     const watchlist = result.watchlist ? ` and ${result.watchlist.items} watched card${result.watchlist.items === 1 ? '' : 's'}` : '';
-    showToast(`Synchronized ${result.holdings} holding${result.holdings === 1 ? '' : 's'}${watchlist}${result.omittedImages ? `; ${result.omittedImages} large images stayed on this device` : ''}`, result.watchlistError ? 'warning' : 'success');
+    showToast(`Synchronized ${result.holdings} purchase${result.holdings === 1 ? '' : 's'}${watchlist}${result.omittedImages ? `; ${result.omittedImages} large images stayed on this device` : ''}`, result.watchlistError ? 'warning' : 'success');
   } catch (error) {
     const at = new Date().toISOString();
     const message = friendlyCloudError(error, { online: navigator.onLine !== false });
@@ -1147,7 +1207,7 @@ function confirmRemoveCloudData() {
   }
   openModal({
     title: 'Remove cloud data?',
-    content: '<p>This removes cloud holdings, Watchlist items, scans, synchronization history, and private market activity. Your sign-in account and everything saved on this device remain. Cloud sync will disconnect.</p><p>Export a backup first if you may want another copy. Type <strong>REMOVE</strong> to continue.</p><label>Confirmation<input id="cloud-remove-confirm" autocomplete="off"></label>',
+    content: '<p>This removes cloud collection purchases, Watchlist items, scans, synchronization history, and private market activity. Your sign-in account and everything saved on this device remain. Cloud sync will disconnect.</p><p>Export a backup first if you may want another copy. Type <strong>REMOVE</strong> to continue.</p><label>Confirmation<input id="cloud-remove-confirm" autocomplete="off"></label>',
     actions: '<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button danger" type="button" data-cloud-remove-confirmed disabled>Remove cloud data</button>',
     onOpen(layer) {
       const input = layer.querySelector('#cloud-remove-confirm');
@@ -1390,6 +1450,18 @@ function openCompareModal() {
   openModal({ title: 'Compare watched cards', content, actions: '<button class="button" type="button" data-close-modal>Close</button>' });
 }
 
+async function processScanFile(file, { single = false, closeSourceModal = false } = {}) {
+  if (!file) return;
+  try {
+    const sourceImage = await fileToImageDataURL(file);
+    const image = await loadImage(sourceImage);
+    if (closeSourceModal) closeModal();
+    openWorkbench(image, { single, sourceImage });
+  } catch (error) {
+    showToast(error.message || 'This image could not be opened. Try a JPEG, PNG, or WebP photo.', 'error');
+  }
+}
+
 function chooseScanImage({ single = false } = {}) {
   const description = single
     ? 'Use the camera or choose one card image. CollectFolio detects its four corners, straightens it, and starts identification automatically.'
@@ -1398,42 +1470,55 @@ function chooseScanImage({ single = false } = {}) {
     layer.querySelectorAll('[data-scan-source]').forEach((input) => input.addEventListener('change', async (event) => {
       const file = event.target.files[0];
       if (!file) return;
-      try {
-        const source = await fileToImageDataURL(file);
-        const image = await loadImage(source);
-        closeModal();
-        openWorkbench(image, { single });
-      } catch (error) {
-        showToast(error.message || 'Could not open image', 'error');
-      }
+      await processScanFile(file, { single, closeSourceModal: true });
     }));
   }});
 }
 
-function openWorkbench(image, { single = false } = {}) {
+function openWorkbench(image, { single = false, sourceImage = '' } = {}) {
   let editor;
   const tools = single
     ? '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Retry corner detection</button></div>'
     : '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="add">Draw new</button><button class="button secondary small" type="button" data-workbench="delete">Delete selected</button><button class="button secondary small" type="button" data-workbench="retry">Retry detection</button></div><div class="grid-controls"><label>Rows<input id="grid-rows" type="number" min="1" max="12" value="3"></label><label>Columns<input id="grid-columns" type="number" min="1" max="12" value="3"></label><button class="button secondary" type="button" data-workbench="grid">Apply grid</button></div>';
-  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag the four corner handles to the card edges, or drag inside to move the outline. The saved crop is straightened automatically.' : 'Tap a card to select it. Drag its four corner handles to align perspective, or drag inside to move it.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Straighten and identify</button>', onOpen(layer) {
+  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag the four corner handles to the card edges, or drag inside to move the outline. The saved crop is straightened automatically.' : 'Tap a card to select it. Drag its four corner handles to align perspective, or drag inside to move it.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print" role="status"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Straighten and identify</button>', onOpen(layer) {
     const count = layer.querySelector('#boundary-count');
     const updateCount = (boxes) => {
       const fallback = boxes.some((box) => box.fallback);
-      count.textContent = fallback
-        ? 'Automatic corners were not reliable. Adjust the four handles before continuing.'
-        : `${boxes.length} detected ${boxes.length === 1 ? 'card outline' : 'card outlines'} · drag any corner to refine`;
-      count.classList.toggle('negative', fallback);
+      const none = !boxes.length;
+      const atLimit = !single && boxes.length >= 24;
+      count.textContent = none
+        ? 'No items were detected. Improve lighting, retry detection, or draw a boundary manually.'
+        : fallback
+          ? 'Automatic corners were not reliable. Adjust the four handles before continuing.'
+          : atLimit
+            ? '24 item outlines detected, the per-photo limit. Continue with these or split the layout across another photo.'
+            : `${boxes.length} detected ${boxes.length === 1 ? 'item outline' : 'item outlines'} · drag inside to move, or drag a corner to resize`;
+      count.classList.toggle('negative', fallback || none || atLimit);
+    };
+    const detectionButtons = () => [...layer.querySelectorAll('[data-workbench="retry"], [data-workbench="continue"]')];
+    const runDetection = async () => {
+      detectionButtons().forEach((button) => { button.disabled = true; });
+      count.textContent = 'Detecting item boundaries… You can cancel and keep the original photo.';
+      count.classList.remove('negative');
+      try {
+        await editor.detect();
+        updateCount(editor.boxes);
+      } catch (error) {
+        count.textContent = error?.message || 'Automatic detection failed. Draw or adjust a boundary manually.';
+        count.classList.add('negative');
+      } finally {
+        detectionButtons().forEach((button) => { button.disabled = false; });
+      }
     };
     editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, { single, onChange: updateCount });
-    editor.detect();
-    updateCount(editor.boxes);
+    runDetection();
     layer.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-workbench]');
       if (!button) return;
       const action = button.dataset.workbench;
       if (action === 'add') editor.setAddMode();
       if (action === 'delete') editor.deleteSelected();
-      if (action === 'retry') editor.detect();
+      if (action === 'retry') await runDetection();
       if (action === 'grid' && !single) editor.applyGrid(layer.querySelector('#grid-rows').value, layer.querySelector('#grid-columns').value);
       if (action === 'continue') {
         if (!editor.boxes.length) { showToast('Add at least one crop boundary', 'warning'); return; }
@@ -1444,13 +1529,16 @@ function openWorkbench(image, { single = false } = {}) {
             single ? 'single' : 'multi',
             {
               condition: getState().settings.defaultCondition,
+              language: getState().settings.defaultLanguage,
               purchaseCurrency: getState().settings.currency,
-              manualMarketCurrency: getState().settings.currency
+              manualMarketCurrency: getState().settings.currency,
+              retainPhoto: false
             }
           );
+          draft.sourceImage = sourceImage || safeImageUrl(image.src);
+          draft.sourceImageRetainedAt = new Date().toISOString();
           await saveScanDraft(draft);
           activeDraft = draft;
-          editor.destroy();
           closeModal();
           await loadLocal();
           navigate('scan');
@@ -1463,6 +1551,8 @@ function openWorkbench(image, { single = false } = {}) {
         }
       }
     });
+  }, onClose() {
+    editor?.destroy();
   }});
 }
 
@@ -1477,12 +1567,95 @@ async function resumeScan() {
   if (recovered) showToast('Interrupted identification was reset for retry', 'warning');
 }
 
+async function editCropBoundary(cropId) {
+  const draftId = activeDraft?.id;
+  const crop = activeDraft?.crops?.find((entry) => entry.id === cropId);
+  if (!crop || !activeDraft?.sourceImage) {
+    showToast('The full source photo is no longer available for boundary editing', 'warning');
+    return;
+  }
+  let image;
+  try {
+    image = await loadImage(activeDraft.sourceImage);
+  } catch (error) {
+    showToast(error?.message || 'The saved source photo could not be opened', 'error');
+    return;
+  }
+  let editor;
+  openModal({
+    title: 'Edit crop boundary',
+    content: '<div class="workbench"><p class="muted">Drag inside the outline to move it, or drag any corner to align the item. Other reviewed items stay unchanged.</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div><div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Retry automatic corners</button></div><p id="boundary-count" class="fine-print" role="status">One saved item outline · adjust it before applying.</p></div>',
+    actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="apply-crop">Apply and re-identify</button>',
+    onOpen(layer) {
+      const status = layer.querySelector('#boundary-count');
+      editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, {
+        single: true,
+        onChange: () => { status.textContent = 'Boundary updated · apply it when the item is framed correctly.'; }
+      });
+      editor.boxes = [structuredClone(crop.box || editor.manualFallback())];
+      editor.selected = 0;
+      editor.render();
+      layer.addEventListener('click', async (event) => {
+        const button = event.target.closest('[data-workbench]');
+        if (!button) return;
+        if (button.dataset.workbench === 'retry') {
+          button.disabled = true;
+          status.textContent = 'Detecting corners…';
+          try {
+            await editor.detect();
+            status.textContent = 'Automatic corners ready · adjust them or apply the crop.';
+          } catch (error) {
+            status.textContent = 'Automatic corners were unavailable. Your saved outline is unchanged; adjust it manually or retry.';
+            showToast(error?.message || 'Automatic corners were unavailable. Adjust the outline manually or retry.', 'error');
+          } finally {
+            button.disabled = false;
+          }
+        }
+        if (button.dataset.workbench === 'apply-crop') {
+          button.disabled = true;
+          const currentCrop = activeDraft?.id === draftId
+            ? activeDraft.crops.find((entry) => entry.id === cropId)
+            : null;
+          if (!currentCrop) {
+            showToast('This review changed before the crop could be updated', 'warning');
+            button.disabled = false;
+            return;
+          }
+          const [updated] = cropsFromBoxes(image, editor.boxes);
+          Object.assign(currentCrop, {
+            box: updated.box,
+            image: updated.image,
+            status: 'queued',
+            query: '',
+            ocrText: '',
+            ocrEngine: '',
+            candidates: [],
+            selectedId: '',
+            customItem: null,
+            approved: false,
+            error: ''
+          });
+          await saveScanDraft(activeDraft);
+          closeModal();
+          render();
+          showToast('Crop updated; identification restarted');
+          startDraftIdentification(activeDraft);
+        }
+      });
+    },
+    onClose() {
+      editor?.destroy();
+    }
+  });
+}
+
 function customCropForm(cropId) {
   openModal({ title: 'Create custom match for crop', content: `<form id="crop-custom-form"><div class="field-grid"><label class="span-all">Name<input name="name" required maxlength="160"></label><label>Category<select name="category"><option value="sports">Sports</option><option value="comics">Comics</option><option value="slab">Graded slab</option><option value="other" selected>Other</option><option value="pokemon">Pokémon</option><option value="magic">Magic</option><option value="yugioh">Yu-Gi-Oh!</option></select></label><label>Game / type<input name="game" maxlength="80"></label><label>Set / series<input name="setName" maxlength="120"></label><label>Number / issue<input name="number" maxlength="50"></label><label>Variant / rarity<input name="variant" maxlength="100"></label><label>Manual unit value<input name="price" type="number" min="0" step="0.01"></label></div></form>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="submit" form="crop-custom-form">Select custom item</button>', onOpen(layer) {
     layer.querySelector('#crop-custom-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(event.currentTarget));
-      await setCropCustomItem(activeDraft, cropId, { category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: data.variant, rarity: '', year: '', price: data.price === '' ? null : Number(data.price), priceSource: data.price === '' ? '' : 'Manual value', priceUrl: '', priceUpdatedAt: data.price === '' ? '' : new Date().toISOString() });
+      await setCropCustomItem(activeDraft, cropId, { category: data.category, game: data.game, name: data.name, setName: data.setName, number: data.number, variant: data.variant, rarity: '', year: '', price: null, priceSource: '', priceUrl: '', priceUpdatedAt: '' });
+      if (data.price !== '') await setCropAcquisition(activeDraft, cropId, { manualMarketPrice: Number(data.price), manualMarketCurrency: getState().settings.currency });
       closeModal();
       render();
       showToast('Custom item selected; approve it to include this crop');
@@ -1510,6 +1683,11 @@ root.addEventListener('click', async (event) => {
     await putRecord('settings', { key: 'portfolioView', value: view });
     return;
   }
+  const collectionGroupMode = event.target.closest('[data-collection-group-mode]');
+  if (collectionGroupMode && ['grouped', 'purchases'].includes(collectionGroupMode.dataset.collectionGroupMode)) {
+    setState({ portfolio: { ...getState().portfolio, groupMode: collectionGroupMode.dataset.collectionGroupMode, selectionMode: false, selected: [], limit: 100 } });
+    return;
+  }
   const insightsView = event.target.closest('[data-insights-view]');
   if (insightsView && INSIGHTS_VIEWS.includes(insightsView.dataset.insightsView)) {
     navigate('insights', { insights: { ...getState().insights, view: insightsView.dataset.insightsView } });
@@ -1517,7 +1695,19 @@ root.addEventListener('click', async (event) => {
   }
   const insightsHorizon = event.target.closest('[data-insights-horizon]');
   if (insightsHorizon && INSIGHTS_HORIZONS.includes(Number(insightsHorizon.dataset.insightsHorizon))) {
-    navigate('insights', { insights: { ...getState().insights, view: 'forecasts', horizon: Number(insightsHorizon.dataset.insightsHorizon) } });
+    navigate('insights', { insights: { ...getState().insights, view: 'forecasts', horizon: Number(insightsHorizon.dataset.insightsHorizon), expandedScenarioId: '', expandedPublishedId: '' } });
+    return;
+  }
+  const scenarioExpand = event.target.closest('[data-scenario-expand]');
+  if (scenarioExpand) {
+    const id = scenarioExpand.dataset.scenarioExpand;
+    setState({ insights: { ...getState().insights, expandedScenarioId: getState().insights.expandedScenarioId === id ? '' : id } });
+    return;
+  }
+  const publishedExpand = event.target.closest('[data-published-expand]');
+  if (publishedExpand) {
+    const id = publishedExpand.dataset.publishedExpand;
+    setState({ insights: { ...getState().insights, expandedPublishedId: getState().insights.expandedPublishedId === id ? '' : id } });
     return;
   }
   const alertFilter = event.target.closest('[data-alert-filter]');
@@ -1540,20 +1730,53 @@ root.addEventListener('click', async (event) => {
   }
   const action = event.target.closest('[data-action]');
   if (!action) return;
+  if (action.dataset.action === 'retry-image') {
+    event.preventDefault();
+    event.stopPropagation();
+    retryExternalImage(action);
+    return;
+  }
   const id = action.dataset.id;
   if (action.dataset.action === 'set-discover-mode') {
     if (action.dataset.mode === 'browse' && getState().featureFlags?.setBrowsing !== false) navigateBrowse();
     else navigate('search', { search: getState().search, discover: { ...getState().discover, mode: 'search' } });
   }
+  if (action.dataset.action === 'open-category-picker') {
+    setState({ discover: { ...getState().discover, categoryPickerOpen: true } });
+    queueMicrotask(() => root.querySelector('[data-browse-game-query]')?.focus({ preventScroll: true }));
+    return;
+  }
+  if (action.dataset.action === 'close-category-picker') {
+    setState({ discover: { ...getState().discover, categoryPickerOpen: false } });
+    queueMicrotask(() => root.querySelector('[data-action="open-category-picker"]')?.focus({ preventScroll: true }));
+    return;
+  }
+  if (action.dataset.action === 'open-search-filters') {
+    setState({ discover: { ...getState().discover, searchFiltersOpen: true } });
+    queueMicrotask(() => root.querySelector('.search-filter-panel select, .search-filter-panel input')?.focus({ preventScroll: true }));
+    return;
+  }
+  if (action.dataset.action === 'close-search-filters') {
+    setState({ discover: { ...getState().discover, searchFiltersOpen: false } });
+    queueMicrotask(() => root.querySelector('[data-action="open-search-filters"]')?.focus({ preventScroll: true }));
+    return;
+  }
   if (action.dataset.action === 'select-browse-game') {
     const game = action.dataset.game || 'all';
     const requiresSession = catalogGameRequiresSession(game, getState().discover.games, getState().auth.session);
-    navigateBrowse({ game, setId: '', years: [], groupBy: '' });
+    navigateBrowse({ game, setId: '', years: [], groupBy: '', categoryPickerOpen: false });
     if (requiresSession) openAuth();
     return;
   }
   if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '', years: [], groupBy: '' });
-  if (action.dataset.action === 'open-browse-set') navigateBrowse({ game: action.dataset.game, setId: action.dataset.setId });
+  if (action.dataset.action === 'open-browse-set') {
+    const selected = getState().discover.sets.find((set) => set.gameId === action.dataset.game && set.externalId === action.dataset.setId);
+    const recentlyViewed = selected
+      ? [selected, ...(getState().discover.recentlyViewed || []).filter((set) => set.id !== selected.id)].slice(0, 8)
+      : getState().discover.recentlyViewed || [];
+    navigateBrowse({ game: action.dataset.game, setId: action.dataset.setId, recentlyViewed });
+    return;
+  }
   if (action.dataset.action === 'browse-back-sets') navigateBrowse({ setId: '' });
   if (action.dataset.action === 'retry-browse') hydrateBrowseRoute(activeRoute, { bypassCache: true });
   if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE } });
@@ -1561,14 +1784,9 @@ root.addEventListener('click', async (event) => {
     setState({ discover: { ...getState().discover, setLimit: (Number(getState().discover.setLimit) || BROWSE_SETS_PAGE_SIZE) + BROWSE_SETS_PAGE_SIZE } });
     hydrateBrowseSetCovers();
   }
-  if (action.dataset.action === 'show-all-browse-sets') {
-    setState({ discover: { ...getState().discover, setLimit: getState().discover.sets.length } });
-    hydrateBrowseSetCovers();
-  }
   if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (action.dataset.action === 'set-browse-product-kind') setState({ discover: { ...getState().discover, productKind: action.dataset.kind, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (action.dataset.action === 'load-more-browse-products') setState({ discover: { ...getState().discover, limit: (Number(getState().discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE } });
-  if (action.dataset.action === 'show-all-browse-products') setState({ discover: { ...getState().discover, limit: getState().discover.products.length } });
   if (action.dataset.action === 'view-set-holdings') {
     setState({ portfolio: {
       ...getState().portfolio,
@@ -1623,18 +1841,34 @@ root.addEventListener('click', async (event) => {
     setState({ search });
     navigate('search', { search });
   }
+  if (action.dataset.action === 'retry-search') {
+    root.querySelector('#catalog-search')?.requestSubmit();
+    return;
+  }
   if (action.dataset.action === 'load-more-results') {
     const search = getState().search;
     const limit = Math.min(search.results.length, (Number(search.limit) || DISCOVER_RESULTS_PAGE_SIZE) + DISCOVER_RESULTS_PAGE_SIZE);
     setState({ search: { ...search, limit } });
   }
-  if (action.dataset.action === 'show-all-results') {
-    const search = getState().search;
-    setState({ search: { ...search, limit: search.results.length } });
-  }
   if (action.dataset.action === 'clear-search-filters') {
-    setState({ search: { ...getState().search, filters: {}, provider: 'all' } });
-    if (getState().search.query.length >= 2) root.querySelector('#catalog-search')?.requestSubmit();
+    setState({
+      search: { ...getState().search, category: 'all', filters: {}, provider: 'all' },
+      discover: { ...getState().discover, searchFiltersOpen: false }
+    });
+    if (getState().search.query.length >= 2) queueMicrotask(() => root.querySelector('#catalog-search')?.requestSubmit());
+    return;
+  }
+  if (action.dataset.action === 'remove-search-filter') {
+    const key = action.dataset.filter;
+    const current = getState().search;
+    const filters = { ...(current.filters || {}) };
+    let patch = {};
+    if (key === 'category') patch.category = 'all';
+    else if (key === 'provider') patch.provider = 'all';
+    else delete filters[key];
+    setState({ search: { ...current, ...patch, filters } });
+    if (current.query.length >= 2) queueMicrotask(() => root.querySelector('#catalog-search')?.requestSubmit());
+    return;
   }
   if (action.dataset.action === 'recent-search') {
     const form = root.querySelector('#catalog-search');
@@ -1658,7 +1892,7 @@ root.addEventListener('click', async (event) => {
   }
   if (action.dataset.action === 'clear-compare') setState({ compare: [] });
   if (action.dataset.action === 'open-compare') openCompareModal();
-  if (action.dataset.action === 'open-detail') {
+  if (['open-detail', 'review-catalog-identity'].includes(action.dataset.action)) {
     inspectorReturnTarget = Object.fromEntries(['index', 'holdingId', 'watchKey', 'catalogScope']
       .filter((key) => action.dataset[key] !== undefined).map((key) => [key, action.dataset[key]]));
     if (action.dataset.index !== undefined) {
@@ -1672,7 +1906,26 @@ root.addEventListener('click', async (event) => {
       if (watched) openDetail({ origin: getState().activeView === 'insights' ? 'insights' : 'portfolio', item: { ...watched.catalogRef, variant: watched.catalogRef.finish }, watched });
     }
   }
+  if (action.dataset.action === 'toggle-inspector-detent' && activeDetail) {
+    activeDetail = { ...activeDetail, detent: activeDetail.detent === 'expanded' ? 'medium' : 'expanded' };
+    render();
+    queueMicrotask(() => root.querySelector('[data-action="toggle-inspector-detent"]')?.focus({ preventScroll: true }));
+    return;
+  }
+  if (action.dataset.action === 'confirm-detail-identity' && activeDetail) {
+    activeDetail = { ...activeDetail, identityConfirmed: true };
+    render();
+    showToast('Exact item confirmed');
+    queueMicrotask(() => root.querySelector('[data-action="add-from-detail"]')?.focus({ preventScroll: true }));
+    return;
+  }
   if (action.dataset.action === 'close-detail') closeActiveDetail();
+  if (action.dataset.action === 'view-detail-purchases') {
+    activeDetail = null;
+    setState({ portfolio: { ...getState().portfolio, section: 'holdings', groupMode: 'purchases', selectionMode: false, selected: [] } });
+    navigate('portfolio', { portfolioSection: 'holdings' });
+    return;
+  }
   if (action.dataset.action === 'open-full-detail' && activeDetail) {
     history.replaceState({ ...history.state, inspector: false }, '', currentAppPath(location));
     inspectorReturnTarget = null;
@@ -1682,7 +1935,7 @@ root.addEventListener('click', async (event) => {
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
   if (action.dataset.action === 'add-from-detail' && activeDetail) {
-    holdingForm(null, { title: 'Add card to portfolio', item: { ...activeDetail.item, canonicalVariantId: activeDetail.catalogRef.canonicalVariantId } });
+    holdingForm(null, { title: 'Add item to collection', item: { ...activeDetail.item, canonicalVariantId: activeDetail.catalogRef.canonicalVariantId } });
   }
   if (action.dataset.action === 'zoom-detail-image' && activeDetail) {
     const imageUrl = safeImageUrl(activeDetail.holding?.userImage || activeDetail.item?.image || activeDetail.item?.imageSmall || activeDetail.catalogRef?.image || activeDetail.catalogRef?.imageSmall);
@@ -1749,16 +2002,18 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'mark-all-alerts-read') await markAllAlertsRead();
   if (action.dataset.action === 'add-watched') {
     const watched = getState().watchlistItems.find((entry) => entry.watchKey === action.dataset.watchKey);
-    if (watched) holdingForm(null, { title: 'Add watched card to portfolio', item: { ...watched.catalogRef, variant: watched.catalogRef.finish, canonicalVariantId: watched.canonicalVariantId } });
+    if (watched) holdingForm(null, { title: 'Add watched item to collection', item: { ...watched.catalogRef, variant: watched.catalogRef.finish, canonicalVariantId: watched.canonicalVariantId } });
   }
   if (action.dataset.action === 'edit-holding') holdingForm(getState().holdings.find((entry) => entry.id === id));
   if (action.dataset.action === 'delete-holding') confirmDelete(id);
   if (action.dataset.action === 'toggle-holding-selection') {
     const before = getState().portfolio.selected || [];
     const selected = before.includes(id) ? before.filter((entry) => entry !== id) : [...before, id];
-    setState({ portfolio: { ...getState().portfolio, selected } });
+    setState({ portfolio: { ...getState().portfolio, selectionMode: true, selected } });
   }
-  if (action.dataset.action === 'clear-holding-selection') setState({ portfolio: { ...getState().portfolio, selected: [] } });
+  if (action.dataset.action === 'start-holding-selection') setState({ portfolio: { ...getState().portfolio, groupMode: 'purchases', selectionMode: true, selected: [] } });
+  if (action.dataset.action === 'clear-holding-selection') setState({ portfolio: { ...getState().portfolio, selectionMode: false, selected: [] } });
+  if (action.dataset.action === 'show-individual-purchases') setState({ portfolio: { ...getState().portfolio, groupMode: 'purchases', selectionMode: false, selected: [], limit: 100 } });
   if (action.dataset.action === 'bulk-edit-holdings') {
     const [selectedId] = getState().portfolio.selected || [];
     if (selectedId) holdingForm(getState().holdings.find((entry) => entry.id === selectedId));
@@ -1787,7 +2042,7 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'import-json') document.querySelector('#backup-file')?.click();
   if (action.dataset.action === 'export-csv') exportCSV();
   if (action.dataset.action === 'load-demo') {
-    openModal({ title: 'Add demo collection?', content: '<p>This will add four clearly labeled demonstration holdings. They use sample values, not appraisals.</p>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" data-approve-demo>Approve demo holdings</button>', onOpen(layer) {
+    openModal({ title: 'Add demo collection?', content: '<p>This will add four clearly labeled demonstration items. They use sample values, not appraisals.</p>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" data-approve-demo>Approve demo items</button>', onOpen(layer) {
       layer.querySelector('[data-approve-demo]').addEventListener('click', async () => { closeModal(); await loadDemo(); });
     }});
   }
@@ -1808,19 +2063,32 @@ root.addEventListener('click', async (event) => {
       discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null },
       search: { ...getState().search, results: [], warnings: [], cached: false }
     });
-    showToast('Signed out; local portfolio is unchanged');
+    showToast('Signed out; local collection is unchanged');
   }
   if (action.dataset.action === 'refresh-prices') refreshPrices();
+  if (action.dataset.action === 'open-camera-scan') {
+    const input = root.querySelector('#scan-camera-input');
+    if (!input) showToast('Camera capture is unavailable here. Use Upload Photo instead.', 'warning');
+    else input.click();
+  }
+  if (action.dataset.action === 'upload-scan') root.querySelector('#scan-upload-input')?.click();
   if (action.dataset.action === 'start-multi-scan') chooseScanImage({ single: false });
   if (action.dataset.action === 'start-single-scan') chooseScanImage({ single: true });
   if (action.dataset.action === 'resume-scan') resumeScan();
   if (action.dataset.action === 'save-scan' && activeDraft) { await saveScanDraft(activeDraft); await loadLocal(); showToast('Scan saved on this device'); }
+  if (action.dataset.action === 'delete-source-photo' && activeDraft) {
+    activeDraft.sourceImage = '';
+    activeDraft.sourceImageDeletedAt = new Date().toISOString();
+    await saveScanDraft(activeDraft);
+    render();
+    showToast('Full source photo deleted; reviewed crops remain available');
+  }
   if (action.dataset.action === 'apply-acquisition-all' && activeDraft) {
     const form = root.querySelector('#bulk-acquisition-form');
     if (form) {
       await applyAcquisitionToAll(activeDraft, Object.fromEntries(new FormData(form)));
       render();
-      showToast(`Acquisition details applied to ${activeDraft.crops.length} items`);
+      showToast(`Purchase details applied to ${activeDraft.crops.length} items`);
     }
   }
   if (action.dataset.action === 'identify-crop' && activeDraft) {
@@ -1837,6 +2105,7 @@ root.addEventListener('click', async (event) => {
     catch (error) { showToast(error.message, 'warning'); }
   }
   if (action.dataset.action === 'custom-crop' && activeDraft) customCropForm(id);
+  if (action.dataset.action === 'edit-crop' && activeDraft) editCropBoundary(id);
   if (action.dataset.action === 'delete-crop' && activeDraft) { await deleteCrop(activeDraft, id); render(); showToast('Crop removed from this review'); }
   if (action.dataset.action === 'batch-add' && activeDraft) {
     action.disabled = true;
@@ -1856,6 +2125,41 @@ root.addEventListener('click', async (event) => {
       showToast(error.message || 'Approved items could not all be added', 'error');
     }
   }
+});
+
+root.addEventListener('dragover', (event) => {
+  const dropzone = event.target.closest?.('[data-scan-dropzone]');
+  if (!dropzone || !event.dataTransfer?.types?.includes('Files')) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+  dropzone.classList.add('is-dragging');
+});
+
+root.addEventListener('dragleave', (event) => {
+  const dropzone = event.target.closest?.('[data-scan-dropzone]');
+  if (dropzone && !dropzone.contains(event.relatedTarget)) dropzone.classList.remove('is-dragging');
+});
+
+root.addEventListener('drop', async (event) => {
+  const dropzone = event.target.closest?.('[data-scan-dropzone]');
+  if (!dropzone) return;
+  event.preventDefault();
+  dropzone.classList.remove('is-dragging');
+  const file = [...(event.dataTransfer?.files || [])].find((entry) => entry.type.startsWith('image/'));
+  if (!file) {
+    showToast('Drop a supported image file to begin', 'warning');
+    return;
+  }
+  await processScanFile(file, { single: false });
+});
+
+document.addEventListener('paste', async (event) => {
+  if (getState().activeView !== 'add' || event.target.closest?.('input, textarea, [contenteditable="true"]')) return;
+  const file = [...(event.clipboardData?.items || [])]
+    .find((item) => item.kind === 'file' && item.type.startsWith('image/'))?.getAsFile();
+  if (!file) return;
+  event.preventDefault();
+  await processScanFile(file, { single: false });
 });
 
 root.addEventListener('submit', async (event) => {
@@ -1928,15 +2232,16 @@ root.addEventListener('keydown', (event) => {
     result.click();
     return;
   }
-  const inspector = root.querySelector('.quick-inspector');
-  if (!inspector) return;
+  const dialog = root.querySelector('.quick-inspector, .category-picker, .search-filter-panel');
+  if (!dialog) return;
   if (event.key === 'Escape') {
     event.preventDefault();
-    closeActiveDetail();
+    const close = dialog.querySelector('[data-action="close-detail"], [data-action="close-category-picker"], [data-action="close-search-filters"]');
+    close?.click();
     return;
   }
   if (event.key !== 'Tab') return;
-  const focusable = [...inspector.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+  const focusable = [...dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true');
   if (!focusable.length) return;
   const first = focusable[0];
@@ -1951,10 +2256,18 @@ root.addEventListener('keydown', (event) => {
 });
 
 root.addEventListener('change', async (event) => {
+  if (event.target.matches('[data-scan-input]')) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    await processScanFile(file, { single: false });
+    return;
+  }
   if (activeDraft && event.target.matches('[data-crop-acquisition]')) {
     const cropId = event.target.closest('[data-crop-id]')?.dataset.cropId;
     const field = event.target.dataset.cropAcquisition;
-    if (cropId && field) await setCropAcquisition(activeDraft, cropId, { [field]: event.target.value });
+    if (cropId && field) await setCropAcquisition(activeDraft, cropId, {
+      [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value
+    });
   }
   if (event.target.matches('#catalog-search [name="category"]')) {
     const form = event.target.form;
@@ -1972,6 +2285,7 @@ root.addEventListener('change', async (event) => {
     setState({ discover: { ...getState().discover, years: [...selected], setLimit: BROWSE_SETS_PAGE_SIZE } });
   }
   if (event.target.matches('[data-browse-product-sort]')) setState({ discover: { ...getState().discover, productSort: event.target.value, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
+  if (event.target.matches('[data-search-sort]')) setState({ search: { ...getState().search, sort: event.target.value, limit: DISCOVER_RESULTS_PAGE_SIZE } });
   if (event.target.matches('[data-portfolio-query]')) setState({ portfolio: { ...getState().portfolio, query: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-category]')) setState({ portfolio: { ...getState().portfolio, category: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-sort]')) setState({ portfolio: { ...getState().portfolio, sort: event.target.value, limit: 100 } });
@@ -1986,6 +2300,12 @@ root.addEventListener('change', async (event) => {
   if (event.target.matches('[data-watchlist-query]')) setState({ watchlist: { ...getState().watchlist, query: event.target.value } });
   if (event.target.matches('[data-watchlist-category]')) setState({ watchlist: { ...getState().watchlist, category: event.target.value } });
   if (event.target.matches('[data-watchlist-sort]')) setState({ watchlist: { ...getState().watchlist, sort: event.target.value } });
+  if (event.target.matches('[data-scenario-assumption]')) {
+    const key = event.target.dataset.scenarioAssumption;
+    const allowed = ['marketDirection', 'category', 'categoryDirection', 'itemId', 'itemDirection', 'volatility', 'manualValues'];
+    if (allowed.includes(key)) setState({ insights: { ...getState().insights, scenarioAssumptions: { ...(getState().insights.scenarioAssumptions || {}), [key]: event.target.value }, expandedScenarioId: '' } });
+  }
+  if (event.target.matches('[data-scenario-sort]')) setState({ insights: { ...getState().insights, scenarioSort: event.target.value, expandedScenarioId: '' } });
   if (event.target.matches('[data-setting]')) {
     const key = event.target.dataset.setting;
     const value = typeof SETTINGS_DEFAULTS[key] === 'number' ? Number(event.target.value) : event.target.value;
@@ -2088,7 +2408,7 @@ loadLocal().then(() => {
   ]);
 }).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
   setState({ ready: true });
-  showToast(error.message || 'Could not open local portfolio', 'error', 8000);
+  showToast(error.message || 'Could not open local collection', 'error', 8000);
 });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {

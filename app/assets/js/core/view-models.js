@@ -153,6 +153,9 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
     priceUpdatedAt: price === null && forecastBasis !== null
       ? intelligence.observed.observedAt
       : reference.priceUpdatedAt,
+    priceSource: price === null && forecastBasis !== null
+      ? intelligence.observed.source
+      : reference.priceSource,
     forecastStatus: (intelligence && Object.keys(intelligence.forecasts).length) || forecast30d || forecast90d ? 'available' : 'unavailable',
     forecast30d,
     forecast90d,
@@ -234,7 +237,7 @@ export function shellViewModel(state = {}) {
     error: 'Synchronization needs attention'
   };
   return {
-    portfolioLabel: 'Local portfolio',
+    portfolioLabel: text(state.settings?.collectionName, 80) || 'Personal Collection',
     syncStatus,
     syncLabel: labels[syncStatus],
     accountLabel: session?.user?.email || 'Settings',

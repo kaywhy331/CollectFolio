@@ -10,6 +10,7 @@ export const ONBOARDING_STEPS = Object.freeze(['welcome', 'currency', 'add', 'co
 
 export const SETTINGS_DEFAULTS = Object.freeze({
   settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+  collectionName: 'Personal Collection',
   currency: 'USD',
   theme: 'dark',
   defaultCondition: 'Near Mint',
@@ -80,6 +81,7 @@ export function normalizeSettings(input = {}, { hasHoldings = false } = {}) {
   return {
     ...SETTINGS_DEFAULTS,
     settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
+    collectionName: string(source.collectionName, 80) || SETTINGS_DEFAULTS.collectionName,
     currency: allowed(source.currency, CURRENCIES, SETTINGS_DEFAULTS.currency),
     theme: allowed(source.theme, THEMES, SETTINGS_DEFAULTS.theme),
     defaultCondition: allowed(source.defaultCondition, DEFAULT_CONDITIONS, SETTINGS_DEFAULTS.defaultCondition),
@@ -146,7 +148,7 @@ export function friendlyCloudError(error, { online = true } = {}) {
   if (/session|sign in|token|unauthorized|401|403/.test(message)) {
     return 'Your cloud session needs attention. Sign in again, then retry synchronization.';
   }
-  return 'Cloud backup could not finish. Your local portfolio is unchanged; retry when you are ready.';
+  return 'Cloud backup could not finish. Your local collection is unchanged; retry when you are ready.';
 }
 
 export function formatStorageBytes(value) {

@@ -64,6 +64,8 @@ export function catalogReferenceForItem(item = {}, options = {}) {
     finish,
     conditionClass,
     marketCondition,
+    productType: item.productType || item.type || '',
+    productFormat: item.productFormat || item.format || item.subTypeName || '',
     image: item.image || '',
     imageSmall: item.imageSmall || item.image || '',
     // catalog-v2 B2: additive provider display data (see

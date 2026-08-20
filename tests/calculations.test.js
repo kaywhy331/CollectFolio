@@ -46,6 +46,18 @@ test('portfolio summary uses exact cost and gain rules', () => {
   assert.ok(Math.abs(summary.returnPercent - 7.407407) < 0.001);
 });
 
+test('gain remains unavailable until both an accepted value and cost basis exist', () => {
+  const noPrice = holding({ id: 'no-price', purchasePrice: 10, fees: 0 });
+  noPrice.item.price = null;
+  const noCost = holding({ id: 'no-cost', price: 20, purchasePrice: '', fees: '' });
+  assert.equal(holdingGain(noPrice), null);
+  assert.equal(holdingGain(noCost), null);
+  const summary = portfolioSummary([noPrice, noCost]);
+  assert.equal(summary.gainEligibleItems, 0);
+  assert.equal(summary.missingGainItems, 2);
+  assert.equal(summary.returnPercent, null);
+});
+
 test('holdings filter and sort by value, gain, name, and recency', () => {
   const rows = [holding({ id: 'b', name: 'Beta', price: 8 }), holding({ id: 'a', name: 'Alpha', price: 20, category: 'magic', updatedAt: '2026-02-01T00:00:00.000Z' })];
   assert.deepEqual(filterAndSortHoldings(rows, { sort: 'value-desc' }).map((row) => row.id), ['a', 'b']);
@@ -72,7 +84,7 @@ test('holdings combine collection filters and expanded sorting without hiding un
   assert.deepEqual(filterAndSortHoldings(rows, { filters: { setName: 'beta' } }).map((row) => row.id), ['manual']);
   rows[2].item.setName = 'Beta Set 2';
   assert.deepEqual(filterAndSortHoldings(rows, { filters: { setName: 'Beta Set', setNameExact: true } }).map((row) => row.id), ['manual']);
-  assert.deepEqual(filterAndSortHoldings(rows, { sort: 'gain-asc' }).map((row) => row.id), ['manual', 'unpriced', 'graded']);
+  assert.deepEqual(filterAndSortHoldings(rows, { sort: 'gain-asc' }).map((row) => row.id), ['manual', 'graded', 'unpriced']);
 });
 
 test('daily snapshots use stable currency-qualified portfolio IDs', () => {

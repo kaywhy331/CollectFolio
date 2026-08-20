@@ -72,6 +72,51 @@ test('subsequent approved publications evaluate percent, trend, range, and forec
   assert.equal(new Set(changed.alerts.map((entry) => entry.id)).size, 4);
 });
 
+test('catalog price availability transitions create plain price alerts', () => {
+  const unpriced = publication();
+  unpriced.payload.observed.price = null;
+  const original = evaluateWatchlistItemAlerts(baseEntry, unpriced, '2026-08-05T00:00:00Z');
+  assert.deepEqual(original.alerts, []);
+
+  const newlyPriced = evaluateWatchlistItemAlerts(
+    { ...baseEntry, intelligenceBaseline: original.baseline },
+    publication(100),
+    '2026-08-06T00:00:00Z'
+  );
+  assert.deepEqual(newlyPriced.alerts.map((entry) => entry.kind), ['new_catalog_price']);
+
+  const missingAgain = publication();
+  missingAgain.payload.observed.price = null;
+  missingAgain.publishedAt = '2026-08-07T00:00:00Z';
+  const becameUnpriced = evaluateWatchlistItemAlerts(
+    { ...baseEntry, intelligenceBaseline: newlyPriced.baseline },
+    missingAgain,
+    '2026-08-07T00:00:00Z'
+  );
+  assert.deepEqual(becameUnpriced.alerts.map((entry) => entry.kind), ['became_unpriced']);
+});
+
+test('an approved price creates one stale transition when its expiry passes', () => {
+  const expiring = { ...publication(100), expiresAt: '2026-08-10T00:00:00Z' };
+  const fresh = evaluateWatchlistItemAlerts(baseEntry, expiring, '2026-08-09T00:00:00Z');
+  assert.equal(fresh.baseline.stale, false);
+
+  const stale = evaluateWatchlistItemAlerts(
+    { ...baseEntry, intelligenceBaseline: fresh.baseline },
+    expiring,
+    '2026-08-11T00:00:00Z'
+  );
+  assert.equal(stale.baseline.stale, true);
+  assert.deepEqual(stale.alerts.map((entry) => entry.kind), ['price_stale']);
+
+  const repeated = evaluateWatchlistItemAlerts(
+    { ...baseEntry, intelligenceBaseline: stale.baseline },
+    expiring,
+    '2026-08-12T00:00:00Z'
+  );
+  assert.deepEqual(repeated.alerts, []);
+});
+
 test('batch evaluation ignores unmapped items and indexes canonical variants', () => {
   const result = evaluateWatchlistAlerts(
     [baseEntry, { watchKey: 'source:unmapped', canonicalVariantId: '' }],

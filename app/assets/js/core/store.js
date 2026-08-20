@@ -16,11 +16,14 @@ let state = {
   search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', limit: 200, loading: false, results: [], warnings: [] },
   discover: { mode: 'search', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setLimit: 120, productQuery: '', productSort: 'number', limit: 120, loading: false, games: [], sets: [], products: [], selectedSet: null, warnings: [], error: '', loadedGame: '', loadedSetId: '' },
   portfolio: {
-    section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', selected: [], limit: 100,
+    section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', groupMode: 'grouped', selectionMode: false, selected: [], limit: 100,
     setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: 60
   },
   watchlist: { query: '', category: 'all', sort: 'forecast-desc' },
-  insights: { view: 'forecasts', horizon: 90, alertFilter: 'all' },
+  insights: {
+    view: 'performance', horizon: 90, alertFilter: 'all', scenarioSort: 'upside', expandedScenarioId: '', expandedPublishedId: '',
+    scenarioAssumptions: { marketDirection: 'unchanged', category: '', categoryDirection: 'unchanged', itemId: '', itemDirection: 'unchanged', volatility: 'typical', manualValues: 'steady' }
+  },
   compare: [],
   // trajectoryForecasts (CollectFolio's own derived trajectory-v1 stats,
   // served anonymously from our own worker under the community-free-access
