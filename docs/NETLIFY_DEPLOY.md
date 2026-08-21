@@ -15,7 +15,7 @@
 
 ### Existing-project account-key migration
 
-For an existing deployment, back up the database and deploy application `0.8.27`
+For an existing deployment, back up the database and deploy application `0.8.27` or later
 before applying `supabase/migrations/0021_account_owned_sync_keys.sql`. The new client
 tries `(user_id,id)` first and recognizes only PostgreSQL `42P10` as the temporary
 pre-migration fallback. Apply 0021 during a short maintenance window because it takes
@@ -41,7 +41,7 @@ In Supabase, open **Project Settings → API Keys** and copy the publishable key
 ```text
 SUPABASE_URL=https://agmjgyyvhfcivbwdlvzk.supabase.co
 SUPABASE_ANON_KEY=<your Supabase publishable/anon key>
-APP_VERSION=0.8.27
+APP_VERSION=0.8.28
 ENABLE_TESSERACT=true
 ENABLE_WATCHLISTS=true
 ENABLE_SET_BROWSING=true
@@ -91,7 +91,7 @@ After Netlify assigns a URL:
 When any file under `app/` changes, update the cache name in `app/sw.js` before a production release, for example:
 
 ```js
-const CACHE = 'collectfolio-shell-v0.8.27';
+const CACHE = 'collectfolio-shell-v0.8.28';
 ```
 
 This ensures installed PWAs replace the prior shell reliably.

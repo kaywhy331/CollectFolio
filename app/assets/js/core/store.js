@@ -59,6 +59,7 @@ let state = {
   },
   storage: { usage: null, quota: null, estimating: false, error: '' },
   scanDraftCount: 0,
+  localOpenError: '',
   ready: false
 };
 

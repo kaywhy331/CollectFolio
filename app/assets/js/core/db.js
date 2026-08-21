@@ -47,8 +47,15 @@ function transactionDone(transaction) {
 export function openDatabase() {
   if (!globalThis.indexedDB) return Promise.reject(new Error('IndexedDB is unavailable in this browser.'));
   if (databasePromise) return databasePromise;
+  let blocked = false;
   databasePromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(NAME, VERSION);
+    request.addEventListener('blocked', () => {
+      blocked = true;
+      const error = new Error('Close every other CollectFolio tab or installed app window, then try again. Your collection remains on this device.');
+      error.code = 'LOCAL_DATABASE_BLOCKED';
+      reject(error);
+    }, { once: true });
     request.addEventListener('upgradeneeded', (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains('holdings')) {
@@ -98,7 +105,20 @@ export function openDatabase() {
         });
       }
     });
-    request.addEventListener('success', () => resolve(request.result), { once: true });
+    request.addEventListener('success', () => {
+      const db = request.result;
+      if (typeof db.addEventListener === 'function') {
+        db.addEventListener('versionchange', () => {
+          db.close();
+          databasePromise = undefined;
+        });
+        db.addEventListener('close', () => { databasePromise = undefined; });
+      }
+      // A previously blocked request can finish after this page has already
+      // presented recovery guidance. Do not retain that unclaimed connection.
+      if (blocked) db.close?.();
+      else resolve(db);
+    }, { once: true });
     request.addEventListener('error', () => reject(request.error), { once: true });
   });
   return databasePromise;
