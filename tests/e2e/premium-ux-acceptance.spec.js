@@ -116,6 +116,10 @@ test('keyboard workflow and 200% text zoom preserve core navigation without clip
 });
 
 test('all primary destinations have no serious or critical WCAG 2.2 A/AA violations', async ({ page }) => {
+  // Five complete route scans can exceed the generic interaction timeout on
+  // slower browser runners; Axe runtime is not an application performance
+  // budget, and every violation assertion below remains unchanged.
+  test.slow();
   await completeFirstUse(page);
   for (const [path, heading] of [
     ['/home', 'Home'], ['/discover', 'Discover'], ['/scan', 'Scan'],
@@ -182,6 +186,10 @@ test('first-use performance stays inside the LCP, interaction, and layout-shift 
 });
 
 test('a failed catalog image exposes a retry action and recovers in place', async ({ page }) => {
+  // This scenario intentionally waits through multiple failed image loads
+  // before exercising the recovery path; keep shared-runner contention from
+  // consuming the functional assertion's entire timeout budget.
+  test.slow();
   const catalogOrigin = 'https://premium-image-retry.example.test';
   let imageAttempts = 0;
   let allowImage = false;

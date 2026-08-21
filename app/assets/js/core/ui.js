@@ -141,8 +141,11 @@ export function trendChart(snapshots = [], currency = 'USD') {
   if (points.length < 2) return '<div class="empty-chart"><strong>Collection history starts here</strong><span>We will chart changes after another verified value is recorded.</span></div>';
   const width = 760;
   const height = 300;
-  const left = 76;
-  const right = 742;
+  // Leave enough room for the mobile axis treatment. SVG text otherwise
+  // scales with this fixed desktop viewBox and becomes unreadably small at
+  // the narrowest supported viewport.
+  const left = 96;
+  const right = 744;
   const chartTop = 18;
   const bottom = 252;
   const showCost = points.every((point) => point.costBasis !== null);
@@ -166,7 +169,7 @@ export function trendChart(snapshots = [], currency = 'USD') {
     l: `${shortDate(point.date)} — ${formatCurrency(point.marketValue, currency)}`
   }));
   const costTitle = showCost ? `; latest cost ${formatCurrency(latest.costBasis, currency)}` : '';
-  return `<div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Collection market value${showCost ? ' and cost basis' : ''} with currency scale and dates" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
+  return `<div class="chart-wrap collection-trend-chart"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Collection market value${showCost ? ' and cost basis' : ''} with currency scale and dates" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
     <title>Latest market ${escapeHTML(formatCurrency(latest.marketValue, currency))}${escapeHTML(costTitle)}</title>
     ${axisMarkup({ lower, upper, currency, left, right, y, xLabels })}
     <polyline points="${coords('marketValue')}" class="chart-line chart-market"/>

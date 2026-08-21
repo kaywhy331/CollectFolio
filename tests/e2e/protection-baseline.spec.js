@@ -363,6 +363,43 @@ test('routes restore filters and Quick Inspector preserves context, focus, and f
   await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
 });
 
+test('collection chart labels remain readable and unclipped across supported viewports', async ({ page }) => {
+  test.slow();
+  await seedLegacyIndexedDB(page);
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  for (const viewport of [
+    { name: 'narrow mobile', width: 320, height: 720 },
+    { name: 'iPhone class', width: 390, height: 844 },
+    { name: 'large Android', width: 412, height: 915 },
+    { name: 'mobile landscape', width: 740, height: 412 },
+    { name: 'small tablet', width: 768, height: 1024 },
+    { name: 'large tablet', width: 1024, height: 900 },
+    { name: 'laptop', width: 1366, height: 768 },
+    { name: 'large desktop', width: 1920, height: 1080 }
+  ]) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    const axisLabels = await page.locator('.overview-performance .collection-trend-chart .chart-axis-label').evaluateAll((labels) => {
+      const chart = labels[0]?.closest('.collection-trend-chart')?.getBoundingClientRect();
+      return labels.map((label) => {
+        const rect = label.getBoundingClientRect();
+        return {
+          height: rect.height,
+          left: rect.left,
+          right: rect.right,
+          chartLeft: chart?.left,
+          chartRight: chart?.right
+        };
+      });
+    });
+    expect(axisLabels.length, `${viewport.name} chart labels`).toBeGreaterThan(0);
+    expect(Math.min(...axisLabels.map(({ height }) => height)), `${viewport.name} chart label height`).toBeGreaterThanOrEqual(8);
+    expect(axisLabels.every(({ left, right, chartLeft, chartRight }) => (
+      left >= chartLeft - 1 && right <= chartRight + 1
+    )), `${viewport.name} chart label clipping`).toBe(true);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+});
+
 test('version-4 local data hydrates calculations, holdings, and scan recovery', async ({ page }) => {
   await seedLegacyIndexedDB(page);
   const migration = await page.evaluate(async () => {
