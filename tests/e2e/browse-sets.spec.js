@@ -66,6 +66,10 @@ async function mockRuntimeConfig(page) {
 async function mockFlagshipCatalog(page) {
   const metrics = { groupRequests: 0, productPageRequests: 0 };
   await mockRuntimeConfig(page);
+  await page.route('https://tcgplayer-cdn.tcgplayer.com/**', (route) => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="14" viewBox="0 0 10 14"><rect width="10" height="14" fill="#202832"/></svg>'
+  }));
   const categoryResponse = (route, category) => {
     metrics.groupRequests += 1;
     return route.fulfill({
@@ -90,10 +94,10 @@ async function mockFlagshipCatalog(page) {
   }));
   await page.route(`${TCGCSV_ORIGIN}/catalog/groups/3/1102/products**`, (route) => {
     const url = new URL(route.request().url());
-    const limit = Number.parseInt(url.searchParams.get('limit') || '24', 10);
+    const limit = Number.parseInt(url.searchParams.get('limit') || '48', 10);
     const cursor = Number.parseInt(url.searchParams.get('cursor') || '0', 10);
     const products = pokemonProducts(1102, 121);
-    if (limit === 24) metrics.productPageRequests += 1;
+    if (limit === 48) metrics.productPageRequests += 1;
     return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -110,10 +114,10 @@ async function mockFlagshipCatalog(page) {
   return metrics;
 }
 
-test('Browse Sets pages a flagship set in restorable 24-card batches', async ({ page }) => {
+test('Browse Sets pages a flagship set in searchable 48-tile pages', async ({ page }) => {
   // This exercises network cursor paging, state restoration, and a full axe
   // pass. Allow cold browser startup without weakening any assertion.
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   const metrics = await mockFlagshipCatalog(page);
   await skipOnboarding(page);
   await page.goto('/discover/pokemon');
@@ -129,25 +133,32 @@ test('Browse Sets pages a flagship set in restorable 24-card batches', async ({ 
 
   await expect(page).toHaveURL(/\/sets\/silver-tempest-3-1102\?game=pokemon$/);
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
-  await expect(page.getByText('24 of 121 products loaded', { exact: true })).toBeVisible();
-  await expect(page.locator('.result-card')).toHaveCount(24);
+  await expect(page.getByText('48 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.locator('.result-card')).toHaveCount(48);
   await expect(page.locator('.result-card h3').first()).toHaveText('Card 1');
-  await expect(page.locator('.result-card h3').last()).toHaveText('Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved');
+  await expect(page.locator('.result-card h3').nth(23)).toHaveText('Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved');
+  await expect(page.locator('.catalog-pagination')).toContainText('Page 1 of 3');
   await expect.poll(() => metrics.productPageRequests).toBe(1);
 
-  await page.getByRole('button', { name: 'Load 24 more' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('.result-card')).toHaveCount(48);
-  await expect(page.getByText('48 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.getByText('96 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.locator('.result-card h3').first()).toHaveText('Card 49');
+  await expect(page.locator('.result-card h3').last()).toHaveText('Card 96');
+  await expect(page.locator('.catalog-pagination')).toContainText('Page 2 of 3');
   await expect.poll(() => metrics.productPageRequests).toBe(2);
 
-  await page.getByPlaceholder('Search this set…').fill('Card 48');
+  // Search is evaluated against the complete set, not just the two pages
+  // already visited; Card 121 forces the final cursor page to be fetched.
+  await page.getByPlaceholder('Search this set…').fill('Card 121');
   await expect(page.locator('.result-card')).toHaveCount(1);
-  await expect(page.locator('.result-card h3')).toHaveText('Card 48');
+  await expect(page.locator('.result-card h3')).toHaveText('Card 121');
+  await expect.poll(() => metrics.productPageRequests).toBe(3);
 
-  await page.reload();
-  await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
-  await expect(page.getByText('24 of 121 products loaded', { exact: true })).toBeVisible();
-  await expect(page.locator('.result-card')).toHaveCount(24);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText('48 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.locator('.result-card')).toHaveCount(48);
   await page.getByPlaceholder('Search this set…').fill('Card 24');
   await expect(page.locator('.result-card')).toHaveCount(1);
   await expect(page.locator('.result-card h3')).toHaveText('Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved');
@@ -196,7 +207,7 @@ test('Browse Sets keeps popular games visible and opens the complete searchable 
   await expect(page.locator('[data-game-search-text]')).toHaveCount(90);
 });
 
-test('Browse Sets filters a flagship game by selected years and groups sets into families', async ({ page }) => {
+test('Browse Sets filters by selected years while preserving one newest-first tile grid', async ({ page }) => {
   await mockFlagshipCatalog(page);
   await skipOnboarding(page);
   await page.goto('/discover/pokemon');
@@ -213,6 +224,8 @@ test('Browse Sets filters a flagship game by selected years and groups sets into
   await page.locator('[data-browse-year][value="1999"]').check();
   await expect(page.getByText('2 sets', { exact: true })).toBeVisible();
 
-  await page.locator('[data-browse-set-group]').selectOption('year');
-  await expect(page.locator('.browse-set-group summary').first()).toContainText('2022');
+  await expect(page.locator('[data-browse-set-group]')).toHaveCount(0);
+  await expect(page.locator('.browse-set-group')).toHaveCount(0);
+  await expect(page.locator('.browse-set-tile').first()).toContainText('Silver Tempest');
+  await expect(page.locator('.browse-set-tile').last()).toContainText('Base Set');
 });

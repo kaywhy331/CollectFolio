@@ -98,12 +98,12 @@ export function browsePath(browse = {}) {
   const setSort = BROWSE_SET_SORTS.has(browse.sort) ? browse.sort : 'newest';
   const setScope = BROWSE_SET_SCOPES.has(browse.scope) ? browse.scope : 'all';
   const productSort = BROWSE_PRODUCT_SORTS.has(browse.productSort) ? browse.productSort : 'price-desc';
-  const productKind = BROWSE_PRODUCT_KINDS.has(browse.productKind) ? browse.productKind : 'cards';
+  const productKind = BROWSE_PRODUCT_KINDS.has(browse.productKind) ? browse.productKind : 'all';
   if (setId) params.set('game', game);
   if (!setId && setSort !== 'newest') params.set('sort', setSort);
   if (!setId && setScope !== 'all') params.set('scope', setScope);
   if (setId && productSort !== 'price-desc') params.set('sort', productSort);
-  if (setId && productKind !== 'cards') params.set('type', productKind);
+  if (setId && productKind !== 'all') params.set('type', productKind);
   return `${base}${params.size ? `?${params}` : ''}`;
 }
 
@@ -130,7 +130,7 @@ function discoverRoute(url, pathname = '/discover') {
       ? (BROWSE_PRODUCT_SORTS.has(requestedSort) ? requestedSort : 'price-desc')
       : (BROWSE_SET_SORTS.has(requestedSort) ? requestedSort : 'newest');
     const scope = BROWSE_SET_SCOPES.has(requestedScope) ? requestedScope : 'all';
-    const productKind = setId && BROWSE_PRODUCT_KINDS.has(requestedType) ? requestedType : 'cards';
+    const productKind = setId && BROWSE_PRODUCT_KINDS.has(requestedType) ? requestedType : 'all';
     const browse = { game, setId, setSlug, sort: setId ? 'newest' : sort, scope, productSort: setId ? sort : 'price-desc', productKind };
     return route('discover', 'search', browsePath(browse), {
       mode: 'browse',
@@ -311,7 +311,7 @@ export function routeStatePatch(appRoute, state = {}) {
     patch.search = {
       ...state.search,
       ...appRoute.search,
-      ...(changed ? { loading: false, results: [], warnings: [], cached: false } : {})
+      ...(changed ? { page: 1, loading: false, results: [], warnings: [], cached: false } : {})
     };
     patch.discover = { ...state.discover, mode: 'search' };
   }
@@ -325,10 +325,13 @@ export function routeStatePatch(appRoute, state = {}) {
       mode: 'browse',
       categoryPickerOpen: false,
       query: gameChanged ? '' : current.query || '',
-      setLimit: gameChanged ? 120 : current.setLimit || 120,
+      setPage: gameChanged ? 1 : current.setPage || 1,
+      setLimit: 48,
       productQuery: setChanged ? '' : current.productQuery || '',
-      limit: setChanged ? 120 : current.limit || 120,
+      productPage: setChanged ? 1 : current.productPage || 1,
+      limit: 48,
       loading: false,
+      productsLoadingMore: false,
       error: '',
       warnings: [],
       ...(gameChanged ? { sets: [], loadedGame: '' } : {}),

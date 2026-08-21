@@ -121,6 +121,7 @@ test('TCGCSV mapping retains source games, finishes, raw price fields, and unava
   assert.equal(set.gameId, 'tcgcsv-category-3');
   assert.equal(set.game, 'Pokémon');
   assert.equal(set.cardCount, 2);
+  assert.equal(set.releasedAt, '1999-01-09');
   const otherSet = normalizeTCGCSVGroup({
     categoryId: 68, groupId: 1000, name: 'Romance Dawn'
   }, [{ categoryId: 68, displayName: 'One Piece Card Game' }]);
@@ -144,6 +145,7 @@ test('TCGCSV mapping retains source games, finishes, raw price fields, and unava
   assert.equal(product.pricingEntitlement, 'community-free-access');
   assert.equal(product.category, 'tcgcsv-category-3');
   assert.equal(product.game, 'Pokémon');
+  assert.equal(product.releasedAt, '1999-01-09');
   assert.equal(product.priceOptions.length, 2);
   assert.equal(product.priceOptions[0].directLowPrice, 9);
   assert.equal(product.priceOptions[1].price, null);

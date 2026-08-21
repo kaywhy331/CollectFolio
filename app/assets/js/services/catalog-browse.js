@@ -62,7 +62,7 @@ export function clearBrowseCatalogCache() {
   requestsInFlight.clear();
 }
 
-function productPageCacheKey(gameId, externalId, cursor = '', limit = 24) {
+function productPageCacheKey(gameId, externalId, cursor = '', limit = 48) {
   return `products-page:${gameId}:${externalId}:${cursor}:${limit}`;
 }
 
@@ -210,8 +210,8 @@ export async function loadTCGCSVSetCoverImage(set, { bypassCache = false, random
   if (set?.provider !== 'tcgcsv' || !set.externalId) return '';
   return cached(`cover:${set.id}`, async () => {
     const page = await cached(
-      productPageCacheKey(set.gameId, set.externalId, '', 24),
-      () => getTCGCSVGroupProductsPage(set.externalId, { limit: 24 }),
+      productPageCacheKey(set.gameId, set.externalId, '', 48),
+      () => getTCGCSVGroupProductsPage(set.externalId, { limit: 48 }),
       bypassCache
     );
     return pickTCGCSVSetCover(page.products, random);
@@ -413,12 +413,12 @@ export async function loadCatalogSetProductsPage({
   gameId,
   setId,
   cursor = '',
-  limit = 24,
+  limit = 48,
   bypassCache = false
 } = {}) {
   const game = catalogGame(gameId);
   const externalId = String(setId || '').trim();
-  const pageLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 24));
+  const pageLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 48));
   if (!game || !externalId) throw new Error('Choose a supported game and set.');
   const adapter = adapters[game.provider];
   if (!adapter) throw new Error('This card game does not have an approved browse catalog yet.');

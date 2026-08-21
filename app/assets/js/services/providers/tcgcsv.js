@@ -186,7 +186,7 @@ export function normalizeTCGCSVProduct(product = {}, {
   const image = extendedImage || tcgcsvProductImageUrl(productId, 1000);
   const imageSmall = extendedImage || tcgcsvProductImageUrl(productId, 400);
   const setName = group.name || product.groupName || '';
-  const releasedAt = group.publishedOn || '';
+  const releasedAt = group.publishedOn || product.groupPublishedOn || product.publishedOn || product.releaseDate || '';
   const externalId = `${categoryId}:${groupId}:${productId}`;
   return {
     id: `tcgcsv:${externalId}`,
@@ -203,6 +203,7 @@ export function normalizeTCGCSVProduct(product = {}, {
     variant: preferred?.finish || priceOptions[0]?.finish || '',
     rarity: product.rarity || extendedValue(product, ['rarity']),
     cardType: product.cardType || extendedValue(product, ['card type']),
+    releasedAt,
     year: String(releasedAt).slice(0, 4),
     image,
     imageSmall,
@@ -347,12 +348,12 @@ export async function getTCGCSVGroupProducts(setId) {
 // without downloading and enriching every product in a large group first.
 export async function getTCGCSVGroupProductsPage(setId, {
   cursor = '',
-  limit = 24,
+  limit = 48,
   session,
   fetchImpl
 } = {}) {
   const { categoryId, groupId } = groupIdentity(setId);
-  const pageLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 24));
+  const pageLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 48));
   const payload = await requestTCGCSVCatalog(
     `/catalog/groups/${categoryId}/${groupId}/products`,
     { params: { limit: pageLimit, cursor }, session, fetchImpl }

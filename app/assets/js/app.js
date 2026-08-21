@@ -64,6 +64,8 @@ let searchGeneration = 0;
 let browseGeneration = 0;
 let catalogGamesGeneration = 0;
 let browseFilterTimer = null;
+let browseProductSearchTimer = null;
+let browseProductExpansionPromise = null;
 let routeHydrationId = 0;
 let identificationRun = 0;
 
@@ -668,10 +670,14 @@ const coverRequestsInFlight = new Set();
 async function hydrateBrowseSetCovers() {
   const discover = getState().discover || {};
   if (activeRoute?.key !== 'discover' || discover.setId || discover.loading || !Array.isArray(discover.sets)) return;
-  const limit = Math.max(BROWSE_SETS_PAGE_SIZE, Number(discover.setLimit) || BROWSE_SETS_PAGE_SIZE);
-  const visible = filterCatalogSets(discover.sets, {
+  if (coverRequestsInFlight.size) return;
+  const sets = filterCatalogSets(discover.sets, {
     query: discover.query, sort: discover.sort, scope: discover.scope, years: discover.years
-  }).slice(0, limit);
+  });
+  const totalPages = Math.max(1, Math.ceil(sets.length / BROWSE_SETS_PAGE_SIZE));
+  const page = Math.min(totalPages, Math.max(1, Number.parseInt(discover.setPage, 10) || 1));
+  const start = (page - 1) * BROWSE_SETS_PAGE_SIZE;
+  const visible = sets.slice(start, start + BROWSE_SETS_PAGE_SIZE);
   const covers = discover.setCovers || {};
   const pending = visible.filter((set) =>
     set.provider === 'tcgcsv' && covers[set.id] === undefined && !coverRequestsInFlight.has(set.id))
@@ -705,6 +711,7 @@ async function hydrateBrowseSetCovers() {
 
 async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
   if (route.key !== 'discover' || route.mode !== 'browse' || getState().featureFlags?.setBrowsing === false) return;
+  clearTimeout(browseProductSearchTimer);
   const generation = ++browseGeneration;
   const requested = route.browse;
   if (requested.game === 'all' && !requested.setId) {
@@ -714,6 +721,8 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
       productsLoadingMore: false,
       productNextCursor: '',
       productTotal: 0,
+      setPage: 1,
+      productPage: 1,
       sets: [],
       products: [],
       selectedSet: null,
@@ -730,6 +739,7 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
     productsLoadingMore: false,
     productNextCursor: '',
     productTotal: 0,
+    productPage: 1,
     products: [],
     selectedSet: null,
     error: '',
@@ -761,6 +771,8 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
       productsLoadingMore: false,
       productNextCursor: productPage.nextCursor,
       productTotal: productPage.total,
+      productKind: requested.productKind || 'all',
+      productPage: 1,
       limit: BROWSE_PRODUCTS_PAGE_SIZE,
       selectedSet,
       warnings: response.warnings || [],
@@ -791,66 +803,85 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
   }
 }
 
-async function loadMoreBrowseProducts() {
+async function loadBrowseProducts({ page = 1, exhaust = false } = {}) {
+  if (browseProductExpansionPromise) {
+    await browseProductExpansionPromise;
+    return loadBrowseProducts({ page, exhaust });
+  }
   const discover = getState().discover || {};
-  if (discover.productsLoadingMore || !discover.setId) return;
-  const visibleLimit = Number(discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE;
-  if ((discover.products || []).length > visibleLimit) {
-    setState({ discover: {
-      ...discover,
-      limit: visibleLimit + BROWSE_PRODUCTS_PAGE_SIZE
-    } });
+  if (!discover.setId) return;
+  const requestedPage = Math.max(1, Number.parseInt(page, 10) || 1);
+  const targetCount = requestedPage * BROWSE_PRODUCTS_PAGE_SIZE;
+  if (!exhaust && (discover.products || []).length >= targetCount) {
+    setState({ discover: { ...discover, productPage: requestedPage } });
     return;
   }
   if (!discover.productNextCursor) {
-    setState({ discover: {
-      ...discover,
-      limit: (Number(discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE
-    } });
+    const totalPages = Math.max(1, Math.ceil((discover.products || []).length / BROWSE_PRODUCTS_PAGE_SIZE));
+    setState({ discover: { ...discover, productPage: Math.min(requestedPage, totalPages) } });
     return;
   }
 
   const requestedPath = activeRoute?.canonicalPath;
   const requestedGame = discover.game;
   const requestedSetId = discover.setId;
-  const cursor = discover.productNextCursor;
-  setState({ discover: { ...discover, productsLoadingMore: true, error: '' } });
-  try {
-    const page = await loadCatalogSetProductsPage({
-      gameId: requestedGame,
-      setId: requestedSetId,
-      cursor,
-      limit: BROWSE_PRODUCTS_PAGE_SIZE
-    });
-    const current = getState().discover || {};
-    if (activeRoute?.canonicalPath !== requestedPath || current.game !== requestedGame || current.setId !== requestedSetId) return;
-    const merged = [...(current.products || [])];
+  const task = (async () => {
+    setState({ discover: { ...getState().discover, productsLoadingMore: true, error: '' } });
+    let merged = [...(discover.products || [])];
     const known = new Set(merged.map((product) => product.id || product.externalId));
-    page.products.forEach((product) => {
-      const key = product.id || product.externalId;
-      if (!known.has(key)) {
-        known.add(key);
-        merged.push(product);
+    const seenCursors = new Set();
+    let cursor = discover.productNextCursor;
+    let declaredTotal = Math.max(merged.length, Number(discover.productTotal) || 0);
+    try {
+      while (cursor && (exhaust || merged.length < targetCount) && !seenCursors.has(cursor)) {
+        seenCursors.add(cursor);
+        const response = await loadCatalogSetProductsPage({
+          gameId: requestedGame,
+          setId: requestedSetId,
+          cursor,
+          limit: BROWSE_PRODUCTS_PAGE_SIZE
+        });
+        const current = getState().discover || {};
+        if (activeRoute?.canonicalPath !== requestedPath || current.game !== requestedGame || current.setId !== requestedSetId) return;
+        response.products.forEach((product) => {
+          const key = product.id || product.externalId;
+          if (!known.has(key)) {
+            known.add(key);
+            merged.push(product);
+          }
+        });
+        declaredTotal = Math.max(declaredTotal, merged.length, response.total);
+        cursor = response.nextCursor;
       }
-    });
-    setState({ discover: {
-      ...current,
-      products: merged,
-      productsLoadingMore: false,
-      productNextCursor: page.nextCursor,
-      productTotal: Math.max(merged.length, page.total),
-      limit: Math.max(Number(current.limit) || 0, merged.length),
-      error: ''
-    } });
-    if (page.products.length) await hydrateIntelligence();
-  } catch (error) {
-    const current = getState().discover || {};
-    if (activeRoute?.canonicalPath !== requestedPath || current.game !== requestedGame || current.setId !== requestedSetId) return;
-    setState({ discover: {
-      ...current,
-      productsLoadingMore: false,
-      error: error.message || 'More products could not be loaded.'
-    } });
+      const current = getState().discover || {};
+      if (activeRoute?.canonicalPath !== requestedPath || current.game !== requestedGame || current.setId !== requestedSetId) return;
+      const totalPages = Math.max(1, Math.ceil(merged.length / BROWSE_PRODUCTS_PAGE_SIZE));
+      setState({ discover: {
+        ...current,
+        products: merged,
+        productsLoadingMore: false,
+        productNextCursor: cursor,
+        productTotal: Math.max(merged.length, declaredTotal),
+        productPage: exhaust ? 1 : Math.min(requestedPage, totalPages),
+        limit: BROWSE_PRODUCTS_PAGE_SIZE,
+        error: ''
+      } });
+      if (merged.length > (discover.products || []).length) await hydrateIntelligence();
+    } catch (error) {
+      const current = getState().discover || {};
+      if (activeRoute?.canonicalPath !== requestedPath || current.game !== requestedGame || current.setId !== requestedSetId) return;
+      setState({ discover: {
+        ...current,
+        productsLoadingMore: false,
+        error: error.message || 'More products could not be loaded.'
+      } });
+    }
+  })();
+  browseProductExpansionPromise = task;
+  try {
+    await task;
+  } finally {
+    if (browseProductExpansionPromise === task) browseProductExpansionPromise = null;
   }
 }
 
@@ -1125,13 +1156,13 @@ async function runCatalogSearch(form) {
   const filters = Object.fromEntries(['setName', 'number', 'variant', 'player', 'year', 'grade']
     .map((key) => [key, String(data[key] || '').trim()]));
   if (catalogGameRequiresSession(data.category, getState().discover.games, getState().auth.session)) {
-    const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: false, results: [], warnings: [], cached: false };
+    const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, page: 1, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: false, results: [], warnings: [], cached: false };
     setState({ search, discover: { ...getState().discover, searchFiltersOpen: false } });
     navigate('search', { search });
     openAuth();
     return;
   }
-  const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: true, results: [], warnings: [], cached: false };
+  const search = { ...getState().search, query: data.query, category: data.category, provider: data.provider, filters, page: 1, limit: DISCOVER_RESULTS_PAGE_SIZE, loading: true, results: [], warnings: [], cached: false };
   const recentSearches = [String(data.query || '').trim(), ...(getState().settings.recentSearches || [])]
     .filter(Boolean).filter((query, index, all) => all.findIndex((entry) => entry.toLowerCase() === query.toLowerCase()) === index).slice(0, 5);
   setState({ search, discover: { ...getState().discover, searchFiltersOpen: false } });
@@ -1184,8 +1215,8 @@ function confirmClear() {
       browseGeneration += 1;
       searchGeneration += 1;
       setState({
-        discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
-        search: { ...getState().search, results: [], warnings: [], cached: false }
+        discover: { ...getState().discover, setPage: 1, productPage: 1, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
+        search: { ...getState().search, page: 1, results: [], warnings: [], cached: false }
       });
       await Promise.all([clearLocalData(), clearApplicationCacheStorage()]);
       closeModal();
@@ -1345,8 +1376,8 @@ function confirmRemoveCloudData() {
           searchGeneration += 1;
           setState({
             auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' },
-            discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
-            search: { ...getState().search, results: [], warnings: [], cached: false }
+            discover: { ...getState().discover, setPage: 1, productPage: 1, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
+            search: { ...getState().search, page: 1, results: [], warnings: [], cached: false }
           });
           showToast('Cloud data removed; local data is unchanged');
         } catch (error) {
@@ -1887,11 +1918,11 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'select-browse-game') {
     const game = action.dataset.game || 'all';
     const requiresSession = catalogGameRequiresSession(game, getState().discover.games, getState().auth.session);
-    navigateBrowse({ game, setId: '', years: [], groupBy: '', categoryPickerOpen: false });
+    navigateBrowse({ game, setId: '', years: [], setPage: 1, categoryPickerOpen: false });
     if (requiresSession) openAuth();
     return;
   }
-  if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '', years: [], groupBy: '' });
+  if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '', years: [], setPage: 1 });
   if (action.dataset.action === 'open-browse-set') {
     const selected = getState().discover.sets.find((set) => set.gameId === action.dataset.game && set.externalId === action.dataset.setId);
     const recentlyViewed = selected
@@ -1902,14 +1933,20 @@ root.addEventListener('click', async (event) => {
   }
   if (action.dataset.action === 'browse-back-sets') navigateBrowse({ setId: '' });
   if (action.dataset.action === 'retry-browse') hydrateBrowseRoute(activeRoute, { bypassCache: true });
-  if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE } });
-  if (action.dataset.action === 'load-more-browse-sets') {
-    setState({ discover: { ...getState().discover, setLimit: (Number(getState().discover.setLimit) || BROWSE_SETS_PAGE_SIZE) + BROWSE_SETS_PAGE_SIZE } });
+  if (action.dataset.action === 'clear-browse-filters') setState({ discover: { ...getState().discover, query: '', scope: 'all', sort: 'newest', years: [], setPage: 1, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (action.dataset.action === 'browse-sets-page') {
+    setState({ discover: { ...getState().discover, setPage: Math.max(1, Number.parseInt(action.dataset.page, 10) || 1) } });
     hydrateBrowseSetCovers();
   }
-  if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
-  if (action.dataset.action === 'set-browse-product-kind') setState({ discover: { ...getState().discover, productKind: action.dataset.kind, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
-  if (action.dataset.action === 'load-more-browse-products') await loadMoreBrowseProducts();
+  if (action.dataset.action === 'clear-browse-product-query') {
+    clearTimeout(browseProductSearchTimer);
+    setState({ discover: { ...getState().discover, productQuery: '', productPage: 1, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
+  }
+  if (action.dataset.action === 'set-browse-product-kind') {
+    setState({ discover: { ...getState().discover, productKind: action.dataset.kind, productPage: 1, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
+    await loadBrowseProducts({ page: 1, exhaust: true });
+  }
+  if (action.dataset.action === 'browse-products-page') await loadBrowseProducts({ page: action.dataset.page });
   if (action.dataset.action === 'view-set-holdings') {
     setState({ portfolio: {
       ...getState().portfolio,
@@ -1960,7 +1997,7 @@ root.addEventListener('click', async (event) => {
     } } : {});
   }
   if (action.dataset.action === 'clear-search') {
-    const search = { ...getState().search, query: '', limit: DISCOVER_RESULTS_PAGE_SIZE, results: [], warnings: [], cached: false };
+    const search = { ...getState().search, query: '', page: 1, limit: DISCOVER_RESULTS_PAGE_SIZE, results: [], warnings: [], cached: false };
     setState({ search });
     navigate('search', { search });
   }
@@ -1968,14 +2005,10 @@ root.addEventListener('click', async (event) => {
     root.querySelector('#catalog-search')?.requestSubmit();
     return;
   }
-  if (action.dataset.action === 'load-more-results') {
-    const search = getState().search;
-    const limit = Math.min(search.results.length, (Number(search.limit) || DISCOVER_RESULTS_PAGE_SIZE) + DISCOVER_RESULTS_PAGE_SIZE);
-    setState({ search: { ...search, limit } });
-  }
+  if (action.dataset.action === 'search-results-page') setState({ search: { ...getState().search, page: Math.max(1, Number.parseInt(action.dataset.page, 10) || 1), limit: DISCOVER_RESULTS_PAGE_SIZE } });
   if (action.dataset.action === 'clear-search-filters') {
     setState({
-      search: { ...getState().search, category: 'all', filters: {}, provider: 'all' },
+      search: { ...getState().search, category: 'all', filters: {}, provider: 'all', page: 1 },
       discover: { ...getState().discover, searchFiltersOpen: false }
     });
     if (getState().search.query.length >= 2) queueMicrotask(() => root.querySelector('#catalog-search')?.requestSubmit());
@@ -1989,7 +2022,7 @@ root.addEventListener('click', async (event) => {
     if (key === 'category') patch.category = 'all';
     else if (key === 'provider') patch.provider = 'all';
     else delete filters[key];
-    setState({ search: { ...current, ...patch, filters } });
+    setState({ search: { ...current, ...patch, filters, page: 1 } });
     if (current.query.length >= 2) queueMicrotask(() => root.querySelector('#catalog-search')?.requestSubmit());
     return;
   }
@@ -2192,8 +2225,8 @@ root.addEventListener('click', async (event) => {
     searchGeneration += 1;
     setState({
       auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' },
-      discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
-      search: { ...getState().search, results: [], warnings: [], cached: false }
+      discover: { ...getState().discover, setPage: 1, productPage: 1, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
+      search: { ...getState().search, page: 1, results: [], warnings: [], cached: false }
     });
     showToast('Signed out; local collection is unchanged');
   }
@@ -2334,18 +2367,29 @@ root.addEventListener('input', (event) => {
     const caret = event.target.selectionStart;
     clearTimeout(browseFilterTimer);
     const applyBrowseFilter = () => {
-      setState({ discover: { ...getState().discover, [key]: value, ...(key === 'query' ? { setLimit: BROWSE_SETS_PAGE_SIZE } : { limit: BROWSE_PRODUCTS_PAGE_SIZE }) } });
+      setState({ discover: {
+        ...getState().discover,
+        [key]: value,
+        ...(key === 'query'
+          ? { setPage: 1, setLimit: BROWSE_SETS_PAGE_SIZE }
+          : { productPage: 1, limit: BROWSE_PRODUCTS_PAGE_SIZE })
+      } });
+      if (key === 'query') queueMicrotask(() => hydrateBrowseSetCovers());
       queueMicrotask(() => {
         const input = root.querySelector(selector);
         input?.focus({ preventScroll: true });
         if (Number.isInteger(caret)) input?.setSelectionRange(caret, caret);
       });
     };
-    // Product pages now contain at most 24 rendered cards, so filtering is
-    // cheap enough to apply synchronously. This also prevents forecast/history
-    // hydration renders from replacing the input during a pending debounce.
-    if (key === 'productQuery') applyBrowseFilter();
-    else browseFilterTimer = setTimeout(applyBrowseFilter, 120);
+    // Product pages render at most 48 tiles. Apply the query synchronously so
+    // hydration renders cannot replace the active input, then fetch the rest
+    // of the set's metadata only after explicit search intent. Filtering runs
+    // against that complete set before the 48-tile page slice is applied.
+    if (key === 'productQuery') {
+      applyBrowseFilter();
+      clearTimeout(browseProductSearchTimer);
+      if (String(value).trim()) browseProductSearchTimer = setTimeout(() => loadBrowseProducts({ page: 1, exhaust: true }), 180);
+    } else browseFilterTimer = setTimeout(applyBrowseFilter, 120);
   }
   if (event.target.matches('[data-portfolio-set-query]')) {
     const value = event.target.value;
@@ -2412,17 +2456,26 @@ root.addEventListener('change', async (event) => {
     setState({ search: { ...getState().search, query: data.query || '', category: data.category || 'all', provider: data.provider || 'all', filters: {} } });
     if (catalogGameRequiresSession(data.category, getState().discover.games, getState().auth.session)) openAuth();
   }
-  if (event.target.matches('[data-browse-set-sort]')) setState({ discover: { ...getState().discover, sort: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
-  if (event.target.matches('[data-browse-set-scope]')) setState({ discover: { ...getState().discover, scope: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
-  if (event.target.matches('[data-browse-set-group]')) setState({ discover: { ...getState().discover, groupBy: event.target.value, setLimit: BROWSE_SETS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-set-sort]')) {
+    setState({ discover: { ...getState().discover, sort: event.target.value, setPage: 1, setLimit: BROWSE_SETS_PAGE_SIZE } });
+    hydrateBrowseSetCovers();
+  }
+  if (event.target.matches('[data-browse-set-scope]')) {
+    setState({ discover: { ...getState().discover, scope: event.target.value, setPage: 1, setLimit: BROWSE_SETS_PAGE_SIZE } });
+    hydrateBrowseSetCovers();
+  }
   if (event.target.matches('[data-browse-year]')) {
     const selected = new Set((getState().discover.years || []).map(String));
     if (event.target.checked) selected.add(event.target.value);
     else selected.delete(event.target.value);
-    setState({ discover: { ...getState().discover, years: [...selected], setLimit: BROWSE_SETS_PAGE_SIZE } });
+    setState({ discover: { ...getState().discover, years: [...selected], setPage: 1, setLimit: BROWSE_SETS_PAGE_SIZE } });
+    hydrateBrowseSetCovers();
   }
-  if (event.target.matches('[data-browse-product-sort]')) setState({ discover: { ...getState().discover, productSort: event.target.value, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
-  if (event.target.matches('[data-search-sort]')) setState({ search: { ...getState().search, sort: event.target.value, limit: DISCOVER_RESULTS_PAGE_SIZE } });
+  if (event.target.matches('[data-browse-product-sort]')) {
+    setState({ discover: { ...getState().discover, productSort: event.target.value, productPage: 1, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
+    await loadBrowseProducts({ page: 1, exhaust: true });
+  }
+  if (event.target.matches('[data-search-sort]')) setState({ search: { ...getState().search, sort: event.target.value, page: 1, limit: DISCOVER_RESULTS_PAGE_SIZE } });
   if (event.target.matches('[data-portfolio-query]')) setState({ portfolio: { ...getState().portfolio, query: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-category]')) setState({ portfolio: { ...getState().portfolio, category: event.target.value, limit: 100 } });
   if (event.target.matches('[data-portfolio-sort]')) setState({ portfolio: { ...getState().portfolio, sort: event.target.value, limit: 100 } });

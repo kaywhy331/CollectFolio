@@ -37,26 +37,44 @@ function state(overrides = {}) {
   return {
     holdings: [], watchlistItems: [], alerts: [], scanDraftCount: 0,
     settings: { currency: 'USD', discoverView: 'gallery', recentSearches: [] },
-    search: { query: 'Lotus', category: 'magic', provider: 'all', filters: {}, view: 'gallery', loading: false, results: [], warnings: [] },
+    search: { query: 'Lotus', category: 'magic', provider: 'all', filters: {}, view: 'gallery', sort: 'newest', page: 1, limit: 48, loading: false, results: [], warnings: [] },
     featureFlags: { watchlists: true, publicPriceIntelligence: false },
     intelligence: { byVariant: {}, loading: false, error: '' },
     ...overrides
   };
 }
 
-test('Discover groups customer-facing match quality without exposing raw percentages', () => {
+test('Discover uses one tile grid with customer-facing match badges instead of grouped buckets', () => {
   const html = renderSearch(state({
     search: {
       query: 'Lotus', category: 'magic', provider: 'all', filters: {}, view: 'gallery', loading: false, warnings: [],
       results: [{ ...item, matchBucket: 'exact', matchScore: 1 }, { ...item, externalId: 'likely', name: 'Likely Lotus', matchBucket: 'likely', matchScore: .91 }]
     }
   }));
-  assert.match(html, /Exact matches/);
-  assert.match(html, /Likely matches/);
-  assert.match(html, /Market price/);
-  assert.match(html, /result-list gallery/);
+  assert.doesNotMatch(html, /Exact matches|Likely matches|result-group/);
+  assert.match(html, /catalog-tile-grid result-list gallery/);
+  assert.match(html, /match-badge exact">Exact/);
+  assert.match(html, /match-badge likely">Likely/);
+  assert.equal((html.match(/class="result-card gallery catalog-tile"/g) || []).length, 2);
   assert.doesNotMatch(html, /% text match|91%|100%/);
   assert.doesNotMatch(html, />Details</);
+});
+
+test('Discover orders one ungrouped result grid by newest released set by default', () => {
+  const html = renderSearch(state({
+    search: {
+      query: 'Dragon', category: 'magic', provider: 'tcgcsv', filters: {}, view: 'gallery', loading: false, warnings: [],
+      results: [
+        { ...item, id: 'old', externalId: 'old', name: 'Old Dragon', setName: 'Old Set', releasedAt: '2021-01-01', year: '2021' },
+        { ...item, id: 'new', externalId: 'new', name: 'New Dragon', setName: 'New Set', releasedAt: '2026-06-12', year: '2026' },
+        { ...item, id: 'mid', externalId: 'mid', name: 'Middle Dragon', setName: 'Middle Set', releasedAt: '2024-03-08', year: '2024' }
+      ]
+    }
+  }));
+  assert.match(html, /value="newest" selected>Newest release/);
+  assert.ok(html.indexOf('New Dragon') < html.indexOf('Middle Dragon'));
+  assert.ok(html.indexOf('Middle Dragon') < html.indexOf('Old Dragon'));
+  assert.doesNotMatch(html, /result-group/);
 });
 
 test('Discover adapts filters and keeps provider choice under Data source', () => {
@@ -78,16 +96,23 @@ test('Discover retains a complete result set while rendering large catalogs in b
   const html = renderSearch(state({
     search: {
       query: 'Lotus', category: 'magic', provider: 'scryfall', filters: {}, view: 'gallery',
-      limit: 200, loading: false, warnings: [], results
+      page: 1, limit: 48, loading: false, warnings: [], results
     }
   }));
-  assert.match(html, /Showing 200 of 205 results/);
-  assert.match(html, /data-action="load-more-results">Show 5 more/);
-  assert.doesNotMatch(html, /show-all-results/);
-  assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
+  assert.match(html, /Showing 1–48 of 205 results/);
+  assert.match(html, /Page 1 of 5/);
+  assert.match(html, /data-action="search-results-page" data-page="2"/);
+  assert.doesNotMatch(html, /load-more-results|show-all-results/);
+  assert.equal((html.match(/data-action="open-detail"/g) || []).length, 48);
+
+  const lastPage = renderSearch(state({
+    search: { query: 'Lotus', category: 'magic', provider: 'scryfall', filters: {}, view: 'gallery', page: 5, limit: 48, loading: false, warnings: [], results }
+  }));
+  assert.match(lastPage, /Showing 193–205 of 205 results/);
+  assert.equal((lastPage.match(/data-action="open-detail"/g) || []).length, 13);
 });
 
-test('Discover keeps a 5,000-item catalog interaction bounded to the visible 200-card page', () => {
+test('Discover keeps a 5,000-item catalog interaction bounded to the visible 48-tile page', () => {
   const results = Array.from({ length: 5_000 }, (_, index) => ({
     ...item,
     externalId: `scale-${index}`,
@@ -98,13 +123,13 @@ test('Discover keeps a 5,000-item catalog interaction bounded to the visible 200
   const html = renderSearch(state({
     search: {
       query: 'Scale', category: 'magic', provider: 'tcgcsv', filters: {}, view: 'gallery',
-      limit: 200, loading: false, warnings: [], results
+      page: 1, limit: 48, loading: false, warnings: [], results
     }
   }));
   const duration = performance.now() - started;
-  assert.equal((html.match(/data-action="open-detail"/g) || []).length, 200);
-  assert.match(html, /Showing 200 of 5,000 results/);
-  assert.match(html, /Show 200 more/);
+  assert.equal((html.match(/data-action="open-detail"/g) || []).length, 48);
+  assert.match(html, /Showing 1–48 of 5,000 results/);
+  assert.match(html, /Page 1 of 105/);
   assert.ok(duration < 1_000, `bounded 5,000-item render took ${duration.toFixed(1)}ms`);
 });
 
@@ -160,7 +185,7 @@ test('Discover defers set rendering until a game is selected and keeps the compl
 
   const priorLocation = globalThis.location;
   globalThis.location = { href: 'https://collectfolio.example/' };
-  const grouped = renderSearch(state({
+  const flat = renderSearch(state({
     discover: {
       mode: 'browse', game: 'magic', setId: '', query: '', sort: 'newest', scope: 'all', groupBy: 'family', loading: false, warnings: [], error: '',
       setCovers: { 'magic:cmm': 'https://cards.scryfall.io/cmm-cover.jpg' },
@@ -172,11 +197,12 @@ test('Discover defers set rendering until a game is selected and keeps the compl
       products: []
     }
   }));
-  assert.match(grouped, /class="browse-set-group"/);
-  // Commander group header uses the most recent Commander set's cover.
-  assert.match(grouped, /<summary><img class="browse-set-group-art" src="https:\/\/cards\.scryfall\.io\/cmm-cover\.jpg"[^>]*><strong>Commander<\/strong>/);
-  // Main expansions header falls back to the set's own provider image.
-  assert.match(grouped, /<summary><img class="browse-set-group-art" src="https:\/\/svgs\.scryfall\.io\/sets\/fdn\.svg"[^>]*><strong>Main expansions<\/strong>/);
+  assert.doesNotMatch(flat, /browse-set-group|data-browse-set-group/);
+  assert.equal((flat.match(/class="browse-set-tile"/g) || []).length, 3);
+  assert.ok(flat.indexOf('Foundations') < flat.indexOf('Commander Masters'));
+  assert.ok(flat.indexOf('Commander Masters') < flat.indexOf('Commander 2021'));
+  assert.match(flat, /https:\/\/cards\.scryfall\.io\/cmm-cover\.jpg/);
+  assert.match(flat, /https:\/\/svgs\.scryfall\.io\/sets\/fdn\.svg/);
   if (priorLocation === undefined) delete globalThis.location;
   else globalThis.location = priorLocation;
 });
@@ -214,7 +240,8 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
   }));
   assert.match(search, /<optgroup label="More games and categories \(87\)">/);
   assert.match(search, /value="tcgcsv-category-68" selected>One Piece Card Game/);
-  assert.match(search, /class="result-facts"><span>One Piece Card Game<\/span>/);
+  assert.match(search, /class="catalog-tile-grid result-list gallery"/);
+  assert.match(search, /Monkey\.D\.Luffy/);
   assert.doesNotMatch(search, /Full catalog|Full TCGCSV catalog/);
 
   const signedOutSearch = renderSearch(state({
@@ -240,15 +267,16 @@ test('Discover browse retains a complete set manifest while rendering bounded ti
     supplemental: false
   }));
   const html = renderSearch(state({
-    discover: { mode: 'browse', game: 'magic', setId: '', query: '', sort: 'alpha', scope: 'all', setLimit: 24, loading: false, warnings: [], error: '', sets, products: [] }
+    discover: { mode: 'browse', game: 'magic', setId: '', query: '', sort: 'alpha', scope: 'all', setPage: 1, setLimit: 48, loading: false, warnings: [], error: '', sets, products: [] }
   }));
-  assert.match(html, /Showing 24 of 121 sets/);
-  assert.match(html, /data-action="load-more-browse-sets">Show 24 more/);
-  assert.doesNotMatch(html, /show-all-browse-sets/);
-  assert.equal((html.match(/class="browse-set-tile"/g) || []).length, 24);
+  assert.match(html, /Showing 1–48 of 121 sets/);
+  assert.match(html, /Page 1 of 3/);
+  assert.match(html, /data-action="browse-sets-page" data-page="2"/);
+  assert.doesNotMatch(html, /load-more-browse-sets|show-all-browse-sets/);
+  assert.equal((html.match(/class="browse-set-tile"/g) || []).length, 48);
 });
 
-test('Discover set view renders compact 24-card batches with full titles and no forecast disclaimer', () => {
+test('Discover set view renders a maximum of 48 shared tiles with full titles and no forecast disclaimer', () => {
   const longTitle = 'Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved';
   const products = Array.from({ length: 121 }, (_, index) => ({
     ...item,
@@ -265,16 +293,18 @@ test('Discover set view renders compact 24-card batches with full titles and no 
   }));
   const html = renderSearch(state({
     discover: {
-      mode: 'browse', game: 'pokemon', setId: 'swsh12', query: '', sort: 'newest', scope: 'all', productQuery: '', productSort: 'number', limit: 24, productTotal: 121, productNextCursor: '24', loading: false, warnings: [], error: '',
+      mode: 'browse', game: 'pokemon', setId: 'swsh12', query: '', sort: 'newest', scope: 'all', productQuery: '', productSort: 'number', productKind: 'all', productPage: 1, limit: 48, productTotal: 121, productNextCursor: '48', loading: false, warnings: [], error: '',
       selectedSet: { externalId: 'swsh12', gameId: 'pokemon', name: 'Silver Tempest', code: 'SIT', year: '2022' },
       sets: [], products
     }
   }));
   assert.match(html, /121 cards/);
-  assert.match(html, /Load 24 more/);
-  assert.equal((html.match(/data-action="open-detail" data-catalog-scope="browse" data-index=/g) || []).length, 24);
+  assert.match(html, /Page 1 of 3/);
+  assert.match(html, /data-action="browse-products-page" data-page="2"/);
+  assert.equal((html.match(/data-action="open-detail" data-catalog-scope="browse" data-index=/g) || []).length, 48);
   assert.match(html, new RegExp(`<h3>${longTitle}</h3>`));
-  assert.match(html, /result-card gallery browse-compact/);
+  assert.match(html, /catalog-tile-grid result-list gallery browse-product-grid/);
+  assert.match(html, /result-card gallery catalog-tile/);
   assert.doesNotMatch(html, /result-outlook-note|Cold start estimate|Early estimate|Treat as wider/);
   assert.doesNotMatch(html, /match-badge/);
   assert.doesNotMatch(html, /Near Mint|English SKU|Condition price/);
@@ -293,7 +323,7 @@ test('Discover set cards retain concise forecast values without forecast disclai
     featureFlags: { watchlists: true, publicPriceIntelligence: true },
     intelligence: { byVariant: { [forecastVariantId]: forecastPublication }, loading: false, error: '' },
     discover: {
-      mode: 'browse', game: 'magic', setId: 'alpha', productQuery: '', productSort: 'number', limit: 24,
+      mode: 'browse', game: 'magic', setId: 'alpha', productQuery: '', productSort: 'number', productKind: 'all', productPage: 1, limit: 48,
       productTotal: 1, productNextCursor: '', loading: false, warnings: [], error: '',
       selectedSet: { externalId: 'alpha', gameId: 'magic', name: 'Synthetic Alpha' },
       sets: [], products: [forecastItem]
@@ -304,7 +334,7 @@ test('Discover set cards retain concise forecast values without forecast disclai
   assert.doesNotMatch(html, /6 mo est\.|1 year est\.|30D trend|modeled|result-outlook-note|Treat as wider/);
 });
 
-test('Discover shows approved 30-day trend and 1/3/6/12-month estimates on results', () => {
+test('Discover uses the same concise forecast tile template as set products', () => {
   const forecastItem = {
     ...item,
     canonicalVariantId: forecastVariantId,
@@ -320,15 +350,12 @@ test('Discover shows approved 30-day trend and 1/3/6/12-month estimates on resul
       view: 'gallery', loading: false, warnings: [], results: [forecastItem]
     }
   }));
-  assert.match(html, /Synthetic Alpha · #001 · Artifact · foil · Rare/);
-  assert.match(html, /30D trend/);
-  assert.match(html, /\+8\.0%/);
+  assert.match(html, /Synthetic Alpha · #001 · foil · Rare/);
   assert.match(html, /1 mo est\./);
   assert.match(html, /3 mo est\./);
-  assert.match(html, /6 mo est\./);
-  assert.match(html, /1 year est\./);
   assert.match(html, /\$130\.00/);
-  assert.match(html, /\$165\.00/);
+  assert.match(html, /\$140\.00/);
+  assert.doesNotMatch(html, /30D trend|6 mo est\.|1 year est\.|result-outlook-note/);
 });
 
 test('Discover landing limits recognizable categories and keeps the universal search primary', () => {
@@ -362,7 +389,7 @@ test('Discover exposes removable filter chips and only supported result sorting'
   assert.doesNotMatch(html, /result-market-outlook/);
 });
 
-test('Discover groups related sealed formats into a named product family', () => {
+test('Discover renders related sealed formats as independent tiles without family buckets', () => {
   const products = [
     ['pack', 'Strike of Illusionary Shadows Booster Pack', 5],
     ['box', 'Strike of Illusionary Shadows Booster Box', 90],
@@ -378,9 +405,8 @@ test('Discover groups related sealed formats into a named product family', () =>
       sets: [], products, loading: false, warnings: [], error: ''
     }
   }));
-  assert.match(html, /Product family/);
-  assert.match(html, /<h3[^>]*>Strike of Illusionary Shadows<\/h3>/);
-  assert.match(html, />3 formats</);
+  assert.doesNotMatch(html, /Product family|product-family/);
+  assert.equal((html.match(/class="result-card gallery catalog-tile"/g) || []).length, 3);
   assert.match(html, /product-format-badge">Booster pack/);
   assert.match(html, /product-format-badge">Booster box/);
   assert.match(html, /product-format-badge">Case/);

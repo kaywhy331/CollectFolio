@@ -231,16 +231,18 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
 
   const { eligibleCard, coldStartCard, excludedCard } = await runSearch(page);
 
-  // State 1 -- published/standard: a modeled outlook with no cold-start
-  // labeling, presented as the normal published forecast.
+  // State 1 -- published/standard: the compact tile shows the modeled
+  // values without forecast disclaimer copy.
   await expect(eligibleCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(eligibleCard.getByText('Published outlook', { exact: true })).toBeVisible();
+  await expect(eligibleCard.getByText('1 mo est.', { exact: true })).toBeVisible();
+  await expect(eligibleCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  await expect(eligibleCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
   await expect(eligibleCard.getByText('cold start estimate')).toHaveCount(0);
 
-  // State 2 -- published/cold-start: explicitly labeled, never presented
-  // as a standard-confidence forecast.
-  await expect(coldStartCard.getByText(/cold start estimate/).first()).toBeVisible();
-  await expect(coldStartCard.locator('.result-outlook-note')).toContainText('Cold start estimate');
+  // State 2 -- published/cold-start: the tile remains concise; the richer
+  // confidence context is retained on the detail page below.
+  await expect(coldStartCard.locator('.result-market-outlook')).toBeVisible();
+  await expect(coldStartCard.locator('.result-outlook-note')).toHaveCount(0);
 
   // State 3 -- excluded (collapses with "unknown" per the fail-closed
   // manifest map): the result card omits the outlook component entirely
@@ -298,7 +300,8 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
   // reserve a chart/value slot that could be mistaken for an estimate.
   await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
   await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(0);
-  await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toBeVisible();
+  await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.locator('.result-outlook-note')).toHaveCount(0);
 
   await ninetyDayOnlyCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
@@ -308,7 +311,7 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 });
 
-test('serve-all-cohorts (2026-08-18): a low-history packet renders labeled early estimates on card and detail', async ({ page }) => {
+test('serve-all-cohorts (2026-08-18): a low-history packet keeps cards concise and labels detail context', async ({ page }) => {
   await configureTrajectoryStubs(page);
   await skipOnboarding(page);
 
@@ -317,8 +320,8 @@ test('serve-all-cohorts (2026-08-18): a low-history packet renders labeled early
   await expect(earlyEstimateCard.locator('.result-market-outlook')).toBeVisible();
   await expect(earlyEstimateCard.getByText('1 mo est.', { exact: true })).toBeVisible();
   await expect(earlyEstimateCard.getByText('3 mo est.', { exact: true })).toBeVisible();
-  await expect(earlyEstimateCard.getByText(/early estimate/).first()).toBeVisible();
-  await expect(earlyEstimateCard.locator('.result-outlook-note')).toContainText('Early estimate');
+  await expect(earlyEstimateCard.getByText(/early estimate/).first()).toHaveCount(0);
+  await expect(earlyEstimateCard.locator('.result-outlook-note')).toHaveCount(0);
   await expect(earlyEstimateCard.getByText('cold start estimate')).toHaveCount(0);
 
   await earlyEstimateCard.click();

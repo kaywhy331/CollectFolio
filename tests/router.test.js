@@ -39,22 +39,22 @@ test('browse routes preserve progressive game and set identity without hard-codi
   const root = parseAppRoute('/discover?mode=browse');
   assert.equal(root.mode, 'browse');
   assert.equal(root.canonicalPath, '/discover/browse');
-  assert.deepEqual(root.browse, { game: 'all', setId: '', setSlug: '', sort: 'newest', scope: 'all', productSort: 'price-desc', productKind: 'cards' });
+  assert.deepEqual(root.browse, { game: 'all', setId: '', setSlug: '', sort: 'newest', scope: 'all', productSort: 'price-desc', productKind: 'all' });
 
   const game = parseAppRoute('/discover/pokemon?sort=alpha&scope=main');
   assert.equal(game.canonicalPath, '/games/pokemon?sort=alpha&scope=main');
-  assert.deepEqual(game.browse, { game: 'pokemon', setId: '', setSlug: '', sort: 'alpha', scope: 'main', productSort: 'price-desc', productKind: 'cards' });
+  assert.deepEqual(game.browse, { game: 'pokemon', setId: '', setSlug: '', sort: 'alpha', scope: 'main', productSort: 'price-desc', productKind: 'all' });
 
   const set = parseAppRoute('/discover/magic/mkm?sort=name');
   assert.equal(set.canonicalPath, '/sets/mkm?game=magic&sort=name');
-  assert.deepEqual(set.browse, { game: 'magic', setId: 'mkm', setSlug: '', sort: 'newest', scope: 'all', productSort: 'name', productKind: 'cards' });
+  assert.deepEqual(set.browse, { game: 'magic', setId: 'mkm', setSlug: '', sort: 'newest', scope: 'all', productSort: 'name', productKind: 'all' });
 
   const sealed = parseAppRoute('/discover/tcgcsv-category-3/3%3A100?type=sealed');
   assert.equal(sealed.canonicalPath, '/sets/3%3A100?game=tcgcsv-category-3&type=sealed');
   assert.equal(sealed.browse.productKind, 'sealed');
-  assert.equal(parseAppRoute('/discover/magic/mkm?type=cards').canonicalPath, '/sets/mkm?game=magic');
-  assert.equal(parseAppRoute('/discover/magic/mkm?type=bogus').browse.productKind, 'cards');
-  assert.equal(parseAppRoute('/discover/pokemon?type=sealed').browse.productKind, 'cards');
+  assert.equal(parseAppRoute('/discover/magic/mkm?type=cards').canonicalPath, '/sets/mkm?game=magic&type=cards');
+  assert.equal(parseAppRoute('/discover/magic/mkm?type=bogus').browse.productKind, 'all');
+  assert.equal(parseAppRoute('/discover/pokemon?type=sealed').browse.productKind, 'all');
   assert.equal(parseAppRoute('/discover/pokemon?type=sealed').canonicalPath, '/games/pokemon');
 
   const dynamic = parseAppRoute('/discover/future-game/set%3A1');
@@ -112,6 +112,11 @@ test('legacy view mappings create restorable route state', () => {
   assert.equal(browsed.discover.game, 'pokemon');
   assert.deepEqual(browsed.discover.sets, []);
   assert.deepEqual(browsed.discover.products, []);
+  const sealedBrowse = routeStatePatch(parseAppRoute('/discover/pokemon/swsh12?type=sealed'), {
+    ...state,
+    discover: { mode: 'browse', game: 'magic', setId: 'mkm', products: [{ id: 'stale' }], productKind: 'cards' }
+  });
+  assert.equal(sealedBrowse.discover.productKind, 'sealed');
   const insights = routeStatePatch(parseAppRoute('/insights?view=forecasts&horizon=180'), {
     ...state, insights: { view: 'alerts', horizon: 90, alertFilter: 'unread' }
   });
