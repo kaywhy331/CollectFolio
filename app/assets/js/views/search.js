@@ -25,8 +25,8 @@ function trajectoryEstimatesForItem(item, state) {
 
 export const DISCOVER_VIEWS = Object.freeze(['gallery', 'list']);
 export const DISCOVER_RESULTS_PAGE_SIZE = 200;
-export const BROWSE_SETS_PAGE_SIZE = 120;
-export const BROWSE_PRODUCTS_PAGE_SIZE = 120;
+export const BROWSE_SETS_PAGE_SIZE = 24;
+export const BROWSE_PRODUCTS_PAGE_SIZE = 24;
 
 const MATCH_GROUPS = Object.freeze([
   ['exact', 'Exact matches', 'Verified exact identities'],
@@ -91,7 +91,7 @@ function providerOptions(selected) {
   return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>Trading card games</option>`;
 }
 
-function pricingMarkup(model, item) {
+function pricingMarkup(model, item, { compact = false } = {}) {
   const labels = {
     verified: 'Market price', delayed: 'Delayed market price', manual: 'Manual value',
     pending: 'Pricing pending', unsupported: 'Pricing not supported', unavailable: 'No verified market price', error: 'Pricing error'
@@ -99,7 +99,7 @@ function pricingMarkup(model, item) {
   const hasValue = model.currentMarketValue !== null && !['unsupported', 'unavailable', 'error'].includes(model.pricingStatus);
   const freshness = priceFreshness({ provider: item?.provider, priceUpdatedAt: model.priceUpdatedAt });
   const provenance = [labels[model.pricingStatus] || 'Market price', model.priceSource, freshness.label].filter(Boolean).join(' · ');
-  return `<div class="result-pricing ${escapeAttribute(model.pricingStatus)}"><strong>${hasValue ? escapeHTML(formatCurrency(model.currentMarketValue, model.currency)) : escapeHTML(labels[model.pricingStatus] || 'No verified price')}</strong>${hasValue ? `<small>${escapeHTML(provenance || labels[model.pricingStatus] || 'Market price')}</small>` : ''}</div>`;
+  return `<div class="result-pricing ${escapeAttribute(model.pricingStatus)}"><strong>${hasValue ? escapeHTML(formatCurrency(model.currentMarketValue, model.currency)) : escapeHTML(labels[model.pricingStatus] || 'No verified price')}</strong>${hasValue && !compact ? `<small>${escapeHTML(provenance || labels[model.pricingStatus] || 'Market price')}</small>` : ''}</div>`;
 }
 
 function signedPercent(value) {
@@ -112,11 +112,11 @@ function signedPercent(value) {
 // modeled forecast -- each carries an explicit qualifier.
 const EARLY_ESTIMATE_CONFIDENCES = Object.freeze(['low-history', 'insufficient-history']);
 
-function outlookEstimateCell(forecast, label, currency) {
+function outlookEstimateCell(forecast, label, currency, { compact = false } = {}) {
   if (!forecast) {
     return `<div><dt>${escapeHTML(label)}</dt><dd>—<small>Not enough data yet</small></dd></div>`;
   }
-  const qualifier = forecast.status === 'cold-start'
+  const qualifier = compact ? '' : forecast.status === 'cold-start'
     ? ' · cold start estimate'
     : EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence)
       ? ' · early estimate'
@@ -124,22 +124,25 @@ function outlookEstimateCell(forecast, label, currency) {
   return `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, currency))}<small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${qualifier}</small></dd></div>`;
 }
 
-function marketOutlookMarkup(model) {
-  const horizons = [
+function marketOutlookMarkup(model, { compact = false, showNotes = true } = {}) {
+  const horizons = (compact ? [
+    [model.forecast30d, '1 mo est.'],
+    [model.forecast90d, '3 mo est.']
+  ] : [
     [model.forecast30d, '1 mo est.'],
     [model.forecast90d, '3 mo est.'],
     [model.forecast180d, '6 mo est.'],
     [model.forecast365d, '1 year est.']
-  ].filter(([forecast]) => forecast);
-  if (model.change30d === null && !horizons.length) return '';
+  ]).filter(([forecast]) => forecast);
+  if ((compact || model.change30d === null) && !horizons.length) return '';
   const trendClass = model.change30d === null ? '' : model.change30d >= 0 ? 'positive' : 'negative';
   const coldStart = horizons.some(([forecast]) => forecast?.status === 'cold-start');
   const early = horizons.some(([forecast]) => forecast && forecast.status !== 'cold-start' && EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence));
-  return `<dl class="result-market-outlook" aria-label="Published market trend and forecast estimates">
-    ${model.change30d === null ? '' : `<div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}<small>${model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></dd></div>`}
-    ${horizons.map(([forecast, label]) => outlookEstimateCell(forecast, label, model.currency)).join('')}
-    ${coldStart ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Cold start estimate: built without enough observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
-    ${early ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Early estimate: built from a short observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
+  return `<dl class="result-market-outlook${compact ? ' compact' : ''}" aria-label="Published market trend and forecast estimates">
+    ${compact || model.change30d === null ? '' : `<div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}<small>${model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></dd></div>`}
+    ${horizons.map(([forecast, label]) => outlookEstimateCell(forecast, label, model.currency, { compact })).join('')}
+    ${showNotes && coldStart ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Cold start estimate: built without enough observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
+    ${showNotes && early ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Early estimate: built from a short observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
   </dl>`;
 }
 
@@ -155,19 +158,27 @@ function productFormat(item, model) {
   return model.type || 'Sealed product';
 }
 
-function resultCard(item, index, state, view, { scope = 'search', matchBadge = true } = {}) {
+function resultCard(item, index, state, view, {
+  scope = 'search',
+  matchBadge = true,
+  compact = false,
+  showForecastNotes = true
+} = {}) {
   const rawPublication = item.canonicalVariantId ? state.intelligence?.byVariant?.[item.canonicalVariantId] : null;
   const publication = selectPublicationForCatalogItem(rawPublication, item, state.settings.currency);
   const model = searchResultViewModel(item, { publication, currency: state.settings.currency, trajectoryEstimates: trajectoryEstimatesForItem(item, state) });
   const watching = Boolean(findWatchedItem(state.watchlistItems, item));
   const finishes = catalogPriceOptionsForDisplay(item);
   const watchLabel = finishes.length > 1 ? 'Choose finish' : watching ? 'Watching' : 'Watch';
-  const identity = [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.type, model.variant, model.rarity].filter(Boolean).join(' · ');
+  const identity = (compact
+    ? [model.cardNumber ? `#${model.cardNumber}` : '', model.variant, model.rarity]
+    : [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.type, model.variant, model.rarity]
+  ).filter(Boolean).join(' · ');
   const format = productFormat(item, model);
   const confirmedIdentity = model.matchBucket === 'exact';
-  return `<article class="result-card ${escapeAttribute(view)}" data-action="open-detail" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}" tabindex="0" aria-label="Inspect ${escapeAttribute(model.name || 'catalog result')}">
-    <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}<span class="product-format-badge">${escapeHTML(format)}</span>${matchBadge ? `<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(model.matchBucket === 'exact' ? 'Exact' : model.matchBucket === 'likely' ? 'Likely' : model.matchBucket === 'possible' ? 'Confirm variant' : 'Unresolved')}</span>` : ''}</div>
-    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model, item)}${marketOutlookMarkup(model)}<div class="result-facts"><span>${escapeHTML(model.game || model.category || 'other')}</span>${finishes.length > 1 ? `<span>${finishes.length} finishes</span>` : ''}${model.forecastStatus === 'available' ? '<span>Published outlook</span>' : ''}</div></div>
+  return `<article class="result-card ${escapeAttribute(view)}${compact ? ' browse-compact' : ''}" data-action="open-detail" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}" tabindex="0" aria-label="Inspect ${escapeAttribute(model.name || 'catalog result')}">
+    <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}${!compact || item.productKind === 'sealed' ? `<span class="product-format-badge">${escapeHTML(format)}</span>` : ''}${matchBadge ? `<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(model.matchBucket === 'exact' ? 'Exact' : model.matchBucket === 'likely' ? 'Likely' : model.matchBucket === 'possible' ? 'Confirm variant' : 'Unresolved')}</span>` : ''}</div>
+    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model, item, { compact })}${marketOutlookMarkup(model, { compact, showNotes: showForecastNotes })}${compact ? '' : `<div class="result-facts"><span>${escapeHTML(model.game || model.category || 'other')}</span>${finishes.length > 1 ? `<span>${finishes.length} finishes</span>` : ''}${model.forecastStatus === 'available' ? '<span>Published outlook</span>' : ''}</div>`}</div>
     <div class="result-actions">${confirmedIdentity ? `<button class="button small" type="button" data-action="add-catalog" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Add to collection</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">${escapeHTML(watchLabel)}</button>` : ''}` : `<button class="button small" type="button" data-action="review-catalog-identity" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Confirm exact item</button>`}</div>
   </article>`;
 }
@@ -343,6 +354,7 @@ function browseSetSections(visible, games, groupBy, covers = {}) {
 
 function renderBrowseSets(state, browse) {
   const games = mergeCatalogGames(browse.games);
+  if (browse.game === 'all') return gameChooser(state, browse, games);
   const sets = filterCatalogSets(browse.sets || [], { query: browse.query, sort: browse.sort, scope: browse.scope, years: browse.years });
   const limit = Math.max(BROWSE_SETS_PAGE_SIZE, Number(browse.setLimit) || BROWSE_SETS_PAGE_SIZE);
   const visible = sets.slice(0, limit);
@@ -354,7 +366,7 @@ function renderBrowseSets(state, browse) {
       ? `Showing ${visible.length.toLocaleString()} of ${sets.length.toLocaleString()} sets`
       : `${sets.length.toLocaleString()} ${sets.length === 1 ? 'set' : 'sets'}`;
   const rightsNote = 'Browse the available catalog by category, set, product, and finish. Availability and price coverage vary by item.';
-  return `${browse.game === 'all' ? gameChooser(state, browse, games) : browseGameHeader(browse, games)}
+  return `${browseGameHeader(browse, games)}
     <div class="browse-controls">
       <label class="browse-query"><span class="sr-only">Search sets</span><input type="search" data-browse-set-query value="${escapeAttribute(browse.query || '')}" placeholder="Search sets or codes…" autocomplete="off"></label>
       <label><span class="sr-only">Set type</span><select data-browse-set-scope><option value="all" ${browse.scope === 'all' ? 'selected' : ''}>All sets</option><option value="main" ${browse.scope === 'main' ? 'selected' : ''}>Main sets</option><option value="supplemental" ${browse.scope === 'supplemental' ? 'selected' : ''}>Supplemental</option></select></label>
@@ -400,7 +412,7 @@ function productFamilyGroups(entries, state, selectedSet) {
   }
   return [...groups.values()].map((group, groupIndex) => `<section class="product-family" aria-labelledby="product-family-${groupIndex}">
     <div class="product-family-heading"><div><p class="eyebrow">Product family</p><h3 id="product-family-${groupIndex}">${escapeHTML(group.name)}</h3></div><span>${group.entries.length} ${group.entries.length === 1 ? 'format' : 'formats'}</span></div>
-    <div class="result-list gallery browse-product-grid">${group.entries.map(({ item, index }) => resultCard(item, index, state, 'gallery', { scope: 'browse', matchBadge: false })).join('')}</div>
+    <div class="result-list gallery browse-product-grid">${group.entries.map(({ item, index }) => resultCard(item, index, state, 'gallery', { scope: 'browse', matchBadge: false, compact: true, showForecastNotes: false })).join('')}</div>
   </section>`).join('');
 }
 
@@ -430,14 +442,17 @@ function renderBrowseProducts(state, browse) {
   const indexed = filtered.map((item) => ({ item, index: products.indexOf(item) }));
   const limit = Math.max(BROWSE_PRODUCTS_PAGE_SIZE, Number(browse.limit) || BROWSE_PRODUCTS_PAGE_SIZE);
   const visible = indexed.slice(0, limit);
-  const remaining = indexed.length - visible.length;
+  const localRemaining = indexed.length - visible.length;
+  const declaredTotal = Math.max(products.length, Number(browse.productTotal) || 0);
+  const remoteRemaining = browse.productNextCursor ? Math.max(1, declaredTotal - products.length) : 0;
+  const remaining = localRemaining > 0 ? localRemaining : remoteRemaining;
   const title = selectedSet?.name || browse.setId;
   const game = catalogGame(browse.game, browse.games);
   const noun = kind === 'sealed'
     ? ['sealed product', 'sealed products']
     : kind === 'cards' || !counts.sealed ? ['card', 'cards'] : ['item', 'items'];
   return `<nav class="browse-breadcrumbs" aria-label="Browse path"><button type="button" data-action="browse-all-games">Discover</button><span>/</span><button type="button" data-action="select-browse-game" data-game="${escapeAttribute(browse.game)}">${escapeHTML(game?.shortName || browse.game)}</button><span>/</span><strong>${escapeHTML(title)}</strong></nav>
-    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading every card printing…' : `${filtered.length.toLocaleString()} ${escapeHTML(filtered.length === 1 ? noun[0] : noun[1])}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
+    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading the first products…' : declaredTotal > products.length ? `${products.length.toLocaleString()} of ${declaredTotal.toLocaleString()} products loaded` : `${filtered.length.toLocaleString()} ${escapeHTML(filtered.length === 1 ? noun[0] : noun[1])}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
     ${browseProductKindTabs({ ...browse, productKind: kind }, counts)}
     <div class="browse-controls products">
       <label class="browse-query"><span class="sr-only">Search this set</span><input type="search" data-browse-product-query value="${escapeAttribute(browse.productQuery || '')}" placeholder="Search this set…" autocomplete="off"></label>
@@ -445,11 +460,11 @@ function renderBrowseProducts(state, browse) {
     </div>
     ${sortControl.hasPrice ? '' : '<p class="sort-availability">Price sorting is unavailable because these results have no verified prices.</p>'}
     ${browseWarnings(browse)}
-    ${browse.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading cards</span></div>' : visible.length ? `${kind === 'sealed' ? productFamilyGroups(visible, state, selectedSet) : `<div class="result-list gallery browse-product-grid">${visible.map(({ item, index }) => resultCard(item, index, state, 'gallery', { scope: 'browse', matchBadge: false })).join('')}</div>`}${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-products">Show ${Math.min(BROWSE_PRODUCTS_PAGE_SIZE, remaining)} more</button></div>` : ''}` : emptyState(`No matching ${noun[1]}`, browse.error ? 'Retry the catalog request.' : 'Try another name, collector number, or rarity.', browse.error ? '<button class="button" type="button" data-action="retry-browse">Retry</button>' : '<button class="button ghost" type="button" data-action="clear-browse-product-query">Clear search</button>')}`;
+    ${browse.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading cards</span></div>' : visible.length ? `${kind === 'sealed' ? productFamilyGroups(visible, state, selectedSet) : `<div class="result-list gallery browse-product-grid">${visible.map(({ item, index }) => resultCard(item, index, state, 'gallery', { scope: 'browse', matchBadge: false, compact: true, showForecastNotes: false })).join('')}</div>`}${remaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-products" ${browse.productsLoadingMore ? 'disabled' : ''}>${browse.productsLoadingMore ? 'Loading more…' : `Load ${Math.min(BROWSE_PRODUCTS_PAGE_SIZE, remaining)} more`}</button></div>` : ''}` : `${emptyState(`No matching ${noun[1]}`, browse.error ? 'Retry the catalog request.' : remoteRemaining ? 'Load more products or try another name, collector number, or rarity.' : 'Try another name, collector number, or rarity.', browse.error ? '<button class="button" type="button" data-action="retry-browse">Retry</button>' : '<button class="button ghost" type="button" data-action="clear-browse-product-query">Clear search</button>')}${remoteRemaining > 0 ? `<div class="button-row centered catalog-result-paging"><button class="button secondary" type="button" data-action="load-more-browse-products" ${browse.productsLoadingMore ? 'disabled' : ''}>${browse.productsLoadingMore ? 'Loading more…' : `Load ${Math.min(BROWSE_PRODUCTS_PAGE_SIZE, remoteRemaining)} more`}</button></div>` : ''}`}`;
 }
 
 function renderBrowse(state) {
-  const browse = { game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE, productQuery: '', productSort: 'price-desc', productKind: 'cards', sets: [], products: [], warnings: [], ...state.discover };
+  const browse = { game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', years: [], groupBy: '', setLimit: BROWSE_SETS_PAGE_SIZE, productQuery: '', productSort: 'price-desc', productKind: 'cards', productNextCursor: '', productTotal: 0, productsLoadingMore: false, sets: [], products: [], warnings: [], ...state.discover };
   return `${browse.setId ? '' : discoverHeader(state, 'browse')}${browse.setId ? renderBrowseProducts(state, browse) : renderBrowseSets(state, browse)}${categoryPickerOverlay(browse, mergeCatalogGames(browse.games))}`;
 }
 

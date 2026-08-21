@@ -10,6 +10,7 @@ import {
   trajectoryForecastEstimates,
   trajectoryKeyForItem
 } from '../app/assets/js/services/forecast-trajectory.js';
+import { fetchHistoryGroup } from '../app/assets/js/services/history-trajectory.js';
 
 // A minimal in-memory IndexedDB shim covering only what core/db.js's
 // getRecord/putRecord need against the single 'catalogCache' store this
@@ -153,6 +154,46 @@ test('fetchTrajectoryManifest and fetchTrajectoryGroup reuse the cached value wi
     await fetchTrajectoryGroup(3, 300, entry, { session: {}, fetchImpl: groupFetch });
     await fetchTrajectoryGroup(3, 300, entry, { session: {}, fetchImpl: groupFetch });
     assert.equal(groupCalls, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('concurrent card hydration shares one in-flight group request', async () => {
+  const restore = installFakeIndexedDB();
+  try {
+    let calls = 0;
+    const entry = { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/302.json.gz' }] };
+    const fetchImpl = async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return fakeResponse({ asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] });
+    };
+    const groups = await Promise.all(Array.from({ length: 24 }, () =>
+      fetchTrajectoryGroup(3, 302, entry, { session: {}, fetchImpl })));
+    assert.equal(calls, 1);
+    assert.equal(groups.length, 24);
+    assert.ok(groups.every((group) => group === groups[0]));
+  } finally {
+    restore();
+  }
+});
+
+test('concurrent card-history hydration shares one in-flight group request', async () => {
+  const restore = installFakeIndexedDB();
+  try {
+    let calls = 0;
+    const entry = { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'history/3/303.json.gz' }] };
+    const fetchImpl = async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return fakeResponse({ part: 1, partsTotal: 1, variants: [] });
+    };
+    const groups = await Promise.all(Array.from({ length: 24 }, () =>
+      fetchHistoryGroup(3, 303, entry, { session: {}, fetchImpl })));
+    assert.equal(calls, 1);
+    assert.equal(groups.length, 24);
+    assert.ok(groups.every((group) => group === groups[0]));
   } finally {
     restore();
   }

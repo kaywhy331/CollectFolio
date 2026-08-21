@@ -5,7 +5,7 @@ import { getYGOSetCards, listYGOSets } from './providers/ygoprodeck.js';
 import { TCGCSV_CATEGORY_DIRECTORY } from './providers/tcgcsv-categories.js';
 import {
   getTCGCSVGroupProducts,
-  getTCGCSVGroupProductsSample,
+  getTCGCSVGroupProductsPage,
   listTCGCSVCategories,
   listTCGCSVGroups,
   tcgcsvCategoryId,
@@ -14,6 +14,7 @@ import {
 
 const CACHE_MS = 24 * 60 * 60 * 1000;
 const memoryCache = new Map();
+const requestsInFlight = new Map();
 const numberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 // catalog-v2 B1 (browse identity inversion): flagship games browse the
@@ -45,14 +46,24 @@ const adapters = Object.freeze({
 function cached(key, loader, bypassCache = false) {
   const found = memoryCache.get(key);
   if (!bypassCache && found?.expiresAt > Date.now()) return Promise.resolve(found.value);
-  return Promise.resolve().then(loader).then((value) => {
+  if (!bypassCache && requestsInFlight.has(key)) return requestsInFlight.get(key);
+  const request = Promise.resolve().then(loader).then((value) => {
     memoryCache.set(key, { expiresAt: Date.now() + CACHE_MS, value });
     return value;
+  });
+  if (!bypassCache) requestsInFlight.set(key, request);
+  return request.finally(() => {
+    if (requestsInFlight.get(key) === request) requestsInFlight.delete(key);
   });
 }
 
 export function clearBrowseCatalogCache() {
   memoryCache.clear();
+  requestsInFlight.clear();
+}
+
+function productPageCacheKey(gameId, externalId, cursor = '', limit = 24) {
+  return `products-page:${gameId}:${externalId}:${cursor}:${limit}`;
 }
 
 export function catalogGamesFromTCGCSVCategories(categories = []) {
@@ -198,8 +209,12 @@ export function pickTCGCSVSetCover(products = [], random = Math.random) {
 export async function loadTCGCSVSetCoverImage(set, { bypassCache = false, random } = {}) {
   if (set?.provider !== 'tcgcsv' || !set.externalId) return '';
   return cached(`cover:${set.id}`, async () => {
-    const products = await getTCGCSVGroupProductsSample(set.externalId, { limit: 100 });
-    return pickTCGCSVSetCover(products, random);
+    const page = await cached(
+      productPageCacheKey(set.gameId, set.externalId, '', 24),
+      () => getTCGCSVGroupProductsPage(set.externalId, { limit: 24 }),
+      bypassCache
+    );
+    return pickTCGCSVSetCover(page.products, random);
   }, bypassCache);
 }
 
@@ -392,4 +407,49 @@ export async function loadCatalogSetProducts({ gameId, setId, bypassCache = fals
     throw new Error('The TCGCSV response crossed game-category boundaries.');
   }
   return filterCatalogProducts(products.map((product) => ({ ...product, gameId: game.id, productKind: catalogProductKind(product) })));
+}
+
+export async function loadCatalogSetProductsPage({
+  gameId,
+  setId,
+  cursor = '',
+  limit = 24,
+  bypassCache = false
+} = {}) {
+  const game = catalogGame(gameId);
+  const externalId = String(setId || '').trim();
+  const pageLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 24));
+  if (!game || !externalId) throw new Error('Choose a supported game and set.');
+  const adapter = adapters[game.provider];
+  if (!adapter) throw new Error('This card game does not have an approved browse catalog yet.');
+  if (game.provider === 'tcgcsv' && Number.parseInt(externalId.split(':', 1)[0], 10) !== game.categoryId) {
+    throw new Error('This TCGCSV group does not belong to the selected game.');
+  }
+
+  let page;
+  if (game.provider === 'tcgcsv') {
+    page = await cached(
+      productPageCacheKey(game.id, externalId, cursor, pageLimit),
+      () => getTCGCSVGroupProductsPage(externalId, { cursor, limit: pageLimit }),
+      bypassCache
+    );
+  } else {
+    const products = await cached(`products:${game.id}:${externalId}`, () => adapter.products(externalId), bypassCache);
+    const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
+    const nextOffset = offset + pageLimit;
+    page = {
+      products: products.slice(offset, nextOffset),
+      total: products.length,
+      nextCursor: nextOffset < products.length ? String(nextOffset) : ''
+    };
+  }
+
+  if (game.provider === 'tcgcsv' && page.products.some((product) => Number(product?.categoryId) !== game.categoryId)) {
+    throw new Error('The TCGCSV response crossed game-category boundaries.');
+  }
+  return {
+    products: page.products.map((product) => ({ ...product, gameId: game.id, productKind: catalogProductKind(product) })),
+    total: Math.max(page.products.length, Number(page.total) || 0),
+    nextCursor: String(page.nextCursor || '')
+  };
 }

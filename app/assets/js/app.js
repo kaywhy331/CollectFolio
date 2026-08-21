@@ -25,7 +25,7 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
-import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets, loadCatalogGames, loadCatalogSetProducts, loadCatalogSets, loadTCGCSVSetCoverImage, mergeCatalogGames } from './services/catalog-browse.js';
+import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets, loadCatalogGames, loadCatalogSetProductsPage, loadCatalogSets, loadTCGCSVSetCoverImage, mergeCatalogGames } from './services/catalog-browse.js';
 import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { getTrajectoryForecastForItem, trajectoryKeyForItem } from './services/forecast-trajectory.js';
@@ -657,22 +657,25 @@ function resolveRouteContext(route, state = getState()) {
   if (route.key === 'add-review') activeDraft = state.scanDrafts?.[0] || activeDraft;
 }
 
-const COVER_FETCH_CONCURRENCY = 5;
+const COVER_FETCH_CONCURRENCY = 4;
+const COVER_FETCH_BATCH_SIZE = 8;
 const coverRequestsInFlight = new Set();
 
-// Fetch cover images for the currently visible TCGCSV set tiles. One bounded
-// sample request per set, cached for the session; results merge into
-// discover.setCovers so tiles fill in as covers arrive.
+// Fetch cover images for the currently visible TCGCSV set tiles in small
+// idle batches. Each bounded sample is cached for the session; results merge
+// into discover.setCovers so the catalog becomes interactive before every
+// set has downloaded image candidates.
 async function hydrateBrowseSetCovers() {
   const discover = getState().discover || {};
-  if (activeRoute?.key !== 'discover' || discover.loading || !Array.isArray(discover.sets)) return;
+  if (activeRoute?.key !== 'discover' || discover.setId || discover.loading || !Array.isArray(discover.sets)) return;
   const limit = Math.max(BROWSE_SETS_PAGE_SIZE, Number(discover.setLimit) || BROWSE_SETS_PAGE_SIZE);
   const visible = filterCatalogSets(discover.sets, {
     query: discover.query, sort: discover.sort, scope: discover.scope, years: discover.years
   }).slice(0, limit);
   const covers = discover.setCovers || {};
   const pending = visible.filter((set) =>
-    set.provider === 'tcgcsv' && covers[set.id] === undefined && !coverRequestsInFlight.has(set.id));
+    set.provider === 'tcgcsv' && covers[set.id] === undefined && !coverRequestsInFlight.has(set.id))
+    .slice(0, COVER_FETCH_BATCH_SIZE);
   if (!pending.length) return;
   pending.forEach((set) => coverRequestsInFlight.add(set.id));
   const queue = [...pending];
@@ -689,13 +692,49 @@ async function hydrateBrowseSetCovers() {
     }
   };
   await Promise.all(Array.from({ length: Math.min(COVER_FETCH_CONCURRENCY, pending.length) }, worker));
+  const current = getState().discover || {};
+  const hasMore = Array.isArray(current.sets) && current.sets.some((set) =>
+    set.provider === 'tcgcsv' && current.setCovers?.[set.id] === undefined && !coverRequestsInFlight.has(set.id));
+  if (hasMore && activeRoute?.key === 'discover' && !current.setId) {
+    const schedule = globalThis.requestIdleCallback
+      ? (callback) => globalThis.requestIdleCallback(callback, { timeout: 1_500 })
+      : (callback) => globalThis.setTimeout(callback, 500);
+    schedule(() => hydrateBrowseSetCovers());
+  }
 }
 
 async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
   if (route.key !== 'discover' || route.mode !== 'browse' || getState().featureFlags?.setBrowsing === false) return;
   const generation = ++browseGeneration;
   const requested = route.browse;
-  setState({ discover: { ...getState().discover, loading: true, error: '', warnings: [] } });
+  if (requested.game === 'all' && !requested.setId) {
+    setState({ discover: {
+      ...getState().discover,
+      loading: false,
+      productsLoadingMore: false,
+      productNextCursor: '',
+      productTotal: 0,
+      sets: [],
+      products: [],
+      selectedSet: null,
+      warnings: [],
+      error: '',
+      loadedGame: 'all',
+      loadedSetId: ''
+    } });
+    return;
+  }
+  setState({ discover: {
+    ...getState().discover,
+    loading: true,
+    productsLoadingMore: false,
+    productNextCursor: '',
+    productTotal: 0,
+    products: [],
+    selectedSet: null,
+    error: '',
+    warnings: []
+  } });
   try {
     const response = await loadCatalogSets({ gameId: requested.game, bypassCache });
     if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
@@ -703,9 +742,14 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
       ? response.sets.find((set) => set.gameId === requested.game && set.externalId === requested.setId)
       : null;
     if (requested.setId && !selectedSet) throw new Error('This set is not present in the current public catalog.');
-    let products = [];
+    let productPage = { products: [], total: 0, nextCursor: '' };
     if (selectedSet) {
-      products = await loadCatalogSetProducts({ gameId: requested.game, setId: requested.setId, bypassCache });
+      productPage = await loadCatalogSetProductsPage({
+        gameId: requested.game,
+        setId: requested.setId,
+        limit: BROWSE_PRODUCTS_PAGE_SIZE,
+        bypassCache
+      });
       if (generation !== browseGeneration || activeRoute.canonicalPath !== route.canonicalPath) return;
     }
     setState({ discover: {
@@ -713,14 +757,18 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
       loading: false,
       games: mergeCatalogGames(getState().discover.games, response.games),
       sets: response.sets,
-      products,
+      products: productPage.products,
+      productsLoadingMore: false,
+      productNextCursor: productPage.nextCursor,
+      productTotal: productPage.total,
+      limit: BROWSE_PRODUCTS_PAGE_SIZE,
       selectedSet,
       warnings: response.warnings || [],
       error: '',
       loadedGame: requested.game,
       loadedSetId: requested.setId || ''
     } });
-    if (products.length) await hydrateIntelligence();
+    if (productPage.products.length) await hydrateIntelligence();
     if (!requested.setId) hydrateBrowseSetCovers();
     // A legacy raw-id URL (/discover/<game>/3:1442) canonicalizes to its
     // slugged form once the set's name is known, in place -- no re-route.
@@ -739,6 +787,69 @@ async function hydrateBrowseRoute(route, { bypassCache = false } = {}) {
       loading: false,
       error: error.message || 'The set catalog could not be loaded.',
       warnings: []
+    } });
+  }
+}
+
+async function loadMoreBrowseProducts() {
+  const discover = getState().discover || {};
+  if (discover.productsLoadingMore || !discover.setId) return;
+  const visibleLimit = Number(discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE;
+  if ((discover.products || []).length > visibleLimit) {
+    setState({ discover: {
+      ...discover,
+      limit: visibleLimit + BROWSE_PRODUCTS_PAGE_SIZE
+    } });
+    return;
+  }
+  if (!discover.productNextCursor) {
+    setState({ discover: {
+      ...discover,
+      limit: (Number(discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE
+    } });
+    return;
+  }
+
+  const requestedPath = activeRoute?.canonicalPath;
+  const requestedGame = discover.game;
+  const requestedSetId = discover.setId;
+  const cursor = discover.productNextCursor;
+  setState({ discover: { ...discover, productsLoadingMore: true, error: '' } });
+  try {
+    const page = await loadCatalogSetProductsPage({
+      gameId: requestedGame,
+      setId: requestedSetId,
+      cursor,
+      limit: BROWSE_PRODUCTS_PAGE_SIZE
+    });
+    const current = getState().discover || {};
+    if (activeRoute?.canonicalPath !== requestedPath || current.game !== requestedGame || current.setId !== requestedSetId) return;
+    const merged = [...(current.products || [])];
+    const known = new Set(merged.map((product) => product.id || product.externalId));
+    page.products.forEach((product) => {
+      const key = product.id || product.externalId;
+      if (!known.has(key)) {
+        known.add(key);
+        merged.push(product);
+      }
+    });
+    setState({ discover: {
+      ...current,
+      products: merged,
+      productsLoadingMore: false,
+      productNextCursor: page.nextCursor,
+      productTotal: Math.max(merged.length, page.total),
+      limit: Math.max(Number(current.limit) || 0, merged.length),
+      error: ''
+    } });
+    if (page.products.length) await hydrateIntelligence();
+  } catch (error) {
+    const current = getState().discover || {};
+    if (activeRoute?.canonicalPath !== requestedPath || current.game !== requestedGame || current.setId !== requestedSetId) return;
+    setState({ discover: {
+      ...current,
+      productsLoadingMore: false,
+      error: error.message || 'More products could not be loaded.'
     } });
   }
 }
@@ -1073,7 +1184,7 @@ function confirmClear() {
       browseGeneration += 1;
       searchGeneration += 1;
       setState({
-        discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null },
+        discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
         search: { ...getState().search, results: [], warnings: [], cached: false }
       });
       await Promise.all([clearLocalData(), clearApplicationCacheStorage()]);
@@ -1234,7 +1345,7 @@ function confirmRemoveCloudData() {
           searchGeneration += 1;
           setState({
             auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' },
-            discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null },
+            discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
             search: { ...getState().search, results: [], warnings: [], cached: false }
           });
           showToast('Cloud data removed; local data is unchanged');
@@ -1798,7 +1909,7 @@ root.addEventListener('click', async (event) => {
   }
   if (action.dataset.action === 'clear-browse-product-query') setState({ discover: { ...getState().discover, productQuery: '', limit: BROWSE_PRODUCTS_PAGE_SIZE } });
   if (action.dataset.action === 'set-browse-product-kind') setState({ discover: { ...getState().discover, productKind: action.dataset.kind, limit: BROWSE_PRODUCTS_PAGE_SIZE } });
-  if (action.dataset.action === 'load-more-browse-products') setState({ discover: { ...getState().discover, limit: (Number(getState().discover.limit) || BROWSE_PRODUCTS_PAGE_SIZE) + BROWSE_PRODUCTS_PAGE_SIZE } });
+  if (action.dataset.action === 'load-more-browse-products') await loadMoreBrowseProducts();
   if (action.dataset.action === 'view-set-holdings') {
     setState({ portfolio: {
       ...getState().portfolio,
@@ -2081,7 +2192,7 @@ root.addEventListener('click', async (event) => {
     searchGeneration += 1;
     setState({
       auth: { ...getState().auth, session: null, syncing: false, status: 'local', error: '' },
-      discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null },
+      discover: { ...getState().discover, games: [], sets: [], products: [], selectedSet: null, productsLoadingMore: false, productNextCursor: '', productTotal: 0 },
       search: { ...getState().search, results: [], warnings: [], cached: false }
     });
     showToast('Signed out; local collection is unchanged');
@@ -2222,14 +2333,19 @@ root.addEventListener('input', (event) => {
     const value = event.target.value;
     const caret = event.target.selectionStart;
     clearTimeout(browseFilterTimer);
-    browseFilterTimer = setTimeout(() => {
+    const applyBrowseFilter = () => {
       setState({ discover: { ...getState().discover, [key]: value, ...(key === 'query' ? { setLimit: BROWSE_SETS_PAGE_SIZE } : { limit: BROWSE_PRODUCTS_PAGE_SIZE }) } });
       queueMicrotask(() => {
         const input = root.querySelector(selector);
         input?.focus({ preventScroll: true });
         if (Number.isInteger(caret)) input?.setSelectionRange(caret, caret);
       });
-    }, 120);
+    };
+    // Product pages now contain at most 24 rendered cards, so filtering is
+    // cheap enough to apply synchronously. This also prevents forecast/history
+    // hydration renders from replacing the input during a pending debounce.
+    if (key === 'productQuery') applyBrowseFilter();
+    else browseFilterTimer = setTimeout(applyBrowseFilter, 120);
   }
   if (event.target.matches('[data-portfolio-set-query]')) {
     const value = event.target.value;

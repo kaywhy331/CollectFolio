@@ -108,7 +108,7 @@ test('Discover keeps a 5,000-item catalog interaction bounded to the visible 200
   assert.ok(duration < 1_000, `bounded 5,000-item render took ${duration.toFixed(1)}ms`);
 });
 
-test('Discover limits browse tiles and moves the complete category directory into a dedicated picker', () => {
+test('Discover defers set rendering until a game is selected and keeps the complete category directory in its picker', () => {
   const browseState = {
     mode: 'browse', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', loading: false, warnings: [], error: '',
     sets: [{ id: 'pokemon:swsh12', externalId: 'swsh12', gameId: 'pokemon', game: 'Pokémon', name: 'Silver Tempest', code: 'SIT', year: '2022', releasedAt: '2022-11-11', cardCount: 195, series: 'Sword & Shield', supplemental: false }],
@@ -121,9 +121,8 @@ test('Discover limits browse tiles and moves the complete category directory int
   }));
   assert.match(html, /aria-label="Discover mode"/);
   assert.match(html, /Browse sets/);
-  assert.match(html, /data-set-id="swsh12"/);
-  assert.match(html, /Silver Tempest/);
-  assert.match(html, /SIT · 2022 · 195 cards/);
+  assert.doesNotMatch(html, /data-set-id="swsh12"/);
+  assert.doesNotMatch(html, /Silver Tempest/);
   assert.match(html, /Popular games/);
   assert.match(html, /data-action="open-category-picker">View All/);
   assert.equal((html.match(/class="discover-category-tile"/g) || []).length, 3);
@@ -141,7 +140,6 @@ test('Discover limits browse tiles and moves the complete category directory int
   assert.match(picker, /data-game="tcgcsv-category-23"[^>]*>[\s\S]*?Dragon Ball Z TCG/);
   assert.match(picker, /data-game="tcgcsv-category-68"[^>]*>[\s\S]*?One Piece Card Game/);
   assert.match(picker, /data-game="tcgcsv-category-90"[^>]*>[\s\S]*?CookieRun: Braverse TCG/);
-  assert.match(html, /Availability and price coverage vary by item/);
   assert.doesNotMatch(html, /Data source/);
   assert.doesNotMatch(html, /catalog-search/);
 
@@ -242,15 +240,16 @@ test('Discover browse retains a complete set manifest while rendering bounded ti
     supplemental: false
   }));
   const html = renderSearch(state({
-    discover: { mode: 'browse', game: 'magic', setId: '', query: '', sort: 'alpha', scope: 'all', setLimit: 120, loading: false, warnings: [], error: '', sets, products: [] }
+    discover: { mode: 'browse', game: 'magic', setId: '', query: '', sort: 'alpha', scope: 'all', setLimit: 24, loading: false, warnings: [], error: '', sets, products: [] }
   }));
-  assert.match(html, /Showing 120 of 121 sets/);
-  assert.match(html, /data-action="load-more-browse-sets">Show 1 more/);
+  assert.match(html, /Showing 24 of 121 sets/);
+  assert.match(html, /data-action="load-more-browse-sets">Show 24 more/);
   assert.doesNotMatch(html, /show-all-browse-sets/);
-  assert.equal((html.match(/class="browse-set-tile"/g) || []).length, 120);
+  assert.equal((html.match(/class="browse-set-tile"/g) || []).length, 24);
 });
 
-test('Discover set view renders complete card batches with browse-scoped actions and no SKU claim', () => {
+test('Discover set view renders compact 24-card batches with full titles and no forecast disclaimer', () => {
+  const longTitle = 'Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved';
   const products = Array.from({ length: 121 }, (_, index) => ({
     ...item,
     id: `pokemon:card-${index + 1}`,
@@ -260,22 +259,49 @@ test('Discover set view renders complete card batches with browse-scoped actions
     game: 'Pokémon',
     setName: 'Silver Tempest',
     number: String(index + 1),
-    name: `Card ${index + 1}`,
+    name: index === 23 ? longTitle : `Card ${index + 1}`,
     price: null,
     priceOptions: []
   }));
   const html = renderSearch(state({
     discover: {
-      mode: 'browse', game: 'pokemon', setId: 'swsh12', query: '', sort: 'newest', scope: 'all', productQuery: '', productSort: 'number', limit: 120, loading: false, warnings: [], error: '',
+      mode: 'browse', game: 'pokemon', setId: 'swsh12', query: '', sort: 'newest', scope: 'all', productQuery: '', productSort: 'number', limit: 24, productTotal: 121, productNextCursor: '24', loading: false, warnings: [], error: '',
       selectedSet: { externalId: 'swsh12', gameId: 'pokemon', name: 'Silver Tempest', code: 'SIT', year: '2022' },
       sets: [], products
     }
   }));
   assert.match(html, /121 cards/);
-  assert.match(html, /Showing 1 more|Show 1 more/);
-  assert.equal((html.match(/data-action="open-detail" data-catalog-scope="browse" data-index=/g) || []).length, 120);
+  assert.match(html, /Load 24 more/);
+  assert.equal((html.match(/data-action="open-detail" data-catalog-scope="browse" data-index=/g) || []).length, 24);
+  assert.match(html, new RegExp(`<h3>${longTitle}</h3>`));
+  assert.match(html, /result-card gallery browse-compact/);
+  assert.doesNotMatch(html, /result-outlook-note|Cold start estimate|Early estimate|Treat as wider/);
   assert.doesNotMatch(html, /match-badge/);
   assert.doesNotMatch(html, /Near Mint|English SKU|Condition price/);
+});
+
+test('Discover set cards retain concise forecast values without forecast disclaimer copy', () => {
+  const forecastItem = {
+    ...item,
+    id: 'magic:forecast-card',
+    canonicalVariantId: forecastVariantId,
+    conditionClass: 'raw',
+    marketCondition: 'near-mint',
+    productKind: 'card'
+  };
+  const html = renderSearch(state({
+    featureFlags: { watchlists: true, publicPriceIntelligence: true },
+    intelligence: { byVariant: { [forecastVariantId]: forecastPublication }, loading: false, error: '' },
+    discover: {
+      mode: 'browse', game: 'magic', setId: 'alpha', productQuery: '', productSort: 'number', limit: 24,
+      productTotal: 1, productNextCursor: '', loading: false, warnings: [], error: '',
+      selectedSet: { externalId: 'alpha', gameId: 'magic', name: 'Synthetic Alpha' },
+      sets: [], products: [forecastItem]
+    }
+  }));
+  assert.match(html, /1 mo est\./);
+  assert.match(html, /3 mo est\./);
+  assert.doesNotMatch(html, /6 mo est\.|1 year est\.|30D trend|modeled|result-outlook-note|Treat as wider/);
 });
 
 test('Discover shows approved 30-day trend and 1/3/6/12-month estimates on results', () => {

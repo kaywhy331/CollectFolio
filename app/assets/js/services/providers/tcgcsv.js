@@ -343,6 +343,37 @@ export async function getTCGCSVGroupProducts(setId) {
   })).filter(Boolean);
 }
 
+// Fetch exactly one catalog page so set browsing can become interactive
+// without downloading and enriching every product in a large group first.
+export async function getTCGCSVGroupProductsPage(setId, {
+  cursor = '',
+  limit = 24,
+  session,
+  fetchImpl
+} = {}) {
+  const { categoryId, groupId } = groupIdentity(setId);
+  const pageLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 24));
+  const payload = await requestTCGCSVCatalog(
+    `/catalog/groups/${categoryId}/${groupId}/products`,
+    { params: { limit: pageLimit, cursor }, session, fetchImpl }
+  );
+  const rows = Array.isArray(payload?.products) ? payload.products : [];
+  const products = rows.map((product) => normalizeTCGCSVProduct(product, {
+    category: payload?.category,
+    group: payload?.group,
+    publicationId: payload?.publicationId,
+    sourceUpdatedAt: payload?.sourceUpdatedAt
+  })).filter(Boolean);
+  const declaredTotal = Number(payload?.total);
+  return {
+    products,
+    total: Number.isSafeInteger(declaredTotal) && declaredTotal >= 0 ? declaredTotal : products.length,
+    nextCursor: payload?.nextCursor === null || payload?.nextCursor === undefined
+      ? ''
+      : String(payload.nextCursor)
+  };
+}
+
 // One bounded request (no pagination) — enough to choose a set cover image
 // without paying the full multi-page product download per set.
 export async function getTCGCSVGroupProductsSample(setId, { limit = 100, session, fetchImpl } = {}) {

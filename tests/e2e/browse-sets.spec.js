@@ -15,16 +15,21 @@ const POKEMON_GROUPS = [
 ];
 
 function pokemonProducts(groupId, count) {
-  return Array.from({ length: count }, (_, index) => ({
+  return Array.from({ length: count }, (_, index) => {
+    const name = index === 23
+      ? 'Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved'
+      : `Card ${index + 1}`;
+    return {
     productId: 5000 + index,
     categoryId: 3,
     groupId,
-    name: `Card ${index + 1}`,
-    cleanName: `Card ${index + 1}`,
+    name,
+    cleanName: name,
     cardNumber: String(index + 1),
     rarity: index % 10 === 0 ? 'Rare' : 'Common',
     prices: []
-  }));
+    };
+  });
 }
 
 async function skipOnboarding(page) {
@@ -59,40 +64,57 @@ async function mockRuntimeConfig(page) {
 // "all games" browse route (which always fetches all three flagship
 // categories) resolves cleanly without needing unrelated fixtures.
 async function mockFlagshipCatalog(page) {
+  const metrics = { groupRequests: 0, productPageRequests: 0 };
   await mockRuntimeConfig(page);
-  await page.route(`${TCGCSV_ORIGIN}/catalog/categories/3/groups**`, (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ groups: POKEMON_GROUPS, category: { categoryId: 3, displayName: 'Pokemon' }, publicationId: 'e2e', sourceUpdatedAt: '2026-08-10' })
-  }));
-  await page.route(`${TCGCSV_ORIGIN}/catalog/categories/1/groups**`, (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ groups: [], category: { categoryId: 1, displayName: 'Magic: The Gathering' }, publicationId: 'e2e', sourceUpdatedAt: '2026-08-10' })
-  }));
-  await page.route(`${TCGCSV_ORIGIN}/catalog/categories/2/groups**`, (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ groups: [], category: { categoryId: 2, displayName: 'YuGiOh' }, publicationId: 'e2e', sourceUpdatedAt: '2026-08-10' })
-  }));
+  const categoryResponse = (route, category) => {
+    metrics.groupRequests += 1;
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ groups: category.categoryId === 3 ? POKEMON_GROUPS : [], category, publicationId: 'e2e', sourceUpdatedAt: '2026-08-10' })
+    });
+  };
+  await page.route(`${TCGCSV_ORIGIN}/catalog/categories/3/groups**`, (route) => categoryResponse(route, { categoryId: 3, displayName: 'Pokemon' }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/categories/1/groups**`, (route) => categoryResponse(route, { categoryId: 1, displayName: 'Magic: The Gathering' }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/categories/2/groups**`, (route) => categoryResponse(route, { categoryId: 2, displayName: 'YuGiOh' }));
   await page.route(`${TCGCSV_ORIGIN}/catalog/groups**`, (route) => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ groups: [], categories: [], publicationId: 'e2e', sourceUpdatedAt: '2026-08-10' })
   }));
-  await page.route(`${TCGCSV_ORIGIN}/catalog/groups/3/1102/products**`, (route) => route.fulfill({
+  await page.route(`${TCGCSV_ORIGIN}/catalog/forecasts/manifest**`, (route) => route.fulfill({
     contentType: 'application/json',
-    body: JSON.stringify({
-      products: pokemonProducts(1102, 121),
+    body: JSON.stringify({ asOf: '2026-08-10', categories: {} })
+  }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/history/manifest**`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ asOf: '2026-08-10', categories: {} })
+  }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/groups/3/1102/products**`, (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number.parseInt(url.searchParams.get('limit') || '24', 10);
+    const cursor = Number.parseInt(url.searchParams.get('cursor') || '0', 10);
+    const products = pokemonProducts(1102, 121);
+    if (limit === 24) metrics.productPageRequests += 1;
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+      products: products.slice(cursor, cursor + limit),
+      total: products.length,
+      nextCursor: cursor + limit < products.length ? String(cursor + limit) : null,
       category: { categoryId: 3, displayName: 'Pokemon' },
       group: { categoryId: 3, groupId: 1102, name: 'Silver Tempest', abbreviation: 'SIT', publishedOn: '2022-11-11' },
       publicationId: 'e2e',
       sourceUpdatedAt: '2026-08-10'
-    })
-  }));
+      })
+    });
+  });
+  return metrics;
 }
 
-test('Browse Sets drills from a restorable flagship game route into every card in a set', async ({ page }) => {
-  // This intentionally exercises a 121-card render, state restoration, and a
-  // full axe pass. Allow cold browser startup without weakening any assertion.
+test('Browse Sets pages a flagship set in restorable 24-card batches', async ({ page }) => {
+  // This exercises network cursor paging, state restoration, and a full axe
+  // pass. Allow cold browser startup without weakening any assertion.
   test.setTimeout(90_000);
-  await mockFlagshipCatalog(page);
+  const metrics = await mockFlagshipCatalog(page);
   await skipOnboarding(page);
   await page.goto('/discover/pokemon');
 
@@ -107,23 +129,29 @@ test('Browse Sets drills from a restorable flagship game route into every card i
 
   await expect(page).toHaveURL(/\/sets\/silver-tempest-3-1102\?game=pokemon$/);
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
-  await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
-  await expect(page.locator('.result-card')).toHaveCount(120);
+  await expect(page.getByText('24 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.locator('.result-card')).toHaveCount(24);
   await expect(page.locator('.result-card h3').first()).toHaveText('Card 1');
-  await expect(page.locator('.result-card h3').last()).toHaveText('Card 120');
+  await expect(page.locator('.result-card h3').last()).toHaveText('Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved');
+  await expect.poll(() => metrics.productPageRequests).toBe(1);
 
-  await page.getByRole('button', { name: 'Show 1 more' }).click();
-  await expect(page.locator('.result-card')).toHaveCount(121);
+  await page.getByRole('button', { name: 'Load 24 more' }).click();
+  await expect(page.locator('.result-card')).toHaveCount(48);
+  await expect(page.getByText('48 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect.poll(() => metrics.productPageRequests).toBe(2);
 
-  await page.getByPlaceholder('Search this set…').fill('Card 121');
+  await page.getByPlaceholder('Search this set…').fill('Card 48');
   await expect(page.locator('.result-card')).toHaveCount(1);
-  await expect(page.locator('.result-card h3')).toHaveText('Card 121');
+  await expect(page.locator('.result-card h3')).toHaveText('Card 48');
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
-  await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
-  await page.getByPlaceholder('Search this set…').fill('Card 121');
+  await expect(page.getByText('24 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.locator('.result-card')).toHaveCount(24);
+  await page.getByPlaceholder('Search this set…').fill('Card 24');
   await expect(page.locator('.result-card')).toHaveCount(1);
+  await expect(page.locator('.result-card h3')).toHaveText('Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved');
+  await expect(page.locator('.result-outlook-note')).toHaveCount(0);
 
   const report = await new AxeBuilder({ page })
     .include('#main-content')
@@ -133,7 +161,7 @@ test('Browse Sets drills from a restorable flagship game route into every card i
 });
 
 test('Browse Sets keeps popular games visible and opens the complete searchable category picker', async ({ page }) => {
-  await mockFlagshipCatalog(page);
+  const metrics = await mockFlagshipCatalog(page);
   await skipOnboarding(page);
   await page.goto('/discover/browse');
 
@@ -141,6 +169,7 @@ test('Browse Sets keeps popular games visible and opens the complete searchable 
   await expect(popular.getByRole('button', { name: /Pokémon/ })).toBeVisible();
   await expect(popular.getByRole('button', { name: /Magic/ })).toBeVisible();
   await expect(popular.getByRole('button', { name: /Yu-Gi-Oh!/ })).toBeVisible();
+  expect(metrics.groupRequests).toBe(0);
   await page.getByRole('button', { name: /View All/ }).click();
   await expect(page.getByRole('dialog', { name: 'All games and categories' })).toBeVisible();
   const categories = page.locator('[data-game-search-text]');

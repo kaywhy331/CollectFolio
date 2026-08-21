@@ -25,6 +25,7 @@ const MANIFEST_CACHE_MS = 6 * 60 * 60 * 1000;
 const GROUP_CACHE_MS = 6 * 60 * 60 * 1000;
 const STALENESS_MS = 8 * 7 * 24 * 60 * 60 * 1000; // 8 weeks, per the T6 display rule.
 const MAX_PARTS = 64; // publish-time safety bound; a real group never approaches this.
+const requestsInFlight = new Map();
 
 function manifestCacheKey() {
   return `${CACHE_PREFIX}manifest`;
@@ -35,11 +36,20 @@ function groupCacheKey(categoryId, groupId) {
 }
 
 async function cached(key, ttlMs, loader) {
-  const record = await getRecord('catalogCache', key).catch(() => null);
-  if (record?.expiresAt > Date.now() && record.value) return record.value;
-  const value = await loader();
-  await putRecord('catalogCache', { key, expiresAt: Date.now() + ttlMs, value }).catch(() => {});
-  return value;
+  if (requestsInFlight.has(key)) return requestsInFlight.get(key);
+  const request = (async () => {
+    const record = await getRecord('catalogCache', key).catch(() => null);
+    if (record?.expiresAt > Date.now() && record.value) return record.value;
+    const value = await loader();
+    await putRecord('catalogCache', { key, expiresAt: Date.now() + ttlMs, value }).catch(() => {});
+    return value;
+  })();
+  requestsInFlight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (requestsInFlight.get(key) === request) requestsInFlight.delete(key);
+  }
 }
 
 export async function fetchTrajectoryManifest({ session, fetchImpl, bypassCache = false } = {}) {

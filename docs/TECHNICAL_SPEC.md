@@ -279,7 +279,7 @@ Every provider normalizes into the internal item shape. The app never stores a p
 
 Catalog searches use `Promise.allSettled`. One provider failure produces a partial warning but retains successful provider results.
 
-Discover exposes Search cards and Browse sets as peer intents. Browse routes are `/discover/browse`, `/discover/{game}`, and `/discover/{game}/{set}`. Games and sets use a provider-neutral adapter, while set products keep their exact provider printing identity. Filtering and ranking only reorder or narrow the in-memory view; they never truncate the retained provider response. Product rendering starts at 120 cards and can reveal the complete set. `ENABLE_SET_BROWSING` provides a static rollback gate. Private `tcgcsv_*` tables are never read by this browser path.
+Discover exposes Search cards and Browse sets as peer intents. Browse routes are `/discover/browse`, `/discover/{game}`, and `/discover/{game}/{set}`. The all-games landing renders its directory without requesting every game’s set index; choosing a game requests only that category’s groups. Games and sets use a provider-neutral adapter, while set products keep their exact provider printing identity. Set and product rendering begins at 24 items. TCGCSV set products use the Worker’s bounded cursor contract and fetch the next 24 only after an explicit Load more action; filters and ranking operate on the pages retained so far. Product forecast and history hydration coalesces concurrent requests for a shared manifest or group artifact. Set covers hydrate from 24-product samples in small idle batches. Product cards preserve wrapping titles and show compact forecast values without qualifier/disclaimer paragraphs. `ENABLE_SET_BROWSING` provides a static rollback gate. Private `tcgcsv_*` tables are never read by this browser path.
 
 ### Local caching
 
@@ -543,7 +543,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.24` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
+`collectfolio-shell-v0.8.25` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, demand-driven provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth. The

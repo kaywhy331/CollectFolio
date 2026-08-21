@@ -14,7 +14,7 @@ let state = {
   settings: { ...SETTINGS_DEFAULTS },
   overview: { range: '3M' },
   search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', limit: 200, loading: false, results: [], warnings: [] },
-  discover: { mode: 'search', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setLimit: 120, productQuery: '', productSort: 'number', limit: 120, loading: false, games: [], sets: [], products: [], selectedSet: null, warnings: [], error: '', loadedGame: '', loadedSetId: '' },
+  discover: { mode: 'search', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setLimit: 24, productQuery: '', productSort: 'number', limit: 24, loading: false, productsLoadingMore: false, productNextCursor: '', productTotal: 0, games: [], sets: [], products: [], selectedSet: null, warnings: [], error: '', loadedGame: '', loadedSetId: '' },
   portfolio: {
     section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', groupMode: 'grouped', selectionMode: false, selected: [], limit: 100,
     setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: 60
