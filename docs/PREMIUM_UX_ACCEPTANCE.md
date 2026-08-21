@@ -44,7 +44,10 @@ route-by-route element screenshots all show the complete header within the viewp
 The remaining follow-ups still require evidence that repository automation cannot
 manufacture: a moderated external collector study, physical-device review, manual
 screen-reader review, and consented production field metrics. None is represented
-as complete by this receipt.
+as complete by this receipt. The execution protocol and blank evidence receipt are
+[`PREMIUM_UX_HUMAN_VALIDATION.md`](PREMIUM_UX_HUMAN_VALIDATION.md) and
+[`receipts/PREMIUM_UX_HUMAN_VALIDATION_TEMPLATE.md`](receipts/PREMIUM_UX_HUMAN_VALIDATION_TEMPLATE.md).
+Those artifacts make the work reproducible; their existence does not close a human gate.
 
 ## Required usability-task simulations
 
@@ -125,7 +128,16 @@ The following PRD targets cannot be truthfully calculated from an offline reposi
 - Production 75th-percentile LCP/INP/CLS.
 - Crash-free sessions.
 
-Release disposition: the corresponding workflows and privacy-safe event names are implemented/testable, deterministic simulations pass, and no baseline-dependent percentage is fabricated. These KPIs move to post-deploy observation once a consented sample and baseline exist. The identity-confirmation step is retained even if it adds an interaction because removing it would violate the P0 rule against silently confirming unresolved matches.
+Release disposition: the deterministic task workflows are implemented and the canonical
+PRD defines a privacy-scoped event taxonomy, but general product telemetry is not enabled.
+The existing private demand-event queue is separately governed price-intelligence
+research infrastructure and must not be repurposed for UX measurement. No
+baseline-dependent percentage is fabricated. These KPIs remain unavailable until a
+separately reviewed, explicitly consented instrumentation change and preregistered sample
+meet the requirements in
+[`PREMIUM_UX_HUMAN_VALIDATION.md`](PREMIUM_UX_HUMAN_VALIDATION.md). The
+identity-confirmation step is retained even if it adds an interaction because removing it
+would violate the P0 rule against silently confirming unresolved matches.
 
 ## Reproduction commands
 

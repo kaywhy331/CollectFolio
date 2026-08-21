@@ -374,6 +374,23 @@ Measure boundary recall, false boxes, OCR query usefulness, top-1/top-3 candidat
 - The complete evidence, decisions, blockers, and non-deployment boundary are
   recorded in `docs/REDESIGN_FINAL_ACCEPTANCE.md`.
 
+## Premium UX human validation follow-up — August 21, 2026
+
+- [x] Publish a privacy-safe execution protocol and reusable receipt template for the
+  four evidence lanes that repository automation cannot perform.
+- [ ] Run a preregistered moderated external collector study across all 12 required
+  usability tasks and disposition every observed P0/P1 finding.
+- [ ] Complete physical iPhone, Android, tablet, and desktop/PWA review with exact
+  device, OS, browser, application, and service-worker versions recorded.
+- [ ] Complete manual mobile and desktop screen-reader review and disposition focus,
+  announcement, naming, state, error-recovery, and chart-summary findings.
+- [ ] Propose and independently review any consented field instrumentation before it is
+  implemented; general product telemetry remains off and the private demand-event queue
+  must not be repurposed.
+- The protocol is `docs/PREMIUM_UX_HUMAN_VALIDATION.md`; new evidence starts from
+  `docs/receipts/PREMIUM_UX_HUMAN_VALIDATION_TEMPLATE.md`. Publishing these artifacts
+  does not mark an unexecuted human gate complete.
+
 ## Post-acceptance application audit — August 11, 2026
 
 - Closed the audit's data-integrity and privacy defects: independent Watchlist and

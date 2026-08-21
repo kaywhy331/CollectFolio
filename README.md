@@ -59,6 +59,11 @@ The current application patch is `0.8.29` with service-worker shell `collectfoli
 
 The consolidated PRD sections 18–20 evidence matrix, final product-decision
 dispositions, and remaining production-promotion blockers are documented in
-[docs/REDESIGN_FINAL_ACCEPTANCE.md](docs/REDESIGN_FINAL_ACCEPTANCE.md).
+[docs/REDESIGN_FINAL_ACCEPTANCE.md](docs/REDESIGN_FINAL_ACCEPTANCE.md). Deterministic
+Premium UX evidence is recorded in
+[docs/PREMIUM_UX_ACCEPTANCE.md](docs/PREMIUM_UX_ACCEPTANCE.md); the still-pending
+collector-study, physical-device, screen-reader, and consented-field-metric lanes use
+[docs/PREMIUM_UX_HUMAN_VALIDATION.md](docs/PREMIUM_UX_HUMAN_VALIDATION.md) and its
+privacy-safe receipt template.
 
 Product requirements, technical architecture, and final UI references live in [`docs/`](docs/).

@@ -106,6 +106,7 @@ const required = [
   'PRD/redesign.md', 'PRD/CollectFolio Premium UX Redesign — PRD & UI-UX Specification.md',
   'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
   'docs/PREMIUM_UX_DESIGN_SYSTEM.md', 'docs/PREMIUM_UX_ACCEPTANCE.md',
+  'docs/PREMIUM_UX_HUMAN_VALIDATION.md', 'docs/receipts/PREMIUM_UX_HUMAN_VALIDATION_TEMPLATE.md',
   'docs/REDESIGN_COMPATIBILITY.md', 'docs/REDESIGN_FOUNDATION.md', 'docs/REDESIGN_CORE_VERTICAL_SLICE.md',
   'docs/REDESIGN_INTAKE_COLLECTION_MANAGEMENT.md', 'docs/REDESIGN_FORECASTING_INSIGHTS.md',
   'docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md', 'docs/REDESIGN_FINAL_ACCEPTANCE.md',
