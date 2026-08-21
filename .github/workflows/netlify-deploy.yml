@@ -56,7 +56,7 @@ jobs:
         env:
           SUPABASE_URL: https://agmjgyyvhfcivbwdlvzk.supabase.co
           SUPABASE_ANON_KEY: sb_publishable__helvbERfL9guU3mKGViEA_KJqpT3R4
-          APP_VERSION: 0.8.21
+          APP_VERSION: 0.8.27
           TCGCSV_REFRESH_STATUS_URL: https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev/status
           TCGCSV_CATALOG_URL: https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev
           ENABLE_TESSERACT: "true"
