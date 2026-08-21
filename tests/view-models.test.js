@@ -74,6 +74,8 @@ test('search adapter emits normalized truth-preserving fields', () => {
   assert.equal(result.forecast180d.estimatedValue, 120);
   assert.equal(result.forecast365d.estimatedValue, 135);
   assert.ok(Math.abs(result.forecast30d.estimatedChange - 0.05) < 1e-12);
+  assert.equal(result.forecast30d.baselineValue, 100);
+  assert.equal(result.forecast30d.baselineDate, '2026-08-08');
 });
 
 test('approved observed price fills a rights-suppressed catalog price on forecast results', () => {
@@ -110,6 +112,8 @@ test('forecast adapter fails closed below the approved publication tier', () => 
 });
 
 test('shell adapter reports only supported local and cloud states', () => {
-  assert.equal(shellViewModel({ auth: { session: null, syncing: false } }).syncLabel, 'Saved on this device');
+  const local = shellViewModel({ auth: { session: null, syncing: false }, settings: { collectionName: 'Personal Collection' } });
+  assert.equal(local.syncLabel, 'Saved on this device');
+  assert.equal(local.portfolioLabel, 'Personal Collection');
   assert.equal(shellViewModel({ auth: { session: { user: { email: 'collector@example.test' } }, syncing: true } }).syncStatus, 'syncing');
 });

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { catalogReferenceForItem } from '../app/assets/js/core/catalog-identity.js';
-import { renderPortfolio } from '../app/assets/js/views/portfolio.js';
+import { groupMatchingHoldings, renderPortfolio } from '../app/assets/js/views/portfolio.js';
 import { renderPriceIntelligenceDetail } from '../app/assets/js/views/price-intelligence-detail.js';
 
 const marketItem = {
@@ -18,7 +18,7 @@ const holdings = [
 
 function state(overrides = {}) {
   return {
-    holdings, watchlistItems: [], alerts: [], compare: [],
+    holdings, snapshots: [], priceHistory: { byKey: {} }, watchlistItems: [], alerts: [], compare: [],
     settings: { currency: 'USD', portfolioView: 'gallery' },
     portfolio: { section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', selected: [], limit: 100 },
     featureFlags: { watchlists: true, publicPriceIntelligence: false },
@@ -27,46 +27,100 @@ function state(overrides = {}) {
   };
 }
 
-test('Portfolio presents one cohesive summary and keeps manual and unpriced holdings explicit', () => {
+test('Collection presents one compact truthful summary and keeps manual and unpriced items explicit', () => {
   const html = renderPortfolio(state());
-  assert.match(html, /aria-label="Portfolio summary"/);
+  assert.match(html, /aria-label="Collection summary"/);
+  assert.match(html, /2 of 3 · 67%/);
   assert.match(html, /1 market · 1 manual · 1 unpriced/);
   assert.match(html, /value-source manual">Manual/);
   assert.match(html, /value-source unpriced">Unpriced/);
   assert.match(html, /Alpha Set · #1 · foil · English/);
-  assert.match(html, /Current value<\/dt><dd>—<\/dd>/);
-  assert.match(html, /Stored provider reference excluded pending licensed source rights/);
+  assert.match(html, /Current value<\/dt><dd>Unpriced<\/dd>/);
+  assert.match(html, /Saved market reference is not included until source rights are approved/);
+  assert.doesNotMatch(html, /portfolio-value-trend|Value trend/);
+  assert.doesNotMatch(html, /class="holding-select"/);
+  assert.match(html, /class="collection-overflow"/);
+  assert.match(html, /data-action="export-csv"/);
 });
 
-test('Portfolio combines filters, persists list presentation, and exposes bulk tools only after selection', () => {
+test('Collection never represents unknown value or cost as zero', () => {
+  const onlyUnpriced = {
+    ...holdings[2], purchasePrice: '', fees: '', manualMarketPrice: '',
+    item: { ...holdings[2].item, price: null }
+  };
   const html = renderPortfolio(state({
-    portfolio: { section: 'holdings', query: 'Card', category: 'magic', sort: 'name-asc', filters: { setName: 'Alpha Set', pricing: 'market' }, view: 'list', selected: ['market'], limit: 100 }
+    holdings: [onlyUnpriced],
+    portfolio: { ...state().portfolio, groupMode: 'purchases' }
+  }));
+  assert.match(html, /Value not available/);
+  assert.match(html, /0 of 1 · 0%/);
+  assert.match(html, /Current value<\/dt><dd>Unpriced<\/dd>/);
+  assert.match(html, /Cost basis<\/dt><dd>Not recorded<\/dd>/);
+  assert.doesNotMatch(html, /\$0\.00/);
+});
+
+test('Collection combines filters, persists list presentation, and exposes bulk tools only in selection mode', () => {
+  const html = renderPortfolio(state({
+    portfolio: { section: 'holdings', query: 'Card', category: 'magic', sort: 'name-asc', filters: { setName: 'Alpha Set', pricing: 'market' }, view: 'list', groupMode: 'purchases', selectionMode: true, selected: ['market'], limit: 100 }
   }));
   assert.match(html, /portfolio-holdings list/);
   assert.match(html, /Category: Magic/);
   assert.match(html, /Set: Alpha Set/);
   assert.match(html, /Pricing: market/);
-  assert.match(html, /aria-label="Bulk holding actions"/);
+  assert.match(html, /aria-label="Bulk purchase actions"/);
   assert.match(html, /1 selected/);
   assert.match(html, /bulk-move-holdings/);
   assert.match(html, /bulk-tag-holdings/);
   assert.match(html, /bulk-duplicate-holdings/);
   assert.match(html, /bulk-delete-holdings/);
-  assert.doesNotMatch(renderPortfolio(state()), /aria-label="Bulk holding actions"/);
+  assert.doesNotMatch(renderPortfolio(state()), /aria-label="Bulk purchase actions"/);
 });
 
-test('Full card detail keeps product actions above the fold and technical mapping under Data details', () => {
+test('matching collection items can be grouped without losing individual purchase totals', () => {
+  const secondPurchase = { ...holdings[0], id: 'market-second', quantity: 3, purchasePrice: 7 };
+  const groups = groupMatchingHoldings([...holdings, secondPurchase], 'USD');
+  const marketGroup = groups.find((group) => group.item.externalId === 'market');
+  assert.equal(marketGroup.holdings.length, 2);
+  assert.equal(marketGroup.quantity, 5);
+  const grouped = renderPortfolio(state({ holdings: [...holdings, secondPurchase] }));
+  assert.match(grouped, /4 purchases grouped by matching item/);
+  assert.match(grouped, /Qty 5/);
+  assert.match(grouped, /2 purchases/);
+  assert.match(grouped, /data-action="show-individual-purchases"/);
+  const purchases = renderPortfolio(state({ holdings: [...holdings, secondPurchase], portfolio: { ...state().portfolio, groupMode: 'purchases' } }));
+  assert.match(purchases, /Showing individual purchases/);
+  assert.equal((purchases.match(/class="portfolio-holding-card /g) || []).length, 4);
+});
+
+test('Collection shows a sparkline only after two valid dated value observations', () => {
+  assert.doesNotMatch(renderPortfolio(state()), /class="collection-sparkline"/);
+  const html = renderPortfolio(state({ snapshots: [
+    { id: 'portfolio:USD:2026-08-01', date: '2026-08-01', currency: 'USD', marketValue: 60, costBasis: 20 }
+  ] }));
+  assert.match(html, /class="collection-sparkline"/);
+  assert.match(html, /role="img"/);
+});
+
+test('empty Collection offers every supported intake route', () => {
+  const html = renderPortfolio(state({ holdings: [] }));
+  for (const copy of ['>Scan<', '>Search<', '>Import<', '>Custom item<']) assert.match(html, new RegExp(copy));
+});
+
+test('Full item detail keeps ownership actions sticky and technical mapping under Data & Methodology', () => {
   const item = { ...marketItem, name: '<script>bad</script>' };
   const catalogRef = catalogReferenceForItem(item);
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef, holding: holdings[0] }, state());
   assert.doesNotMatch(html, /<script>bad<\/script>/);
   assert.match(html, /class="detail-product"/);
-  assert.match(html, /Your holding/);
+  assert.match(html, /Your collection/);
   assert.match(html, /data-action="edit-holding"/);
+  assert.match(html, /class="detail-action-bar"/);
+  assert.match(html, /Update quantity/);
+  assert.match(html, /View purchases/);
   assert.match(html, /data-action="toggle-watch"/);
   assert.match(html, /data-action="share-detail"/);
   assert.match(html, /href="#detail-market"/);
-  assert.match(html, /<details class="data-details" id="detail-data">/);
+  assert.match(html, /<details class="data-details" id="detail-data"><summary><span>Data &amp; Methodology/);
   assert.match(html, /Market pricing has not been verified yet/);
 });
 
@@ -78,7 +132,7 @@ test('a 1,000-holding portfolio renders a bounded first page', () => {
   }));
   const html = renderPortfolio(state({ holdings: large }));
   assert.equal((html.match(/class="portfolio-holding-card /g) || []).length, 100);
-  assert.match(html, /1,000 holding|1000 holding/);
+  assert.match(html, /1,000 items|1000 items/);
   assert.match(html, /data-action="load-more-holdings"/);
   assert.match(html, /Show 100 more/);
 });
@@ -98,7 +152,7 @@ test('Portfolio Sets groups local printings without inventing catalog completion
   assert.match(html, /aria-label="Set collection summary"/);
   assert.match(html, /<dt>Named sets<\/dt><dd>3<\/dd>/);
   assert.match(html, /Alpha Set/);
-  assert.match(html, /1 distinct printing · 5 copies across 2 acquisition lots/);
+  assert.match(html, /1 distinct printing · 5 copies across 2 purchases/);
   assert.match(html, /Catalog total not linked; completion percentage is intentionally unavailable/);
   assert.match(html, /data-action="view-set-holdings"/);
   assert.doesNotMatch(html, /\d+% complete/i);

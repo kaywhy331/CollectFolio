@@ -1,7 +1,7 @@
 import { normalizeIntelligencePayload } from './intelligence-contract.js';
 import { marketSeriesIdentity, selectPublicationForWatchlist } from './market-series.js';
 
-const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+const finite = (value) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value)) ? Number(value) : null;
 
 function hashText(value) {
   let hash = 0x811c9dc5;
@@ -32,16 +32,21 @@ export function intelligenceAlertBaseline(publication, capturedAt = new Date().t
     value.trend.status, value.fairValue?.position || '', forecastSignature(value.forecasts),
     publication?.publishedAt || '', publication?.expiresAt || ''
   ].join('|');
+  const expiryTime = Date.parse(value.expiresAt || '');
+  const capturedTime = Date.parse(capturedAt);
   return {
     fingerprint: hashText(fingerprint),
     seriesKey,
     observedPrice: value.observed?.price ?? null,
+    observedAt: value.observed?.observedAt || '',
     currency: value.observed?.currency || 'USD',
     trendStatus: value.trend.status,
     fairValuePosition: value.fairValue?.position || '',
     forecastSignature: forecastSignature(value.forecasts),
     capturedAt,
-    publishedAt: publication?.publishedAt || ''
+    publishedAt: value.publishedAt,
+    expiresAt: value.expiresAt,
+    stale: Number.isFinite(expiryTime) && Number.isFinite(capturedTime) && expiryTime <= capturedTime
   };
 }
 
@@ -76,7 +81,7 @@ export function evaluateWatchlistItemAlerts(entry, publication, now = new Date()
   }
   const baseline = intelligenceAlertBaseline(publication, now);
   const previous = entry.intelligenceBaseline || null;
-  if (previous?.fingerprint === baseline.fingerprint) return { baseline: previous, alerts: [] };
+  if (previous?.fingerprint === baseline.fingerprint && Boolean(previous.stale) === baseline.stale) return { baseline: previous, alerts: [] };
 
   const alerts = [];
   const currentPrice = value.observed?.price ?? null;
@@ -86,6 +91,27 @@ export function evaluateWatchlistItemAlerts(entry, publication, now = new Date()
   const targetPrice = finite(entry.targetPrice);
   const targetCurrency = String(entry.targetCurrency || entry.catalogRef?.currency || 'USD').toUpperCase();
   const targetComparable = targetCurrency === baseline.currency;
+  if (previous && previousPrice === null && currentPrice !== null) {
+    alerts.push(event(
+      entry, value, baseline, 'new_catalog_price',
+      `${entry.catalogRef?.name || 'Watched item'} received a new catalog price.`,
+      { currentPrice, currency: baseline.currency, observedAt: baseline.observedAt }, now
+    ));
+  }
+  if (previousPrice !== null && currentPrice === null) {
+    alerts.push(event(
+      entry, value, baseline, 'became_unpriced',
+      `${entry.catalogRef?.name || 'Watched item'} no longer has an approved catalog price.`,
+      { previousPrice, currency: previousCurrency }, now
+    ));
+  }
+  if (previous && !previous.stale && baseline.stale) {
+    alerts.push(event(
+      entry, value, baseline, 'price_stale',
+      `${entry.catalogRef?.name || 'Watched item'} price became stale.`,
+      { observedAt: baseline.observedAt, expiresAt: baseline.expiresAt }, now
+    ));
+  }
   if (targetComparable && currentPrice !== null && targetPrice !== null && currentPrice <= targetPrice && (!previousPriceComparable || previousPrice > targetPrice)) {
     alerts.push(event(
       entry, value, baseline, 'target_price',

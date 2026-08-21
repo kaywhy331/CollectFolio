@@ -16,7 +16,7 @@ test('Pokémon and TCGplayer catalog prices fail closed until a licensed publica
   };
   assert.equal(isRestrictedCatalogPrice(pokemon), true);
   assert.equal(catalogPriceForValuation(pokemon), null);
-  assert.match(catalogPriceDisclosure(pokemon), /excluded pending licensed source rights/);
+  assert.match(catalogPriceDisclosure(pokemon), /not included until source rights are approved/);
 
   assert.equal(isRestrictedCatalogPrice({ provider: 'legacy', price: 20, priceSource: 'TCGplayer market' }), true);
   assert.equal(isRestrictedCatalogPrice({

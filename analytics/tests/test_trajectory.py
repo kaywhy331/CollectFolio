@@ -26,6 +26,7 @@ from collectfolio_analytics.trajectory import (
     fit_theta_drift,
     hedonic_blend_anchor_log,
     horizon_steps_for,
+    interpolated_component_weights,
     mad_volatility,
     process_category,
     select_walk_forward_origins,
@@ -44,6 +45,23 @@ class HorizonStepsForTests(unittest.TestCase):
     def test_rejects_non_positive(self):
         with self.assertRaises(ValueError):
             horizon_steps_for(0)
+
+
+class InterpolatedComponentWeightsTests(unittest.TestCase):
+    def test_preserves_calibrated_endpoints_and_blends_between_them(self):
+        weights = {4: (0.0, 0.25), 13: (0.9, 1.0)}
+
+        self.assertEqual(interpolated_component_weights(weights, 1), weights[4])
+        self.assertEqual(interpolated_component_weights(weights, 4), weights[4])
+        self.assertEqual(interpolated_component_weights(weights, 13), weights[13])
+        self.assertEqual(interpolated_component_weights(weights, 20), weights[13])
+
+        weight_a, weight_b = interpolated_component_weights(weights, 8)
+        self.assertAlmostEqual(weight_a, 0.4)
+        self.assertAlmostEqual(weight_b, 0.25 + ((1.0 - 0.25) * (4 / 9)))
+
+    def test_defaults_to_identity_when_no_horizon_weights_exist(self):
+        self.assertEqual(interpolated_component_weights({}, 8), (1.0, 1.0))
 
 
 class DampedTrendHandComputedTests(unittest.TestCase):
@@ -883,10 +901,9 @@ class ComponentWeightsApplicationTests(unittest.TestCase):
 
     def test_zero_weights_flatten_median_path_to_the_anchor_price(self):
         # With a=b=0 for every configured horizon, medianPath's own
-        # weight-lookup (nearest configured horizon_steps to each path
-        # step k) resolves to (0, 0) everywhere too, so every emitted
-        # medianPath point must equal lastKnownPrice exactly (medianPath
-        # carries no conformal offset, unlike the quantile horizons).
+        # interpolated weight lookup resolves to (0, 0) everywhere too, so
+        # every emitted medianPath point must equal lastKnownPrice exactly
+        # (medianPath carries no conformal offset, unlike the quantiles).
         zeroed = self._run(component_weights={4: (0.0, 0.0), 13: (0.0, 0.0)})
         with gzip.open(zeroed.output_path, "rt", encoding="utf-8") as handle:
             rows = [json.loads(line) for line in handle]

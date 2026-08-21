@@ -97,6 +97,39 @@ def horizon_steps_for(days: int) -> int:
     return max(1, round(days / WEEK_DAYS))
 
 
+def interpolated_component_weights(
+    weights_by_h_steps: Mapping[int, tuple[float, float]],
+    step: int,
+) -> tuple[float, float]:
+    """Blend calibrated horizon weights into one continuous path.
+
+    Component weights are evaluated only at served horizons (currently 30
+    and 90 days, or 4 and 13 weekly steps).  A nearest-horizon lookup makes
+    the median path jump from one parameter set to the other around day 60.
+    Hold the nearest endpoint outside the calibrated interval and linearly
+    blend between adjacent calibrated horizons inside it, preserving the
+    exact evaluated weights at every served checkpoint.
+    """
+    horizon_steps = sorted(weights_by_h_steps)
+    if not horizon_steps:
+        return (1.0, 1.0)
+    if step <= horizon_steps[0]:
+        return weights_by_h_steps[horizon_steps[0]]
+    if step >= horizon_steps[-1]:
+        return weights_by_h_steps[horizon_steps[-1]]
+
+    for lower, upper in zip(horizon_steps, horizon_steps[1:]):
+        if lower <= step <= upper:
+            fraction = (step - lower) / (upper - lower)
+            lower_a, lower_b = weights_by_h_steps[lower]
+            upper_a, upper_b = weights_by_h_steps[upper]
+            return (
+                lower_a + ((upper_a - lower_a) * fraction),
+                lower_b + ((upper_b - lower_b) * fraction),
+            )
+    return weights_by_h_steps[horizon_steps[-1]]
+
+
 # ---------------------------------------------------------------------------
 # Damped-trend exponential smoothing (index level series: market/game/set)
 # ---------------------------------------------------------------------------
@@ -953,22 +986,15 @@ def process_category(
             path_points = []
             max_steps = max(steps_by_days.values())
             path_len = min(MAX_PATH_POINTS, max_steps + 1)
-            # The path's own weight is resolved per step from the SAME
-            # weights_by_h_steps map the horizon quantiles use, keyed by
-            # whichever configured horizon step-count is closest to k --
-            # component_weights is only ever selected per (evaluated)
-            # horizon, not per arbitrary week, so intermediate path steps
-            # inherit the nearest evaluated horizon's weight rather than
-            # silently reverting to the pre-remediation (1.0, 1.0) implicit
-            # default (which would make the visualized path diverge from
-            # the horizon quantiles it is supposed to lead into).
-            path_weight_steps = sorted(weights_by_h_steps)
+            # The path uses the same calibrated endpoint weights as the
+            # horizon quantiles. Intermediate weeks smoothly blend adjacent
+            # endpoints so the visualization cannot switch regimes halfway
+            # between 30d and 90d.
             for k in range(path_len):
                 if k == 0:
                     delta = 0.0
                 else:
-                    path_h_steps = min(path_weight_steps, key=lambda s: abs(s - k)) if path_weight_steps else k
-                    path_weight_a, path_weight_b = weights_by_h_steps.get(path_h_steps, (1.0, 1.0))
+                    path_weight_a, path_weight_b = interpolated_component_weights(weights_by_h_steps, k)
                     delta = (
                         path_weight_a * (
                             damped_forecast_delta(market_fit, origin_index, k)

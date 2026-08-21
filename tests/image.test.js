@@ -13,17 +13,21 @@ import {
 import {
   analyzeOCRText,
   analyzeOCRPasses,
+  boundedImageDimensions,
   buildOCRQueryVariants,
   candidateEvidenceScore,
   extractCollectorNumber,
   extractOCRQuery,
   fileToImageDataURL,
+  fileToScanImageDataURL,
+  imageDimensionsFromBytes,
   MAX_IMAGE_FILE_BYTES,
   queryEvidenceFromText,
   rectifyCardPixels,
   validateImageFile,
   withTimeout
 } from '../app/assets/js/services/image.js';
+import { ScanWorkbench } from '../app/assets/js/services/scan-workbench.js';
 import { visualCandidatesFromHash } from '../app/assets/js/services/visual-index.js';
 
 function syntheticImage(width, height, background = [230, 230, 230]) {
@@ -270,4 +274,137 @@ test('image files are bounded before FileReader allocates their payload', () => 
   assert.throws(() => validateImageFile({ size: MAX_IMAGE_FILE_BYTES + 1 }), /25 MB or smaller/i);
   assert.throws(() => validateImageFile({}), /valid image file/i);
   assert.throws(() => fileToImageDataURL({ size: MAX_IMAGE_FILE_BYTES + 1 }), /25 MB or smaller/i);
+});
+
+test('scan working images are bounded by both dimension and decoded pixel count', () => {
+  assert.deepEqual(boundedImageDimensions(1200, 800), { width: 1200, height: 800, scale: 1 });
+  const landscape = boundedImageDimensions(12_000, 9_000);
+  assert.deepEqual({ width: landscape.width, height: landscape.height }, { width: 3200, height: 2400 });
+  assert.ok(landscape.width * landscape.height <= 8_000_000);
+  const square = boundedImageDimensions(4000, 4000);
+  assert.ok(square.width <= 3200 && square.height <= 3200);
+  assert.ok(square.width * square.height <= 8_000_000);
+});
+
+test('scan dimensions come from bounded JPEG, PNG, WebP, and GIF headers before decode', () => {
+  const png = new Uint8Array(24);
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  png.set([0x49, 0x48, 0x44, 0x52], 12);
+  new DataView(png.buffer).setUint32(16, 12_000);
+  new DataView(png.buffer).setUint32(20, 9_000);
+  assert.deepEqual(imageDimensionsFromBytes(png), { width: 12_000, height: 9_000 });
+
+  const jpeg = new Uint8Array(21);
+  jpeg.set([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x23, 0x28, 0x2e, 0xe0], 0);
+  assert.deepEqual(imageDimensionsFromBytes(jpeg), { width: 12_000, height: 9_000 });
+
+  const webp = new Uint8Array(30);
+  webp.set([...Buffer.from('RIFF'), 0, 0, 0, 0, ...Buffer.from('WEBPVP8X')]);
+  const width = 12_000 - 1;
+  const height = 9_000 - 1;
+  webp.set([width & 0xff, (width >> 8) & 0xff, (width >> 16) & 0xff], 24);
+  webp.set([height & 0xff, (height >> 8) & 0xff, (height >> 16) & 0xff], 27);
+  assert.deepEqual(imageDimensionsFromBytes(webp), { width: 12_000, height: 9_000 });
+
+  const gif = new Uint8Array(10);
+  gif.set(Buffer.from('GIF89a'));
+  new DataView(gif.buffer).setUint16(6, 640, true);
+  new DataView(gif.buffer).setUint16(8, 480, true);
+  assert.deepEqual(imageDimensionsFromBytes(gif), { width: 640, height: 480 });
+  assert.equal(imageDimensionsFromBytes(new Uint8Array([1, 2, 3, 4])), null);
+});
+
+test('scan upload performs one decoder-bounded bitmap allocation and closes it', async () => {
+  const png = new Uint8Array(24);
+  png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  png.set([0x49, 0x48, 0x44, 0x52], 12);
+  new DataView(png.buffer).setUint32(16, 12_000);
+  new DataView(png.buffer).setUint32(20, 9_000);
+  const file = {
+    size: 1024,
+    arrayBuffer() { throw new Error('the full file must not be read before decode'); },
+    slice(start, end) {
+      assert.equal(start, 0);
+      assert.equal(end, 1024 * 1024);
+      return { arrayBuffer: async () => png.buffer };
+    }
+  };
+  const bitmapCalls = [];
+  let closed = false;
+  const originalBitmap = globalThis.createImageBitmap;
+  const originalDocument = globalThis.document;
+  globalThis.createImageBitmap = async (source, options) => {
+    bitmapCalls.push({ source, options });
+    return { width: options.resizeWidth, height: options.resizeHeight, close() { closed = true; } };
+  };
+  globalThis.document = {
+    createElement(name) {
+      assert.equal(name, 'canvas');
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({ drawImage() {} }),
+        toDataURL: () => 'data:image/jpeg;base64,bounded'
+      };
+    }
+  };
+  try {
+    assert.equal(await fileToScanImageDataURL(file), 'data:image/jpeg;base64,bounded');
+    assert.equal(bitmapCalls.length, 1);
+    assert.equal(bitmapCalls[0].source, file);
+    assert.deepEqual(bitmapCalls[0].options, {
+      resizeWidth: 3200,
+      resizeHeight: 2400,
+      resizeQuality: 'high'
+    });
+    assert.equal(closed, true);
+  } finally {
+    if (originalBitmap === undefined) delete globalThis.createImageBitmap;
+    else globalThis.createImageBitmap = originalBitmap;
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
+});
+
+test('scan boundaries support keyboard selection, movement, corner editing, and deletion', () => {
+  const attributes = new Map();
+  const listeners = new Map();
+  const context = Object.fromEntries(['clearRect', 'drawImage', 'beginPath', 'moveTo', 'lineTo', 'closePath', 'fill', 'stroke', 'fillText', 'fillRect'].map((name) => [name, () => {}]));
+  const canvas = {
+    width: 0,
+    height: 0,
+    tabIndex: -1,
+    getContext: () => context,
+    setAttribute: (name, value) => attributes.set(name, value),
+    addEventListener: (name, listener) => listeners.set(name, listener),
+    removeEventListener: (name) => listeners.delete(name),
+    focus: () => {}
+  };
+  const announcements = [];
+  let changes = 0;
+  const editor = new ScanWorkbench(canvas, { width: 100, height: 100 }, {
+    onChange: () => { changes++; },
+    onAnnounce: (message) => announcements.push(message)
+  });
+  editor.boxes = [{
+    x: 10, y: 10, width: 40, height: 60,
+    corners: [{ x: 10, y: 10 }, { x: 50, y: 10 }, { x: 50, y: 70 }, { x: 10, y: 70 }]
+  }];
+  editor.selected = 0;
+  editor.render();
+  const key = (value, shiftKey = false) => editor.onKeyDown({ key: value, shiftKey, preventDefault() {} });
+  key('ArrowRight');
+  assert.equal(editor.boxes[0].x, 11);
+  key('1');
+  key('ArrowDown', true);
+  assert.equal(editor.boxes[0].corners[0].y, 20);
+  assert.equal(changes, 2);
+  assert.match(announcements.at(-1), /Corner 1 moved ten steps down/);
+  assert.match(attributes.get('aria-label'), /corner 1 selected/i);
+  key('Delete');
+  assert.equal(editor.boxes.length, 0);
+  assert.equal(canvas.tabIndex, 0);
+  assert.ok(listeners.has('keydown'));
+  editor.destroy();
+  assert.equal(listeners.has('keydown'), false);
 });

@@ -20,6 +20,19 @@ test('backup preflight builds a complete write plan before import', () => {
   assert.throws(() => validateBackup(invalid), /settings data section contains an invalid record/i);
 });
 
+test('backup preflight accepts legacy scan sources but removes them from the write plan', () => {
+  const backup = validBackup();
+  backup.stores.scans = [{
+    id: 'scan-one', status: 'review', crops: [],
+    sourceImage: 'data:image/jpeg;base64,legacy-source',
+    sourceImageRetainedAt: '2026-08-20T12:00:00.000Z'
+  }];
+  const scans = validateBackup(backup).find(([name]) => name === 'scans')[1];
+  assert.equal(scans.length, 1);
+  assert.equal('sourceImage' in scans[0], false);
+  assert.equal('sourceImageRetainedAt' in scans[0], false);
+});
+
 test('legacy version-1 backups remain accepted under store-aware validation', () => {
   const legacy = validBackup();
   legacy.version = 1;

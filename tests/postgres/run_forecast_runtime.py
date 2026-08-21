@@ -219,6 +219,76 @@ def apply_migrations(manual_pgcrypto: bool) -> None:
             )
 
 
+def assert_account_owned_sync_keys() -> None:
+    user_a = "00000000-0000-4000-8000-000000000121"
+    user_b = "00000000-0000-4000-8000-000000000122"
+    holding_id = "00000000-0000-4000-8000-000000000123"
+    session_id = "00000000-0000-4000-8000-000000000124"
+    run_psql(f"""
+insert into auth.users (id) values ('{user_a}'), ('{user_b}');
+insert into public.holdings (user_id, id, data) values
+  ('{user_a}', '{holding_id}', '{{"owner":"a"}}'::jsonb),
+  ('{user_b}', '{holding_id}', '{{"owner":"b"}}'::jsonb);
+insert into public.scan_sessions (user_id, id, data) values
+  ('{user_a}', '{session_id}', '{{"owner":"a"}}'::jsonb),
+  ('{user_b}', '{session_id}', '{{"owner":"b"}}'::jsonb);
+insert into public.holdings (user_id, id, data)
+values ('{user_a}', '{holding_id}', '{{"owner":"a-updated"}}'::jsonb)
+on conflict (user_id, id) do update set data = excluded.data;
+""")
+
+    for table, identifier in (("holdings", holding_id), ("scan_sessions", session_id)):
+        definition = scalar(f"""
+select pg_get_constraintdef(oid)
+from pg_constraint
+where conrelid = 'public.{table}'::regclass and contype = 'p';
+""")
+        if definition != "PRIMARY KEY (user_id, id)":
+            raise RuntimeTestFailure(
+                f"{table} primary key is not account-owned: {definition!r}"
+            )
+        count = int(scalar(
+            f"select count(*) from public.{table} where id = '{identifier}';"
+        ))
+        if count != 2:
+            raise RuntimeTestFailure(
+                f"{table} did not retain the same client ID for two accounts"
+            )
+        unique_id_indexes = int(scalar(f"""
+select count(*)
+from pg_index index_row
+join pg_class index_table on index_table.oid = index_row.indrelid
+where index_table.oid = 'public.{table}'::regclass
+  and index_row.indisunique
+  and pg_get_indexdef(index_row.indexrelid) ~ '\\(id\\)$';
+"""))
+        if unique_id_indexes:
+            raise RuntimeTestFailure(
+                f"{table} still has a globally unique ID-only index"
+            )
+
+    updated_owner = scalar(
+        f"select data->>'owner' from public.holdings "
+        f"where user_id = '{user_a}' and id = '{holding_id}';"
+    )
+    if updated_owner != "a-updated":
+        raise RuntimeTestFailure("account-owned holding upsert did not update its row")
+
+    visible_rows = int(scalar(f"""
+set role authenticated;
+set request.jwt.claim.sub = '{user_a}';
+select count(*) from public.holdings where id = '{holding_id}';
+"""))
+    if visible_rows != 1:
+        raise RuntimeTestFailure("holding RLS did not isolate the signed-in account")
+    expect_failure(f"""
+set role authenticated;
+set request.jwt.claim.sub = '{user_a}';
+insert into public.scan_sessions (user_id, id)
+values ('{user_b}', '00000000-0000-4000-8000-000000000125');
+""", "row-level security policy")
+
+
 def create_challenge() -> dict[str, object]:
     seconds = float(scalar(
         "select greatest(extract(epoch from origin_start - clock_timestamp()), 0) "
@@ -916,6 +986,7 @@ def main() -> int:
     try:
         manual_pgcrypto = bootstrap_database()
         apply_migrations(manual_pgcrypto)
+        assert_account_owned_sync_keys()
         run_psql(file=FIXTURE)
         assert_terminal_trend_run_guard()
         assert_acl_guards()
@@ -941,9 +1012,10 @@ def main() -> int:
         print(f"Forecast PostgreSQL runtime test failed: {error}", file=sys.stderr)
         return 1
     print(
-        "Forecast PostgreSQL runtime test passed: migrations, ACLs, terminal-run and "
-        "row-lock guards, HMAC tamper/replay rejection, rollback atomicity, complete "
-        "costs, stored receipt hashes, and the synthetic six-origin scorecard lifecycle"
+        "Forecast PostgreSQL runtime test passed: migrations, account-owned sync keys, "
+        "RLS, ACLs, terminal-run and row-lock guards, HMAC tamper/replay rejection, "
+        "rollback atomicity, complete costs, stored receipt hashes, and the synthetic "
+        "six-origin scorecard lifecycle"
     )
     return 0
 

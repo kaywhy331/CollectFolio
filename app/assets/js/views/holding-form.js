@@ -83,10 +83,10 @@ export function renderHoldingForm(holding = null, {
     <details class="form-disclosure" ${detailOpen ? 'open' : ''}><summary><span><strong>Grading, value &amp; notes</strong><small>Only when you need them</small></span><span aria-hidden="true">+</span></summary><div class="form-disclosure-body field-grid">
       <label>Grade company<input name="gradeCompany" maxlength="40" value="${escapeAttribute(holding?.gradeCompany || '')}" placeholder="PSA, CGC, BGS"></label>
       <label>Grade<input name="grade" maxlength="20" value="${escapeAttribute(holding?.grade || '')}" placeholder="10"></label>
-      <label>Manual market value per item<input name="manualMarketPrice" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.manualMarketPrice ?? '')}" placeholder="Leave blank to use a permitted catalog value"><span class="fine-print">A manual value overrides, but does not erase, the catalog reference.</span></label>
+      <label>Manual current value per item<input name="manualMarketPrice" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.manualMarketPrice ?? '')}" placeholder="Leave blank to use an available market value"><span class="fine-print">Your manual value stays distinct from market observations.</span></label>
       <label>Manual-value currency<select name="manualMarketCurrency">${CURRENCIES.map((value) => option(value, manualMarketCurrency)).join('')}</select></label>
       <label class="span-all">Notes<textarea name="notes" maxlength="2000" placeholder="Provenance, defects, storage notes…">${escapeHTML(holding?.notes || '')}</textarea></label>
-      <label class="span-all">Your photo<input name="photo" type="file" accept="image/*"><span class="fine-print">Images may be up to 25 MB. The original source photo is never uploaded. This portfolio image stays in IndexedDB.</span></label>
+      <label class="span-all">Your photo<input name="photo" type="file" accept="image/*"><span class="fine-print">Images may be up to 25 MB. The original source photo is never uploaded. This collection image stays on this device.</span></label>
     </div></details>
     <input type="hidden" name="existingImage" value="${escapeAttribute(image || holding?.userImage || '')}">
   </form>`;

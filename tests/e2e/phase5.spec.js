@@ -12,7 +12,7 @@ async function expectAccessible(page) {
 
 async function skipOnboarding(page) {
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview' });
+  const overview = page.getByRole('heading', { name: 'Home' });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -20,15 +20,21 @@ async function skipOnboarding(page) {
   await expect(overview).toBeVisible();
 }
 
+function accessTokenFor(userId) {
+  return `header.${Buffer.from(JSON.stringify({ sub: userId })).toString('base64url')}.signature`;
+}
+
 async function configureCloud(page, { failSync = false } = {}) {
-  await page.addInitScript(() => {
+  const userId = '30000000-0000-4000-8000-000000000001';
+  await page.addInitScript(({ accessToken, accountId }) => {
+    if (localStorage.getItem('collectfolio:supabase-session')) return;
     localStorage.setItem('collectfolio:supabase-session', JSON.stringify({
-      access_token: 'synthetic-access-token',
+      access_token: accessToken,
       refresh_token: 'synthetic-refresh-token',
       expires_at: Math.floor(Date.now() / 1000) + 3600,
-      user: { id: '30000000-0000-4000-8000-000000000001', email: 'collector@example.test' }
+      user: { id: accountId, email: 'collector@example.test' }
     }));
-  });
+  }, { accessToken: accessTokenFor(userId), accountId: userId });
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
@@ -40,9 +46,13 @@ async function configureCloud(page, { failSync = false } = {}) {
       ENABLE_CLOUD_DATA_REMOVAL: false
     });`
   }));
+  const requests = [];
+  const writes = [];
   await page.route('**/__phase5-cloud/**', (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    requests.push(`${request.method()} ${url.pathname}${url.search}`);
+    if (request.method() !== 'GET') writes.push(`${request.method()} ${url.pathname}${url.search}`);
     if (failSync && request.method() === 'GET' && url.pathname.endsWith('/holdings')) {
       return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'service unavailable' }) });
     }
@@ -54,9 +64,10 @@ async function configureCloud(page, { failSync = false } = {}) {
     }
     return route.fulfill({ contentType: 'application/json', body: '[]' });
   });
+  return { requests, writes };
 }
 
-test('three-step onboarding survives refresh and completes after the first Add action', async ({ page }) => {
+test('three-step onboarding survives refresh and completes after the first collection add', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Set up CollectFolio' })).toBeVisible();
   await expect(page.getByText('Step 1 of 3')).toBeVisible();
@@ -65,25 +76,25 @@ test('three-step onboarding survives refresh and completes after the first Add a
   await page.getByLabel('Display currency').selectOption('CAD');
   await page.getByRole('button', { name: 'Save and continue' }).click();
   await expect(page.getByText('Step 3 of 3')).toBeVisible();
-  await expect(page.getByText('CAD portfolio currency')).toBeVisible();
+  await expect(page.getByText('CAD collection currency')).toBeVisible();
 
   await page.reload();
   await expect(page.getByText('Step 3 of 3')).toBeVisible();
-  await expect(page.getByText('CAD portfolio currency')).toBeVisible();
+  await expect(page.getByText('CAD collection currency')).toBeVisible();
   await expectAccessible(page);
 
   await page.getByRole('button', { name: 'Choose how to add' }).click();
-  await expect(page).toHaveURL(/\/add$/);
+  await expect(page).toHaveURL(/\/scan$/);
   await page.getByRole('button', { name: /Create custom item/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Add a custom collectible' });
   await dialog.getByLabel('Name').fill('First onboarding collectible');
-  await dialog.getByRole('button', { name: 'Add to portfolio' }).click();
+  await dialog.getByRole('button', { name: 'Add to collection' }).click();
   await expect(dialog).toHaveCount(0);
-  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Overview' }).click();
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' }).click();
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
   await expect(page.getByText('First onboarding collectible', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Set up CollectFolio' })).toHaveCount(0);
 });
 
@@ -102,7 +113,7 @@ test('a shared provider card URL hydrates without local card data', async ({ pag
   await page.goto('/cards/scryfall%3Ashared-card-id');
   await expect(page.getByRole('heading', { name: 'Shared Archive Card' })).toBeVisible();
   await expect(page.getByText('Linked Set · #42 · rare')).toBeVisible();
-  await expect(page).toHaveURL(/\/cards\/scryfall%3Ashared-card-id$/);
+  await expect(page).toHaveURL(/\/items\/scryfall%3Ashared-card-id$/);
 });
 
 test('guest settings are responsive, accessible, textual, and modal focus stays contained', async ({ page }) => {
@@ -137,7 +148,7 @@ test('guest settings are responsive, accessible, textual, and modal focus stays 
 });
 
 test('signed-in settings synchronize successfully and recover their offline state', async ({ page, context }) => {
-  await configureCloud(page);
+  const cloud = await configureCloud(page);
   await page.goto('/');
   await skipOnboarding(page);
   await page.getByRole('button', { name: 'Open settings' }).click();
@@ -146,6 +157,13 @@ test('signed-in settings synchronize successfully and recover their offline stat
   await expect(page.getByText(/Unavailable until independently recoverable cloud removal/)).toBeVisible();
   await page.getByRole('button', { name: 'Synchronize now' }).click();
   await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
+  const ownedReads = cloud.requests.filter((entry) => entry.startsWith('GET ')
+    && /\/(?:holdings|holding_deletions|portfolio_snapshots|watchlist_items|watchlist_deletions)\?/.test(entry));
+  expect(ownedReads.length).toBeGreaterThanOrEqual(5);
+  expect(
+    ownedReads.filter((entry) => entry.includes('user_id=eq.30000000-0000-4000-8000-000000000001')),
+    ownedReads.join('\n')
+  ).toHaveLength(ownedReads.length);
   await expect(page.locator('section.settings-section').filter({ hasText: 'Synchronization history' })).toContainText('Completed');
 
   await context.setOffline(true);
@@ -156,6 +174,31 @@ test('signed-in settings synchronize successfully and recover their offline stat
   await expectAccessible(page);
 });
 
+test('a local collection cannot silently synchronize into a different account', async ({ page }) => {
+  const cloud = await configureCloud(page);
+  await page.goto('/');
+  await skipOnboarding(page);
+  await page.getByRole('button', { name: 'Open settings' }).click();
+  await page.getByRole('button', { name: 'Synchronize now' }).click();
+  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
+  const writesAfterOwnerSync = cloud.writes.length;
+
+  const userB = '30000000-0000-4000-8000-000000000002';
+  await page.evaluate(({ accessToken, accountId }) => {
+    localStorage.setItem('collectfolio:supabase-session', JSON.stringify({
+      access_token: accessToken,
+      refresh_token: 'synthetic-refresh-token-b',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: { id: accountId, email: 'other@example.test' }
+    }));
+  }, { accessToken: accessTokenFor(userB), accountId: userB });
+  await page.reload();
+  await expect(page.locator('[data-account-status="error"]')).toContainText('linked to another cloud account');
+  await page.getByRole('button', { name: 'Synchronize now' }).click();
+  await expect(page.locator('[data-account-status="error"]')).toContainText('linked to another cloud account');
+  expect(cloud.writes.length).toBe(writesAfterOwnerSync);
+});
+
 test('synchronization errors preserve local data and expose a recovery reference', async ({ page }) => {
   await configureCloud(page, { failSync: true });
   await page.goto('/');
@@ -164,7 +207,7 @@ test('synchronization errors preserve local data and expose a recovery reference
   await page.getByRole('button', { name: 'Synchronize now' }).click();
   const status = page.locator('[data-account-status="error"]');
   await expect(status).toContainText('Synchronization needs attention');
-  await expect(status).toContainText('local portfolio is unchanged');
+  await expect(status).toContainText('local collection is unchanged');
   await page.getByText('Recovery details').click();
   await expect(page.locator('.diagnostic-details code')).toContainText(/^SYNC-/);
   await expect(page.getByRole('button', { name: 'Synchronize now' })).toBeEnabled();

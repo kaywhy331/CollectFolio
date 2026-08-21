@@ -53,7 +53,7 @@ const tcgcsvItem = {
 
 test('detail view without a selection offers a way back instead of crashing', () => {
   const html = renderPriceIntelligenceDetail(null, baseState());
-  assert.match(html, /No card selected/);
+  assert.match(html, /No item selected/);
   assert.match(html, /data-go="portfolio"/);
 });
 
@@ -85,8 +85,56 @@ test('detail abstains instead of choosing the first ambiguous holding series', (
     { origin: 'search', item: conditionlessItem, catalogRef },
     baseState({ holdings })
   );
-  assert.doesNotMatch(html, /Your holding/);
-  assert.match(html, /Market condition<\/dt><dd>Not confirmed/);
+  assert.doesNotMatch(html, /Your collection/);
+  assert.match(html, /Condition<\/dt><dd>Unconfirmed/);
+});
+
+test('item detail prioritizes price, uses direct image zoom, and keeps methodology collapsed', () => {
+  const pictured = { ...item, image: 'https://images.example/card.webp', priceSource: 'Licensed source', priceUpdatedAt: '2026-08-19T00:00:00.000Z' };
+  const catalogRef = catalogReferenceForItem(pictured);
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: pictured, catalogRef }, baseState());
+  assert.match(html, /class="detail-image-frame" type="button" data-action="zoom-detail-image"/);
+  assert.doesNotMatch(html, />Zoom image</);
+  assert.ok(html.indexOf('Current value') < html.indexOf('<dl class="detail-metadata">'));
+  assert.match(html, /Price history will appear after additional verified updates/);
+  assert.match(html, /<details class="data-details" id="detail-data">/);
+  assert.doesNotMatch(html, /<details class="data-details" id="detail-data" open/);
+});
+
+test('item detail preserves a long title and labels missing identity fields without invented metadata', () => {
+  const name = 'A Deliberately Long Collector Edition Product Title With Multiple Descriptors and a Numbered Anniversary Treatment';
+  const sparse = { ...item, name, language: '', marketCondition: '', variant: '', rarity: '' };
+  const catalogRef = catalogReferenceForItem(sparse, { marketCondition: '' });
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: sparse, catalogRef }, baseState());
+  assert.match(html, new RegExp(name));
+  assert.match(html, /Condition<\/dt><dd>Unconfirmed/);
+  assert.match(html, /Language<\/dt><dd>Not specified/);
+  assert.match(html, /Variant not specified/);
+});
+
+test('sealed item metadata names its product format and never labels it Raw', () => {
+  const sealed = { ...item, name: 'DZ-BT15 Booster Pack', productFormat: 'booster pack', conditionClass: 'sealed', edition: 'standard', language: 'English', setName: 'DZ-BT15' };
+  const catalogRef = catalogReferenceForItem(sealed, { conditionClass: 'sealed' });
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: sealed, catalogRef }, baseState());
+  assert.match(html, /Type<\/dt><dd>Sealed product/);
+  assert.match(html, /Format<\/dt><dd>Booster Pack/);
+  assert.match(html, /Condition<\/dt><dd>Unconfirmed/);
+  assert.doesNotMatch(html, />Raw</);
+});
+
+test('detail price-history chart requires two distinct valid observations', () => {
+  const catalogRef = catalogReferenceForItem(tcgcsvItem);
+  const key = '3:604:97847:Holofoil';
+  const one = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState({
+    priceHistory: { byKey: { [key]: { available: true, points: [['2026-08-01', 90]] } } }
+  }));
+  assert.doesNotMatch(one, /history-line-chart/);
+  assert.match(one, /Price history will appear after additional verified updates/);
+  const two = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState({
+    priceHistory: { byKey: { [key]: { available: true, points: [['2026-08-01', 90], ['2026-08-08', 95]] } } }
+  }));
+  assert.match(two, /history-line-chart/);
+  assert.doesNotMatch(two, /Price history will appear after additional verified updates/);
 });
 
 test('owned catalog card detail no longer renders local-scenario-v1, deferring to a published trajectory forecast', () => {
@@ -100,8 +148,8 @@ test('owned catalog card detail no longer renders local-scenario-v1, deferring t
     condition: 'Near Mint', manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
   };
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef, holding }, baseState({ holdings: [holding] }));
-  assert.match(html, /Manual scenario outlook/);
-  assert.match(html, /does not apply to catalog-linked items/);
+  assert.match(html, /<p class="eyebrow">Your scenario<\/p>/);
+  assert.match(html, /catalog item uses published outlooks when enough evidence is available/);
   assert.doesNotMatch(html, /local-scenario-chart/);
   assert.match(html, /No forecast published/);
   assert.doesNotMatch(html, /Approved forecast projection/);
@@ -115,7 +163,7 @@ test('owned manual/custom card detail still renders a manual scenario when publi
     condition: 'Near Mint', manualMarketPrice: 95, manualMarketCurrency: 'USD', purchasePrice: 70, fees: 2
   };
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item: manualItem, catalogRef, holding }, baseState({ holdings: [holding] }));
-  assert.match(html, /Manual scenario outlook/);
+  assert.match(html, /<p class="eyebrow">Your scenario<\/p>/);
   assert.match(html, /Your estimate/);
   assert.match(html, /local-scenario-chart/);
   assert.match(html, /No forecast published/);
@@ -163,6 +211,24 @@ test('trajectory-v1 excluded/unknown packet still shows the honest insufficient-
   assert.doesNotMatch(html, /30-day outlook/);
 });
 
+test('trajectory-v1 withholds values whose price baseline is stale at publication time', () => {
+  const tcgcsvItem = { ...item, provider: 'tcgcsv', categoryId: 3, groupId: 42, productId: 777, variant: 'Holofoil' };
+  const catalogRef = catalogReferenceForItem(tcgcsvItem, { canonicalVariantId: variantId });
+  const packet = {
+    modelVersion: 'trajectory-v1', confidence: 'standard', lastKnownDate: '2026-01-01', lastKnownPrice: 90,
+    horizons: { 30: { q10: 70, q25: 80, q50: 95, q75: 105, q90: 120 } }, medianPath: []
+  };
+  const state = baseState({
+    trajectoryForecasts: {
+      byKey: { '3:42:777:Holofoil': { eligibility: 'published', packet, manifest: { asOf: '2026-08-10' } } },
+      loading: false, error: ''
+    }
+  });
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, state);
+  assert.match(html, /A fresher market observation is required/);
+  assert.doesNotMatch(html, /30-day outlook|\$95\.00/);
+});
+
 test('tier-4 publication renders observed, trend, fair value, forecast, and drivers separately', () => {
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const state = baseState({
@@ -184,7 +250,7 @@ test('tier-4 publication renders observed, trend, fair value, forecast, and driv
   assert.match(html, /Approved forecast projection/);
   assert.match(html, /Observed now/);
   assert.match(html, /Probability of gain/);
-  assert.match(html, /Market condition<\/dt><dd>near-mint/);
+  assert.match(html, /Condition<\/dt><dd>near-mint/);
   assert.match(html, /Strong character premium/);
   assert.match(html, /Current price above structural band/);
   assert.match(html, /never rewritten/);

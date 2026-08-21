@@ -1,12 +1,13 @@
 import { validSession } from '../supabase.js';
+import { tcgcsvProductImageUrl } from '../../core/catalog-images.js';
+
+export { tcgcsvProductImageUrl } from '../../core/catalog-images.js';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 200;
 const PRIVATE_TEST_ENTITLEMENT = 'authenticated-private-test';
 const FREE_ACCESS_ENTITLEMENT = 'community-free-access';
-const TCGPLAYER_IMAGE_CDN = 'https://tcgplayer-cdn.tcgplayer.com/product';
-const TCGPLAYER_IMAGE_SIZES = Object.freeze([200, 400, 600, 800, 1000]);
 const PRICE_FIELDS = Object.freeze([
   ['marketPrice', 'market'],
   ['midPrice', 'mid'],
@@ -135,13 +136,6 @@ function extendedValue(product, names) {
     .find((entry) => expected.has(String(entry?.name || entry?.displayName || '').toLowerCase()))?.value || '';
 }
 
-export function tcgcsvProductImageUrl(productId, size = 400) {
-  const id = Number(productId);
-  if (!Number.isSafeInteger(id) || id <= 0) return '';
-  const scale = TCGPLAYER_IMAGE_SIZES.includes(Number(size)) ? Number(size) : 400;
-  return `${TCGPLAYER_IMAGE_CDN}/${id}_in_${scale}x${scale}.jpg`;
-}
-
 function imageFromExtendedData(product) {
   const value = String(extendedValue(product, ['image', 'image url', 'imageurl', 'photo', 'front image']));
   try {
@@ -192,7 +186,7 @@ export function normalizeTCGCSVProduct(product = {}, {
   const image = extendedImage || tcgcsvProductImageUrl(productId, 1000);
   const imageSmall = extendedImage || tcgcsvProductImageUrl(productId, 400);
   const setName = group.name || product.groupName || '';
-  const releasedAt = group.publishedOn || '';
+  const releasedAt = group.publishedOn || product.groupPublishedOn || product.publishedOn || product.releaseDate || '';
   const externalId = `${categoryId}:${groupId}:${productId}`;
   return {
     id: `tcgcsv:${externalId}`,
@@ -209,6 +203,7 @@ export function normalizeTCGCSVProduct(product = {}, {
     variant: preferred?.finish || priceOptions[0]?.finish || '',
     rarity: product.rarity || extendedValue(product, ['rarity']),
     cardType: product.cardType || extendedValue(product, ['card type']),
+    releasedAt,
     year: String(releasedAt).slice(0, 4),
     image,
     imageSmall,
@@ -349,6 +344,37 @@ export async function getTCGCSVGroupProducts(setId) {
   })).filter(Boolean);
 }
 
+// Fetch exactly one catalog page so set browsing can become interactive
+// without downloading and enriching every product in a large group first.
+export async function getTCGCSVGroupProductsPage(setId, {
+  cursor = '',
+  limit = 48,
+  session,
+  fetchImpl
+} = {}) {
+  const { categoryId, groupId } = groupIdentity(setId);
+  const pageLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 48));
+  const payload = await requestTCGCSVCatalog(
+    `/catalog/groups/${categoryId}/${groupId}/products`,
+    { params: { limit: pageLimit, cursor }, session, fetchImpl }
+  );
+  const rows = Array.isArray(payload?.products) ? payload.products : [];
+  const products = rows.map((product) => normalizeTCGCSVProduct(product, {
+    category: payload?.category,
+    group: payload?.group,
+    publicationId: payload?.publicationId,
+    sourceUpdatedAt: payload?.sourceUpdatedAt
+  })).filter(Boolean);
+  const declaredTotal = Number(payload?.total);
+  return {
+    products,
+    total: Number.isSafeInteger(declaredTotal) && declaredTotal >= 0 ? declaredTotal : products.length,
+    nextCursor: payload?.nextCursor === null || payload?.nextCursor === undefined
+      ? ''
+      : String(payload.nextCursor)
+  };
+}
+
 // One bounded request (no pagination) — enough to choose a set cover image
 // without paying the full multi-page product download per set.
 export async function getTCGCSVGroupProductsSample(setId, { limit = 100, session, fetchImpl } = {}) {
@@ -410,12 +436,13 @@ export async function searchTCGCSV(query, { category = 'all', session, fetchImpl
     .slice(0, MAX_SEARCH_RESULTS);
 }
 
-export async function getTCGCSVProduct(externalId) {
+export async function getTCGCSVProduct(externalId, opts = {}) {
   const match = /^(\d+):(\d+):(\d+)$/.exec(String(externalId || ''));
   if (!match) throw new Error('This catalog product identifier is invalid.');
   const [categoryId, groupId, productId] = match.slice(1).map(Number);
   const payload = await requestTCGCSVCatalog(
-    `/catalog/products/${categoryId}/${groupId}/${productId}`
+    `/catalog/products/${categoryId}/${groupId}/${productId}`,
+    opts
   );
   return normalizeTCGCSVProduct(payload.product, {
     category: payload.category,

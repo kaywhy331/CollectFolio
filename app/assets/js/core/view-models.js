@@ -99,6 +99,8 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
         lowerBound: forecast.q10,
         upperBound: forecast.q90,
         estimatedChange: forecastBasis > 0 ? forecast.q50 / forecastBasis - 1 : null,
+        baselineValue: forecastBasis > 0 ? forecastBasis : null,
+        baselineDate: intelligence?.observed?.observedAt?.slice(0, 10) || '',
         probabilityUp: forecast.probabilityUp,
         confidence: forecast.confidence,
         status: forecast.forecastStatus,
@@ -114,6 +116,8 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
       lowerBound: trajectory.lowerBound,
       upperBound: trajectory.upperBound,
       estimatedChange: trajectory.estimatedChange,
+      baselineValue: trajectory.baselineValue,
+      baselineDate: trajectory.baselineDate,
       probabilityUp: null,
       confidence: trajectory.confidence,
       status: trajectory.confidence === 'cold-start' ? 'cold-start' : 'trajectory',
@@ -153,6 +157,9 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
     priceUpdatedAt: price === null && forecastBasis !== null
       ? intelligence.observed.observedAt
       : reference.priceUpdatedAt,
+    priceSource: price === null && forecastBasis !== null
+      ? intelligence.observed.source
+      : reference.priceSource,
     forecastStatus: (intelligence && Object.keys(intelligence.forecasts).length) || forecast30d || forecast90d ? 'available' : 'unavailable',
     forecast30d,
     forecast90d,
@@ -234,7 +241,7 @@ export function shellViewModel(state = {}) {
     error: 'Synchronization needs attention'
   };
   return {
-    portfolioLabel: 'Local portfolio',
+    portfolioLabel: text(state.settings?.collectionName, 80) || 'Personal Collection',
     syncStatus,
     syncLabel: labels[syncStatus],
     accountLabel: session?.user?.email || 'Settings',

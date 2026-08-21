@@ -6,7 +6,7 @@ const TREND_STATUSES = new Set(['strong_rise', 'rise', 'stable', 'fall', 'strong
 const FORECAST_STATUSES = new Set(['available', 'limited']);
 const DIRECTION_RESULTS = new Set(['correct', 'incorrect', 'flat', 'unscorable']);
 
-const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+const finite = (value) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value)) ? Number(value) : null;
 const nonNegative = (value) => {
   const number = finite(value);
   return number !== null && number >= 0 ? number : null;

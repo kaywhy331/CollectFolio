@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.21';
+const CACHE = 'collectfolio-shell-v0.8.27';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
@@ -8,10 +8,10 @@ const SHELL = [
   './assets/css/app.css', './assets/icons/icon.svg', './assets/icons/icon-192.png',
   './assets/icons/icon-512.png', './assets/js/app.js',
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
-  './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js',
+  './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js', './assets/js/core/catalog-images.js',
   './assets/js/core/pricing-policy.js', './assets/js/core/market-series.js', './assets/js/core/compare.js', './assets/js/core/router.js',
-  './assets/js/core/view-models.js', './assets/js/core/settings.js', './assets/js/core/portfolio-sets.js',
-  './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/local-scenarios.js', './assets/js/core/db.js',
+  './assets/js/core/view-models.js', './assets/js/core/settings.js', './assets/js/core/data-freshness.js', './assets/js/core/portfolio-sets.js',
+  './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/local-scenarios.js', './assets/js/core/scenario-lab.js', './assets/js/core/db.js',
   './assets/js/core/history-chart.js', './assets/js/core/chart-hover.js', './assets/js/core/portfolio-history.js',
   './assets/js/views/home.js', './assets/js/views/portfolio.js', './assets/js/views/profile.js',
   './assets/js/views/insights.js', './assets/js/views/onboarding.js',
@@ -19,7 +19,7 @@ const SHELL = [
   './assets/js/views/add.js', './assets/js/views/search.js', './assets/js/services/catalog.js', './assets/js/services/catalog-browse.js',
   './assets/js/services/providers/pokemon.js', './assets/js/services/providers/scryfall.js',
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/providers/tcgcsv.js', './assets/js/services/providers/tcgcsv-categories.js', './assets/js/services/image-algorithms.js',
-  './assets/js/services/image.js', './assets/js/services/scan-workbench.js',
+  './assets/js/services/image.js', './assets/js/services/scan-workbench.js', './assets/js/services/scan-detection-worker.js',
   './assets/js/services/scan-review.js', './assets/js/services/visual-index.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
   './assets/js/services/price-intelligence.js',
   './assets/js/services/forecast-trajectory.js',

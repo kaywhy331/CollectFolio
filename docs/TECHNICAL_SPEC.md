@@ -140,7 +140,7 @@ The current view is rendered after state mutation. Complex modal workflows own t
 
 ### 4.2 IndexedDB
 
-Database: `collectfolio`, additive version 5. New exports use interchange version 2; version 1 backups remain importable. Version 5 adds `localValueObservations` and seeds one current anchor for already-valued version-4 holdings without inventing history.
+Database: `collectfolio`, additive version 6. New exports use interchange version 2; version 1 backups remain importable. Version 5 added `localValueObservations` and seeded one current anchor for already-valued version-4 holdings without inventing history. Version 6 removes legacy `sourceImage`, `sourceImageRetainedAt`, and `sourceImageDeletedAt` fields from every saved scan; import, export, and normal scan writes apply the same scrub so a full source photo cannot re-enter persistence.
 
 | Store | Key | Contents |
 |---|---|---|
@@ -184,8 +184,10 @@ Backup import rejects files above 128 MiB before reading them, then validates th
 top-level format, every included store, store-specific record shapes, every primary
 key, duplicate keys, private/unknown stores, and record-count bounds before starting
 a single multi-store read/write transaction. An invalid file performs no writes. Image selection similarly
-rejects files above 25 MiB before `FileReader` allocation; accepted images are then
-downsampled for local use. Browser storage usage is an estimate from the Storage API
+rejects files above 25 MiB before decode; accepted scan images expose dimensions through
+at most 1 MiB of JPEG/PNG/WebP/GIF header data, then a single `createImageBitmap` call
+requests decoder-side resize to at most 8,000,000 pixels and a 3,200 px longest edge.
+Browsers without that bounded decode path fail closed. Browser storage usage is an estimate from the Storage API
 and is reported as unavailable when the browser cannot supply it.
 
 ### 4.4 Holding model
@@ -279,7 +281,7 @@ Every provider normalizes into the internal item shape. The app never stores a p
 
 Catalog searches use `Promise.allSettled`. One provider failure produces a partial warning but retains successful provider results.
 
-Discover exposes Search cards and Browse sets as peer intents. Browse routes are `/discover/browse`, `/discover/{game}`, and `/discover/{game}/{set}`. Games and sets use a provider-neutral adapter, while set products keep their exact provider printing identity. Filtering and ranking only reorder or narrow the in-memory view; they never truncate the retained provider response. Product rendering starts at 120 cards and can reveal the complete set. `ENABLE_SET_BROWSING` provides a static rollback gate. Private `tcgcsv_*` tables are never read by this browser path.
+Discover exposes Search cards and Browse sets as peer intents. Browse routes are `/discover/browse`, `/discover/{game}`, and `/discover/{game}/{set}`. The all-games landing renders its directory without requesting every game’s set index; choosing a game requests only that category’s groups. Games and sets use a provider-neutral adapter, while set products keep their exact provider printing identity. Discover results and sets default to newest-release ordering; Discover results, sets, and products all use flat responsive tile grids with no match-bucket, set-family, or product-family wrappers. Each catalog page mounts at most 48 tiles. TCGCSV set products use the Worker’s bounded 48-row cursor contract; Next fetches only the needed page, while explicit in-set search, type filtering, or cross-page sorting completes remaining metadata before filtering and still slices the result to 48 visible tiles. Product forecast and history hydration coalesces concurrent requests for a shared manifest or group artifact. Set covers hydrate from 48-product samples in small idle batches. Shared catalog tiles preserve wrapping titles and label compact forecast changes as comparisons with the model baseline. Search value sorting uses the same rights-aware catalog valuation gate as displayed values, so a suppressed raw provider price cannot affect ordering. `ENABLE_SET_BROWSING` provides a static rollback gate. Private `tcgcsv_*` tables are never read by this browser path.
 
 ### Local caching
 
@@ -317,9 +319,14 @@ The client builds an adaptive Sobel edge map, proposes orientation-constrained H
 - re-running detection;
 - replacing boxes with a row/column grid.
 
+The Canvas is keyboard-focusable. `[`/`]` cycle crops, `0` or Escape selects
+whole-box movement, `1`–`4` select corners, arrow keys move the active box or corner
+by one scale-adjusted step (ten with Shift), and Delete removes it. Every action
+updates the live status announcement.
+
 ### 7.3 Crop generation
 
-Each four-corner outline is mapped through a projective homography and bilinearly resampled into an upright JPEG with a maximum width of 1,200 px and 0.90 quality. The straightened crop becomes the user-owned portfolio image and remains in IndexedDB; the full camera image is discarded after crop creation.
+Each four-corner outline is mapped through a projective homography and bilinearly resampled into an upright JPEG with a maximum width of 900 px and 0.90 quality. One shared bounded raster serves sequential crop jobs, which yield between crops to keep the interface responsive. The straightened crop becomes the user-owned portfolio image and remains in IndexedDB; one decoder-bounded source working image may remain only in memory for immediate boundary edits during the active review, is never part of the persisted draft, and is released on navigation, explicit release, discard, completion, or page exit.
 
 ### 7.4 OCR
 
@@ -332,7 +339,7 @@ The sequence is:
 5. generate ordered title + collector-number, collector-number-only, title, and cautious OCR-noise-relaxed queries;
 6. search variants automatically and preserve provider outages as retryable errors instead of false no-matches.
 
-OCR begins when a straightened crop enters review. Failure returns control to manual query entry and can also invoke the independent visual candidate index; no approved price source is required for identification.
+OCR begins when a straightened crop enters review. OCR exceptions, unavailable browser detection, and disabled/unavailable Tesseract all fall through to the independent visual candidate index before returning control to manual query entry; no approved price source is required for identification.
 
 ### 7.5 Visual candidate recovery and reranking
 
@@ -343,7 +350,13 @@ For OCR-generated candidates whose images permit CORS access, metadata remains p
 - 88% title / collector-number metadata match;
 - 12% visual hash similarity.
 
-When candidate images cannot be read through Canvas, ranking falls back to metadata similarity.
+When candidate images cannot be read through Canvas, ranking falls back to metadata similarity. Candidate-image reads are capped at four concurrent requests.
+
+Visual similarity never establishes an approvable catalog identity. A reverse-image
+provider result is bridged through the approved TCGCSV catalog and becomes exact only
+when one unique product/finish identity remains. A collector-selected TCGCSV candidate
+with an exact numeric external product identity is also approvable; ambiguous reverse
+bridges and visual-index-only suggestions remain review aids and cannot pass approval.
 
 ## 8. Review safety model
 
@@ -354,7 +367,7 @@ A crop can be `queued`, `unmatched`, `identifying`, `matched`, or `error`. Persi
 
 “Approve 80%+” is still an explicit user action. The application never runs it automatically.
 
-Review state can be saved as a draft and resumed from Home or Add. Completion first
+Review state can be saved as a draft and resumed or discarded independently from Home or Add. Discard is scoped to the selected draft and remains safe if an older recognition task completes afterward. Completion first
 copies crop images into approved holdings, then replaces the draft with an image-free
 summary receipt. At most 20 completion receipts younger than 30 days are retained;
 active drafts are never removed by this maintenance.
@@ -396,6 +409,13 @@ time. Snapshot reconciliation remains deterministic last-write-wins with one row
 currency/day through `(user_id, id)`. Saved scan sessions remain device-local because
 their image-size and privacy contract has not been approved.
 
+Migration `0021_account_owned_sync_keys.sql` transactionally replaces the global
+`holdings.id` and `scan_sessions.id` primary keys with `(user_id, id)` and adds
+non-unique ID-only diagnostic indexes. The same client UUID may therefore exist in two
+accounts without crossing ownership boundaries. The browser prefers composite-key
+upserts and falls back to the legacy `id` conflict target only for PostgreSQL `42P10`,
+which is the explicit pre-migration compatibility signal.
+
 Migration `0002_price_intelligence_foundation.sql` is intentionally a separately reviewed operator step. It adds versioned source-terms reviews, a private canonical catalog, a nullable existing-holding bridge, exact-key watchlists and tombstones, runtime product flags, and the only anonymous intelligence publication table. Raw catalog/source tables have no anon or authenticated grants. Public publication RLS re-evaluates every lineage source against its current approved terms review and expiration.
 
 Migration `0003_price_intelligence_research_pipeline.sql` adds private append-oriented mapping candidates/reviews, exact-mapping price observations, data-quality events, analytics runs/source lineage, trend snapshots, descriptive publication candidates/reviews, and immutable promotion receipts. Composite foreign keys bind every observation to its exact source, terms review, approved mapping, variant, and ingestion run. All research tables have RLS with no anon/authenticated grants.
@@ -434,15 +454,16 @@ The service-role key is never used or exposed in the browser.
 
 ### 9.3 Sync algorithm
 
-1. Obtain a valid user session, refreshing if required.
-2. Read local holdings and local deletion tombstones.
-3. Read remote holdings and remote deletion tombstones owned by the authenticated user.
-4. Merge tombstones by holding UUID, retaining the newest `deletedAt` value.
-5. Upsert new local tombstones to Supabase.
-6. Purge every tombstoned holding locally and delete the remote row when it still exists.
-7. Exclude tombstoned IDs, group remaining holdings by app-generated UUID, and retain the copy with the lexicographically newest ISO `updatedAt`.
-8. Write merged holdings to IndexedDB and upsert them to Supabase with `on_conflict=id`.
-9. Mark synchronized local rows clean.
+1. Obtain a valid user session, refreshing if required; derive the account UUID from the signed access-token `sub` and reject conflicting session metadata.
+2. Atomically claim the local collection's persistent sync owner. A different account cannot reuse that browser collection until local data is deliberately cleared or restored into its intended account.
+3. Read local holdings and local deletion tombstones.
+4. Read account-filtered remote holdings and tombstones; verify that every returned row repeats the signed-in owner UUID and fail closed otherwise.
+5. Merge tombstones by holding UUID, retaining the newest `deletedAt` value.
+6. Upsert new local tombstones to Supabase.
+7. Purge every tombstoned holding locally and issue only account-filtered remote deletes.
+8. Exclude tombstoned IDs, group remaining holdings by app-generated UUID, and retain the copy with the lexicographically newest ISO `updatedAt`.
+9. Write merged holdings to IndexedDB and upsert them with `on_conflict=user_id,id` (using the narrow pre-0021 fallback above).
+10. Mark synchronized local rows clean.
 
 The watchlist follows the same deletion-first/LWW pattern using its exact `watchKey`. A default cloud watchlist is obtained through an invoker-secured RPC. Failure of the optional watchlist schema does not roll back an otherwise successful holdings sync; the user receives a migration-required warning and local watchlist data stays intact.
 
@@ -458,7 +479,7 @@ This is deterministic last-write-wins at holding granularity with persistent del
 
 The browser requests publications only for deduplicated canonical UUIDs represented in Holdings or Watchlist, in batches of 50. IndexedDB cache entries expire at the earlier of six hours or the publication's own expiry. A hydration generation prevents an older in-flight response from restoring intelligence after its last mapped card is removed.
 
-The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid or above-tier layers are omitted rather than repaired or guessed. A Tier-4 product outlook plots an approved history line when one is published, marks the present boundary, and renders future medians as a dotted path inside distinct 50%/80% quantile bands. The browser never reconstructs history from trend percentages or extrapolates a forecast from them; without both an approved observation and approved forecast, the projection graph is absent.
+The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Trajectory-v1 additionally validates bounded exact manifest membership, object keys, group/category/part identity, optional variant counts, product/finish identity, model version, allowed confidence, ordered median paths, and only 30/90-day checkpoints; groups and manifest parts are fetched with bounded concurrency. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid, stale, or above-tier layers are omitted rather than repaired or guessed. Search withholds stale trajectories; detail gives an explicit newer-observation explanation. A Tier-4 product outlook plots an approved history line when one is published, marks the present boundary, and renders future medians as a dotted path inside distinct 50%/80% quantile bands. The browser never reconstructs history from trend percentages or extrapolates a forecast from them; without both an approved observation and approved forecast, the projection graph is absent.
 
 Insights has independent restorable Performance, Forecasts, Alerts, and Track Record routes. Performance consumes only local portfolio snapshots. Local Scenario Outlooks use source-separated saved unit values and qualitative confidence, work from a single deliberately broad anchor, refuse values stale beyond 180 days, and never feed Track Record. Published portfolio forecast aggregation remains separate and excludes manual values, unmapped holdings, missing horizons, missing approved observations, and currencies that would require an unapproved conversion. Confidence scores are preserved item-by-item as a score or range rather than averaged into a new claim. Actual current value and either modeled future product remain separate in markup, copy, and visual treatment.
 
@@ -525,7 +546,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 
 ## 10. Privacy and security
 
-- Full source photos are not uploaded by the app.
+- Full source photos are neither uploaded nor persisted by the app; the bounded working image exists only in memory for the active review and is released when that review closes.
 - User crops remain local by default.
 - Cloud sync includes an inline user image only when under 180 KB; the database enforces a 220 KB ceiling.
 - Netlify receives only static deploy artifacts.
@@ -543,7 +564,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.8` includes the Settings, onboarding, local-scenario, image-identification, complete paginated catalog-search, provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, and local Portfolio Sets modules plus the visual-index manifest. Navigation
+`collectfolio-shell-v0.8.27` includes the Settings, onboarding, local-scenario, image-identification, complete 48-tile catalog pagination, demand-driven provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth. The
@@ -575,16 +596,16 @@ Because filenames are currently stable, browser assets use short revalidation he
 `npm run check` executes:
 
 1. custom validation for required files, unsafe placeholders, insecure URLs, missing index references, service-worker shell references, relative import resolution, and JavaScript syntax;
-2. Node built-in tests for valuation, sorting, OCR query extraction, similarity, image components/grids/merges, provider normalization, watchlist behavior, publication contracts, and migration-governance markers;
+2. Node built-in tests for valuation, rights-aware sorting, OCR query extraction/fallback, exact recognition approval, similarity, bounded image work, image components/grids/merges, provider normalization, account-bound sync, watchlist behavior, trajectory/publication contracts, and migration-governance markers;
 3. Python standard-library tests for point-in-time leakage, robust trends, baselines, five-baseline promotion blocking, Scored/Unscorable outcomes, exact scorecard membership/hash lineage, quantiles, scarcity, and `video_model_v0` reproduction;
 4. production build into `dist/`.
 
-CI runs the same command on pushes and pull requests. A path-filtered Python 3.12 workflow independently protects the analytics package, and a second job installs the optional DuckDB/PostgreSQL adapters so the provider-wide Parquet tests cannot silently skip.
+CI runs the same command on pushes and pull requests, then qualifies the recognition path on Chromium, Firefox, and WebKit. A path-filtered Python 3.12 workflow independently protects the analytics package, and a second job installs the optional DuckDB/PostgreSQL adapters, applies every migration to disposable PostgreSQL 16, proves account-owned sync-key/RLS behavior, and prevents provider-wide Parquet tests from silently skipping.
 
 ## 14. Known limitations and next engineering work
 
 - Heuristic detection performs best on separated rectangular items against a contrasting background.
-- Perspective correction and rotated-rectangle detection are not yet implemented.
+- Heuristic rotated/perspective detection can still require manual corner correction.
 - Tesseract’s first use downloads an external worker/model and may be slow.
 - OCR is English-only in the MVP.
 - Perceptual hashing detects broad visual similarity but cannot reliably distinguish every parallel.
@@ -629,6 +650,19 @@ Pokémon category 3 only while hashing all full-archive exclusions; games cannot
 share folds or coefficients.
 Full packets remain in private object storage, and the public-repository Actions
 artifact exposes sanitized receipts only.
+
+Trajectory-v1 forecasts are fitted on the weekly panel and serve calibrated
+30-day and 90-day quantile checkpoints plus a weekly median path. Component
+weights selected at those two horizons are blended continuously across the
+intermediate weekly path, avoiding the former nearest-horizon switch around
+day 60. The detail chart resamples that single latest path into daily hover
+values; those values are interpolation, not independent daily refits. Its
+1M/3M/6M/1Y/All controls change observed-history context only, while the
+forecast overlay remains independently switchable and never extends beyond
+the served horizon. The browser accepts only a bounded, exact manifest/part set
+whose group envelope, product/finish identity, model version, confidence, horizons,
+ordered path, and five noncrossing quantiles validate. A trajectory older than the
+current observation is withheld instead of being presented against fresher data.
 
 Search-result hydration now includes canonical variants represented by the
 current search result set in addition to Holdings and Watchlist. The result

@@ -1,4 +1,4 @@
-import { clamp, escapeHTML, formatCurrency } from './utils.js';
+import { clamp, escapeAttribute, escapeHTML, formatCurrency } from './utils.js';
 
 let closeCurrent = null;
 
@@ -12,7 +12,7 @@ export function showToast(message, tone = 'success', duration = 3600) {
   setTimeout(() => toast.remove(), duration);
 }
 
-export function openModal({ title, content, actions = '', onOpen } = {}) {
+export function openModal({ title, content, actions = '', onOpen, onClose } = {}) {
   closeCurrent?.();
   const root = document.querySelector('#modal-root');
   const app = document.querySelector('#app');
@@ -32,7 +32,11 @@ export function openModal({ title, content, actions = '', onOpen } = {}) {
     app.inert = true;
     app.setAttribute('aria-hidden', 'true');
   }
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
+    onClose?.();
     wrapper.remove();
     if (app) {
       app.inert = appWasInert;
@@ -87,12 +91,16 @@ function finiteNonNegative(value) {
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
-function niceCeiling(value) {
-  if (!Number.isFinite(value) || value <= 0) return 1;
-  const magnitude = 10 ** Math.floor(Math.log10(value));
-  const normalized = value / magnitude;
-  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-  return step * magnitude;
+function meaningfulScale(values = []) {
+  const finite = values.map(Number).filter(Number.isFinite);
+  if (!finite.length) return { lower: 0, upper: 1 };
+  const minimum = Math.min(...finite);
+  const maximum = Math.max(...finite);
+  const observedSpan = maximum - minimum;
+  const padding = Math.max(observedSpan * 0.12, maximum * 0.035, 1);
+  const lower = Math.max(0, minimum - padding);
+  const upper = Math.max(lower + 1, maximum + padding);
+  return { lower, upper };
 }
 
 function compactCurrency(value, currency) {
@@ -109,10 +117,10 @@ function shortDate(value) {
   return `${MONTHS[date.getUTCMonth()]} ${date.getUTCDate()}`;
 }
 
-function axisMarkup({ top, currency, left, right, y, xLabels }) {
+function axisMarkup({ lower = 0, upper, currency, left, right, y, xLabels }) {
   const ticks = [0, 0.25, 0.5, 0.75, 1];
   const horizontal = ticks.map((fraction) => {
-    const value = top * fraction;
+    const value = lower + ((upper - lower) * fraction);
     const row = y(value);
     return `<line x1="${left}" y1="${row.toFixed(1)}" x2="${right}" y2="${row.toFixed(1)}" class="chart-grid"/><text x="${left - 10}" y="${(row + 4).toFixed(1)}" text-anchor="end" class="chart-axis-label">${escapeHTML(compactCurrency(value, currency))}</text>`;
   }).join('');
@@ -121,28 +129,27 @@ function axisMarkup({ top, currency, left, right, y, xLabels }) {
 }
 
 export function trendChart(snapshots = [], currency = 'USD') {
-  const points = (Array.isArray(snapshots) ? snapshots : [])
+  const normalized = (Array.isArray(snapshots) ? snapshots : [])
     .map((point) => ({
       date: String(point?.date || ''),
       marketValue: finiteNonNegative(point?.marketValue),
       costBasis: finiteNonNegative(point?.costBasis)
     }))
-    .filter((point) => point.marketValue !== null && point.costBasis !== null && shortDate(point.date))
-    .sort((left, right) => left.date.localeCompare(right.date))
-    .slice(-90);
-  if (!points.length) return '<div class="empty-chart">A trend appears after your first holding is added.</div>';
+    .filter((point) => point.marketValue !== null && shortDate(point.date))
+    .sort((left, right) => left.date.localeCompare(right.date));
+  const points = [...new Map(normalized.map((point) => [point.date, point])).values()].slice(-90);
+  if (points.length < 2) return '<div class="empty-chart"><strong>Collection history starts here</strong><span>We will chart changes after another verified value is recorded.</span></div>';
   const width = 760;
   const height = 300;
   const left = 76;
   const right = 742;
   const chartTop = 18;
   const bottom = 252;
-  const values = points.flatMap((point) => [point.marketValue, point.costBasis]);
-  const top = niceCeiling(Math.max(...values, 1) * 1.05);
-  const y = (value) => bottom - ((value / top) * (bottom - chartTop));
-  const x = (index) => points.length === 1
-    ? right
-    : left + ((index * (right - left)) / (points.length - 1));
+  const showCost = points.every((point) => point.costBasis !== null);
+  const values = points.flatMap((point) => [point.marketValue, ...(showCost ? [point.costBasis] : [])]);
+  const { lower, upper } = meaningfulScale(values);
+  const y = (value) => bottom - (((value - lower) / (upper - lower)) * (bottom - chartTop));
+  const x = (index) => left + ((index * (right - left)) / (points.length - 1));
   const coords = (field) => points.map((point, index) => {
     return `${x(index).toFixed(1)},${y(point[field]).toFixed(1)}`;
   }).join(' ');
@@ -154,22 +161,26 @@ export function trendChart(snapshots = [], currency = 'USD') {
   }));
   const latest = points.at(-1);
   const latestX = x(points.length - 1);
-  return `<div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Portfolio market value and cost basis with currency scale and dates">
-    <title>Latest market ${escapeHTML(formatCurrency(latest.marketValue, currency))}; latest cost ${escapeHTML(formatCurrency(latest.costBasis, currency))}</title>
-    ${axisMarkup({ top, currency, left, right, y, xLabels })}
+  const hoverPoints = points.map((point, index) => ({
+    x: Number(x(index).toFixed(1)), y: Number(y(point.marketValue).toFixed(1)),
+    l: `${shortDate(point.date)} — ${formatCurrency(point.marketValue, currency)}`
+  }));
+  const costTitle = showCost ? `; latest cost ${formatCurrency(latest.costBasis, currency)}` : '';
+  return `<div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Collection market value${showCost ? ' and cost basis' : ''} with currency scale and dates" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
+    <title>Latest market ${escapeHTML(formatCurrency(latest.marketValue, currency))}${escapeHTML(costTitle)}</title>
+    ${axisMarkup({ lower, upper, currency, left, right, y, xLabels })}
     <polyline points="${coords('marketValue')}" class="chart-line chart-market"/>
-    <polyline points="${coords('costBasis')}" class="chart-line chart-cost"/>
+    ${showCost ? `<polyline points="${coords('costBasis')}" class="chart-line chart-cost"/>` : ''}
     <circle cx="${latestX.toFixed(1)}" cy="${y(latest.marketValue).toFixed(1)}" r="5" class="chart-point chart-market-point"/>
-    <circle cx="${latestX.toFixed(1)}" cy="${y(latest.costBasis).toFixed(1)}" r="5" class="chart-point chart-cost-point"/>
-  </svg></div><div class="chart-footer"><div class="chart-legend"><span><i class="market-dot"></i>Market value</span><span><i class="cost-dot"></i>Cost basis</span></div><div class="chart-latest"><span>Latest market <strong>${escapeHTML(formatCurrency(latest.marketValue, currency))}</strong></span><span>Cost <strong>${escapeHTML(formatCurrency(latest.costBasis, currency))}</strong></span></div></div>`;
+    ${showCost ? `<circle cx="${latestX.toFixed(1)}" cy="${y(latest.costBasis).toFixed(1)}" r="5" class="chart-point chart-cost-point"/>` : ''}
+  </svg></div><div class="chart-footer"><div class="chart-legend"><span><i class="market-dot"></i>Market value</span>${showCost ? '<span><i class="cost-dot"></i>Cost basis</span>' : ''}</div><div class="chart-latest"><span>Latest market <strong>${escapeHTML(formatCurrency(latest.marketValue, currency))}</strong></span>${showCost ? `<span>Cost <strong>${escapeHTML(formatCurrency(latest.costBasis, currency))}</strong></span>` : ''}</div></div>`;
 }
 
 export function forecastProjectionChart(observedPrice, forecasts = [], currency = 'USD', options = {}) {
   const localMode = options.mode === 'local-scenario';
-  const noun = localMode ? 'scenario' : 'forecast';
   const sourcePrefix = localMode ? 'locally recorded' : 'approved';
   const ariaLabel = localMode
-    ? 'Local scenario projection with recorded values and a marked present-date boundary'
+    ? 'Your scenario projection with recorded values and a marked present-date boundary'
     : 'Approved forecast projection with observed history and a marked present-date boundary';
   const observed = finiteNonNegative(observedPrice);
   const candidates = (Array.isArray(forecasts) ? forecasts : Object.values(forecasts || []))
@@ -210,18 +221,20 @@ export function forecastProjectionChart(observedPrice, forecasts = [], currency 
   const right = 742;
   const chartTop = 18;
   const bottom = 252;
-  const top = niceCeiling(Math.max(observed, ...historical.map((point) => point.value), ...unique.map((forecast) => forecast.q90), 1) * 1.05);
+  const scaleValues = [observed, ...historical.map((point) => point.value), ...unique.flatMap((forecast) => [forecast.q10, forecast.q25, forecast.q50, forecast.q75, forecast.q90])];
+  const { lower, upper } = meaningfulScale(scaleValues);
   const minimumDay = Math.min(0, ...historical.map((point) => point.day));
   const maximumDay = Math.max(...future.map((point) => point.day));
   const span = Math.max(1, maximumDay - minimumDay);
   const x = (day) => left + (((day - minimumDay) / span) * (right - left));
-  const y = (value) => bottom - ((value / top) * (bottom - chartTop));
+  const y = (value) => bottom - (((value - lower) / (upper - lower)) * (bottom - chartTop));
   const forecastPoints = [present, ...future];
   const coords = (field) => forecastPoints.map((point) => `${x(point.day).toFixed(1)},${y(point[field]).toFixed(1)}`);
   const band = (high, low) => [...coords(high), ...coords(low).reverse()].join(' ');
   const latest = future.at(-1);
   const change = observed > 0 ? ((latest.q50 - observed) / observed) * 100 : null;
-  const changeLabel = change === null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(1)}%`;
+  const unchanged = change !== null && Math.abs(change) < 0.05;
+  const changeLabel = change === null ? '—' : unchanged ? `Unchanged ${localMode ? 'scenario' : 'outlook'}` : `${change >= 0 ? '+' : ''}${change.toFixed(1)}%`;
   const earliest = historical[0];
   const xLabels = [
     ...(earliest ? [{ x: x(earliest.day), label: shortDate(earliest.observedAt.slice(0, 10)), anchor: 'start' }] : []),
@@ -234,9 +247,14 @@ export function forecastProjectionChart(observedPrice, forecasts = [], currency 
     : localMode
       ? 'No earlier local value check exists; the scenario begins at the current saved value.'
       : 'No approved historical series was published; the ribbon begins at the current observation.';
-  return `<div class="projection-chart ${localMode ? 'local-scenario-chart' : ''}"><p class="sr-only">${escapeHTML(historySummary)} ${localMode ? 'Scenario' : 'Forecast'} values are modeled ranges, not observed history.</p><div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}">
+  const hoverPoints = [
+    ...historical.map((point) => ({ x: Number(x(point.day).toFixed(1)), y: Number(y(point.value).toFixed(1)), l: `${shortDate(point.observedAt.slice(0, 10))} — ${formatCurrency(point.value, currency)}` })),
+    { x: Number(x(0).toFixed(1)), y: Number(y(observed).toFixed(1)), l: `Today — ${formatCurrency(observed, currency)}` },
+    ...future.map((point) => ({ x: Number(x(point.day).toFixed(1)), y: Number(y(point.q50).toFixed(1)), l: `${point.horizon} days — median ${formatCurrency(point.q50, currency)}` }))
+  ];
+  return `<div class="projection-chart ${localMode ? 'local-scenario-chart' : ''}"><p class="sr-only">${escapeHTML(historySummary)} ${localMode ? 'Scenario' : 'Forecast'} values are modeled ranges, not observed history.</p><div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
     <title>Observed ${escapeHTML(formatCurrency(observed, currency))}; ${latest.horizon}-day median ${escapeHTML(formatCurrency(latest.q50, currency))}; 80% interval ${escapeHTML(formatCurrency(latest.q10, currency))} to ${escapeHTML(formatCurrency(latest.q90, currency))}</title>
-    ${axisMarkup({ top, currency, left, right, y, xLabels })}
+    ${axisMarkup({ lower, upper, currency, left, right, y, xLabels })}
     ${historical.length ? `<polyline points="${historyCoordinates.join(' ')}" class="chart-line forecast-history"/>` : ''}
     <line x1="${x(0).toFixed(1)}" y1="${chartTop}" x2="${x(0).toFixed(1)}" y2="${bottom}" class="forecast-present"/>
     <polygon points="${band('q90', 'q10')}" class="forecast-band forecast-band-80"/>
@@ -249,7 +267,7 @@ export function forecastProjectionChart(observedPrice, forecasts = [], currency 
 export function allocationChart(allocation = {}) {
   const entries = Object.entries(allocation).filter(([, value]) => value > 0);
   const total = entries.reduce((sum, [, value]) => sum + value, 0);
-  if (!total) return '<p class="muted">Add a valued holding to see allocation.</p>';
+  if (!total) return '<p class="muted">Add a valued item to see allocation.</p>';
   let offset = 0;
   const colors = ['#82e8ad', '#78b9ff', '#ffca6d', '#c997ff', '#ff8297', '#72ded5'];
   const segments = entries.map(([label, value], index) => {
@@ -296,11 +314,11 @@ export function trajectoryProjectionChart(packet, currency = 'USD', { stale = fa
     ...path.map((point) => point.price),
     ...checkpoints.flatMap(({ band }) => [band.q10, band.q90].map(Number))
   ];
-  const top = niceCeiling(Math.max(...allValues, 1) * 1.05);
+  const { lower, upper } = meaningfulScale(allValues);
   const maximumDay = Math.max(0, ...path.map((point) => dayOf(point.time)), ...checkpoints.map((point) => point.horizon));
   const span = Math.max(1, maximumDay);
   const x = (day) => left + ((Math.max(0, day) / span) * (right - left));
-  const y = (value) => bottom - ((value / top) * (bottom - chartTop));
+  const y = (value) => bottom - (((value - lower) / (upper - lower)) * (bottom - chartTop));
   const pathCoordinates = [`${x(0).toFixed(1)},${y(lastKnownPrice).toFixed(1)}`, ...path.map((point) => `${x(dayOf(point.time)).toFixed(1)},${y(point.price).toFixed(1)}`)].join(' ');
   const bandMarkup = checkpoints.map(({ horizon, band }) => {
     const cx = x(horizon).toFixed(1);
@@ -323,7 +341,7 @@ export function trajectoryProjectionChart(packet, currency = 'USD', { stale = fa
     <p class="sr-only">${isColdStart ? 'This is a cold-start estimate built without enough observed price history for this printing. Treat the range as wider and less certain than a standard forecast.' : 'Modeled trajectory, not observed history.'}</p>
     <div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}">
       <title>${ariaLabel}</title>
-      ${axisMarkup({ top, currency, left, right, y, xLabels })}
+      ${axisMarkup({ lower, upper, currency, left, right, y, xLabels })}
       <polyline points="${pathCoordinates}" class="chart-line forecast-median"/>
       ${bandMarkup}
       <circle cx="${x(0).toFixed(1)}" cy="${y(lastKnownPrice).toFixed(1)}" r="5" class="chart-point chart-market-point"/>

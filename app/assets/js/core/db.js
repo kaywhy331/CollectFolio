@@ -5,7 +5,7 @@ import { appendOnlyLocalObservation, localObservationForHolding } from './local-
 import { createId, csvCell } from './utils.js';
 
 const NAME = 'collectfolio';
-const VERSION = 5;
+const VERSION = 6;
 const moneyCurrency = (value, fallback = 'USD') => {
   const normalized = String(value || '').trim().toUpperCase();
   return /^[A-Z]{3}$/.test(normalized) ? normalized : fallback;
@@ -63,6 +63,16 @@ export function openDatabase() {
       for (const store of STORES.filter((name) => name !== 'holdings')) {
         if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, STORE_CONFIG[store]);
       }
+      if (event.oldVersion < 6 && db.objectStoreNames.contains('scans')) {
+        const cursorRequest = request.transaction.objectStore('scans').openCursor();
+        cursorRequest.addEventListener('success', () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+          const clean = scanWithoutSourcePhoto(cursor.value);
+          cursor.update(clean);
+          cursor.continue();
+        });
+      }
       const watchlist = request.transaction.objectStore('watchlistItems');
       if (!watchlist.indexNames.contains('watchKey')) watchlist.createIndex('watchKey', 'watchKey', { unique: true });
       if (!watchlist.indexNames.contains('updatedAt')) watchlist.createIndex('updatedAt', 'updatedAt', { unique: false });
@@ -110,6 +120,21 @@ export async function putRecord(storeName, value) {
   transaction.objectStore(storeName).put(value);
   await transactionDone(transaction);
   return value;
+}
+
+// Atomically claims a single-device setting. Concurrent tabs cannot each
+// observe an empty owner and bind the same local collection to different
+// cloud accounts before either write commits.
+export async function claimSettingValue(key, value) {
+  const db = await openDatabase();
+  const transaction = db.transaction('settings', 'readwrite');
+  const done = transactionDone(transaction);
+  const store = transaction.objectStore('settings');
+  const existing = await requestResult(store.get(key));
+  const claimed = existing?.value || value;
+  if (!existing?.value) store.put({ key, value });
+  await done;
+  return claimed;
 }
 
 export async function putRecordClearingTombstone(storeName, tombstoneStoreName, value, obsoleteKey = null) {
@@ -257,6 +282,14 @@ function plainRecord(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
+export function scanWithoutSourcePhoto(record) {
+  const clean = { ...(record || {}) };
+  delete clean.sourceImage;
+  delete clean.sourceImageRetainedAt;
+  delete clean.sourceImageDeletedAt;
+  return clean;
+}
+
 const optionalString = (value) => value === undefined || typeof value === 'string';
 const optionalBoolean = (value) => value === undefined || typeof value === 'boolean';
 const optionalFinite = (value) => value === undefined || value === null || value === ''
@@ -306,6 +339,8 @@ function validScanRecord(record) {
   if (!optionalString(record.mode) || typeof record.status !== 'string'
       || !optionalString(record.createdAt) || !optionalString(record.updatedAt)
       || !optionalString(record.completedAt) || !optionalString(record.submissionError)
+      || !optionalString(record.sourceImage) || !optionalString(record.sourceImageRetainedAt)
+      || !optionalString(record.sourceImageDeletedAt)
       || !optionalPlain(record.bulkAcquisition) || !optionalPlain(record.result)
       || !Array.isArray(record.crops)) return false;
   return record.crops.every((crop) => plainRecord(crop)
@@ -433,14 +468,17 @@ export function validateBackup(backup) {
       if (keys.has(key)) throw new Error(`The ${name} data section contains a duplicate record.`);
       keys.add(key);
     }
-    if (records.length) plan.push([name, records]);
+    if (records.length) plan.push([name, name === 'scans' ? records.map(scanWithoutSourcePhoto) : records]);
   }
   return plan;
 }
 
 export async function exportBackup() {
   const included = STORES.filter((name) => !BACKUP_EXCLUDED_STORES.includes(name));
-  const stores = Object.fromEntries(await Promise.all(included.map(async (name) => [name, await getAll(name)])));
+  const stores = Object.fromEntries(await Promise.all(included.map(async (name) => {
+    const records = await getAll(name);
+    return [name, name === 'scans' ? records.map(scanWithoutSourcePhoto) : records];
+  })));
   return { format: 'collectfolio-backup', version: 2, exportedAt: new Date().toISOString(), stores };
 }
 

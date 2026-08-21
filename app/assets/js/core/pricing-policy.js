@@ -59,7 +59,7 @@ export function catalogPriceForValuation(item = {}) {
 
 export function catalogPriceDisclosure(item = {}) {
   if (!isRestrictedCatalogPrice(item)) return '';
-  return 'Stored provider reference excluded pending licensed source rights';
+  return 'Saved market reference is not included until source rights are approved';
 }
 
 export function isSupportedPricingPolicyVersion(value) {

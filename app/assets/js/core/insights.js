@@ -31,7 +31,7 @@ const REASON_COPY = Object.freeze({
   mapping_pending: 'The exact variant is awaiting verification.',
   exact_mapping_required: 'The exact variant is awaiting verification.',
   unsupported_category: 'This category is not supported yet.',
-  manual_value: 'This holding uses a manual value.',
+  manual_value: 'This item uses a manual value.',
   rights_restricted: 'The required market evidence is not approved for public display.',
   model_not_approved: 'The model has not passed the publication review for this horizon.',
   forecast_unavailable: 'No approved forecast is available for this item.'
@@ -55,7 +55,7 @@ export function forecastAvailabilityForHolding(holding = {}, rawPublication = nu
   const selectedHorizon = INSIGHTS_HORIZONS.includes(Number(horizon)) ? Number(horizon) : 90;
   if (!publicEnabled) return {
     status: 'unavailable', reason: 'Public forecasting is disabled until every publication gate passes.',
-    nextAction: 'You can still track the holding and use a manual value.', selectedHorizon,
+    nextAction: 'You can still track the item and use a manual value.', selectedHorizon,
     publication: null, forecast: null, availableHorizons: []
   };
   if (!holding.canonicalVariantId) return {
@@ -64,14 +64,14 @@ export function forecastAvailabilityForHolding(holding = {}, rawPublication = nu
     publication: null, forecast: null, availableHorizons: []
   };
   if (hasManualValue(holding)) return {
-    status: 'unavailable', reason: 'This holding uses a manual value.',
-    nextAction: 'The manual value remains in current portfolio totals but is excluded from forecasts.', selectedHorizon,
+    status: 'unavailable', reason: 'This item uses a manual value.',
+    nextAction: 'The manual value remains in current collection totals but is excluded from forecasts.', selectedHorizon,
     publication: null,
     forecast: null, availableHorizons: []
   };
   if (!rawPublication) return {
     status: 'unavailable', reason: 'No approved intelligence publication exists for this exact variant.',
-    nextAction: 'Keep the holding mapped and check again after a reviewed publication is released.', selectedHorizon,
+    nextAction: 'Keep the item matched and check again after a reviewed publication is released.', selectedHorizon,
     publication: null, forecast: null, availableHorizons: []
   };
 
@@ -86,18 +86,18 @@ export function forecastAvailabilityForHolding(holding = {}, rawPublication = nu
     : [];
   if (!publication && requiredIdentity.some((field) => !holdingSeries[field]
     || publications.every((candidate) => !candidate.seriesIdentity[field]))) return {
-    status: 'unavailable', reason: 'The holding and forecast do not share a complete exact market identity.',
+    status: 'unavailable', reason: 'The saved item and forecast do not share a complete exact market identity.',
     nextAction: 'Confirm language, printing, and market condition before using this forecast.', selectedHorizon,
     publication: null, forecast: null, availableHorizons
   };
   if (!publication) return {
     status: 'unavailable', reason: 'This forecast is for a different language, printing, or market condition.',
-    nextAction: 'Use a publication that exactly matches this holding.', selectedHorizon,
+    nextAction: 'Use a publication that exactly matches this item.', selectedHorizon,
     publication: null, forecast: null, availableHorizons
   };
   if (publication.observed && normalizedCurrency(publication.observed.currency) !== normalizedCurrency(currency)) return {
     status: 'unavailable', reason: `${publication.observed.currency} cannot be combined with ${normalizedCurrency(currency)} without an approved conversion rate.`,
-    nextAction: 'View this product separately; portfolio forecast totals never guess currency conversion.', selectedHorizon,
+    nextAction: 'View this item separately; collection forecast totals never guess currency conversion.', selectedHorizon,
     publication, forecast: null, availableHorizons
   };
   if (publication.supportTier < 4 || !availableHorizons.length) return {
@@ -191,8 +191,8 @@ export function portfolioForecastSummary(holdings = [], byVariant = {}, horizon 
       result.confidenceLabel = low === high ? `Published ${low}/100` : `Published range ${low}–${high}/100`;
     }
     result.confidenceReason = result.limitedHoldings
-      ? `${result.limitedHoldings} covered holding${result.limitedHoldings === 1 ? '' : 's'} uses an explicitly limited forecast.`
-      : 'Portfolio confidence is not averaged; the displayed span preserves the published item-level scores.';
+      ? `${result.limitedHoldings} covered item${result.limitedHoldings === 1 ? '' : 's'} uses an explicitly limited forecast.`
+      : 'Collection confidence is not averaged; the displayed span preserves the published item-level scores.';
   }
   return result;
 }
@@ -207,7 +207,7 @@ export function forecastAssets(holdings = [], watchlistItems = [], byVariant = {
       holdingId: holding.id,
       watchKey: '',
       quantity: quantity(holding),
-      context: 'Owned holding',
+      context: 'Owned item',
       ...forecastAvailabilityForHolding(holding, raw, horizon, options)
     };
   });

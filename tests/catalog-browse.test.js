@@ -22,6 +22,7 @@ import { normalizeYGOSet } from '../app/assets/js/services/providers/ygoprodeck.
 import {
   normalizeTCGCSVGroup,
   normalizeTCGCSVProduct,
+  getTCGCSVGroupProductsPage,
   tcgcsvProductImageUrl,
   listTCGCSVGroups,
   preferredTCGCSVPrice,
@@ -120,6 +121,7 @@ test('TCGCSV mapping retains source games, finishes, raw price fields, and unava
   assert.equal(set.gameId, 'tcgcsv-category-3');
   assert.equal(set.game, 'Pokémon');
   assert.equal(set.cardCount, 2);
+  assert.equal(set.releasedAt, '1999-01-09');
   const otherSet = normalizeTCGCSVGroup({
     categoryId: 68, groupId: 1000, name: 'Romance Dawn'
   }, [{ categoryId: 68, displayName: 'One Piece Card Game' }]);
@@ -143,6 +145,7 @@ test('TCGCSV mapping retains source games, finishes, raw price fields, and unava
   assert.equal(product.pricingEntitlement, 'community-free-access');
   assert.equal(product.category, 'tcgcsv-category-3');
   assert.equal(product.game, 'Pokémon');
+  assert.equal(product.releasedAt, '1999-01-09');
   assert.equal(product.priceOptions.length, 2);
   assert.equal(product.priceOptions[0].directLowPrice, 9);
   assert.equal(product.priceOptions[1].price, null);
@@ -201,6 +204,41 @@ test('TCGCSV requests use the signed-in bearer token and preserve query filters'
         headers: { 'content-type': 'application/json' }
       })
     }), /This catalog deployment still requires sign-in/);
+  } finally {
+    if (priorWindow === undefined) delete globalThis.window;
+    else globalThis.window = priorWindow;
+  }
+});
+
+test('TCGCSV group products expose one bounded cursor page with total metadata', async () => {
+  const priorWindow = globalThis.window;
+  globalThis.window = {
+    COLLECTFOLIO_CONFIG: { TCGCSV_CATALOG_URL: 'https://catalog.example/' }
+  };
+  try {
+    let requested;
+    const page = await getTCGCSVGroupProductsPage('3:604', {
+      cursor: '24',
+      limit: 24,
+      session: { access_token: 'private-test-token' },
+      fetchImpl: async (url) => {
+        requested = new URL(String(url));
+        return new Response(JSON.stringify({
+          total: 121,
+          nextCursor: '48',
+          category: { categoryId: 3, displayName: 'Pokémon' },
+          group: { categoryId: 3, groupId: 604, name: 'Base Set' },
+          products: [{ categoryId: 3, groupId: 604, productId: 25, name: 'Alakazam', cardNumber: '25' }]
+        }), { headers: { 'content-type': 'application/json' } });
+      }
+    });
+    assert.equal(requested.pathname, '/catalog/groups/3/604/products');
+    assert.equal(requested.searchParams.get('limit'), '24');
+    assert.equal(requested.searchParams.get('cursor'), '24');
+    assert.equal(page.products.length, 1);
+    assert.equal(page.products[0].name, 'Alakazam');
+    assert.equal(page.total, 121);
+    assert.equal(page.nextCursor, '48');
   } finally {
     if (priorWindow === undefined) delete globalThis.window;
     else globalThis.window = priorWindow;

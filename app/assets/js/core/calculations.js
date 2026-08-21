@@ -9,6 +9,13 @@ const hasManualValue = (holding) => holding?.manualMarketPrice !== ''
   && holding?.manualMarketPrice !== null
   && holding?.manualMarketPrice !== undefined
   && Number.isFinite(Number(holding.manualMarketPrice));
+const hasAcceptedValue = (holding) => hasManualValue(holding) || catalogPriceForValuation(holding?.item) !== null;
+const hasCostBasis = (holding) => {
+  const purchase = holding?.purchasePrice;
+  const fees = holding?.fees;
+  return (purchase !== '' && purchase !== null && purchase !== undefined && Number.isFinite(Number(purchase)))
+    || (fees !== '' && fees !== null && fees !== undefined && Number.isFinite(Number(fees)) && Number(fees) > 0);
+};
 
 export function holdingMarketCurrency(holding = {}) {
   if (hasManualValue(holding)) {
@@ -38,6 +45,7 @@ export function holdingCostBasis(holding, currency = null) {
 }
 
 export function holdingGain(holding, currency = null) {
+  if (!hasAcceptedValue(holding) || !hasCostBasis(holding)) return null;
   const marketCurrency = holdingMarketCurrency(holding);
   const costCurrency = holdingCostCurrency(holding);
   const requested = currency ? currencyCode(currency) : null;
@@ -70,10 +78,13 @@ export function portfolioSummary(holdings = [], { currency = 'USD' } = {}) {
       summary.excludedCostItems += 1;
       excludedCurrencies.add(costCurrency);
     }
-    if (marketMatches && costMatches) {
+    if (hasCostBasis(holding)) summary.costBasisItems += 1;
+    if (marketMatches && costMatches && hasAcceptedValue(holding) && hasCostBasis(holding)) {
       summary.comparableMarketValue += marketValue;
       summary.comparableCostBasis += costBasis;
-    } else summary.excludedGainItems += 1;
+      summary.gainEligibleItems += 1;
+    } else if (!hasAcceptedValue(holding) || !hasCostBasis(holding)) summary.missingGainItems += 1;
+    else summary.excludedGainItems += 1;
     summary.totalQuantity += Math.max(0, number(holding.quantity));
     return summary;
   }, {
@@ -82,6 +93,9 @@ export function portfolioSummary(holdings = [], { currency = 'USD' } = {}) {
     costBasis: 0,
     comparableMarketValue: 0,
     comparableCostBasis: 0,
+    costBasisItems: 0,
+    gainEligibleItems: 0,
+    missingGainItems: 0,
     gain: 0,
     returnPercent: null,
     uniqueItems: holdings.length,

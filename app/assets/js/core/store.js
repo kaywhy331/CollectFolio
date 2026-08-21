@@ -13,14 +13,17 @@ let state = {
   alerts: [],
   settings: { ...SETTINGS_DEFAULTS },
   overview: { range: '3M' },
-  search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', limit: 200, loading: false, results: [], warnings: [] },
-  discover: { mode: 'search', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setLimit: 120, productQuery: '', productSort: 'number', limit: 120, loading: false, games: [], sets: [], products: [], selectedSet: null, warnings: [], error: '', loadedGame: '', loadedSetId: '' },
+  search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', sort: 'newest', page: 1, limit: 48, loading: false, results: [], warnings: [] },
+  discover: { mode: 'search', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setPage: 1, setLimit: 48, productQuery: '', productSort: 'number', productKind: 'all', productPage: 1, limit: 48, loading: false, productsLoadingMore: false, productNextCursor: '', productTotal: 0, games: [], sets: [], products: [], selectedSet: null, warnings: [], error: '', loadedGame: '', loadedSetId: '' },
   portfolio: {
-    section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', selected: [], limit: 100,
+    section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', groupMode: 'grouped', selectionMode: false, selected: [], limit: 100,
     setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: 60
   },
   watchlist: { query: '', category: 'all', sort: 'forecast-desc' },
-  insights: { view: 'forecasts', horizon: 90, alertFilter: 'all' },
+  insights: {
+    view: 'performance', horizon: 90, alertFilter: 'all', scenarioSort: 'upside', expandedScenarioId: '', expandedPublishedId: '',
+    scenarioAssumptions: { marketDirection: 'unchanged', category: '', categoryDirection: 'unchanged', itemId: '', itemDirection: 'unchanged', volatility: 'typical', manualValues: 'steady' }
+  },
   compare: [],
   // trajectoryForecasts (CollectFolio's own derived trajectory-v1 stats,
   // served anonymously from our own worker under the community-free-access
@@ -40,7 +43,7 @@ let state = {
   // TCGCSV identity keying as trajectoryForecasts, but observed data with
   // no eligibility gate -- an absent key simply means no history object
   // was ever published for that item, never "excluded".
-  priceHistory: { byKey: {}, loading: false, error: '' },
+  priceHistory: { byKey: {}, loading: false, error: '', range: '1Y', showForecast: true },
   tcgcsvRefresh: {
     status: 'disabled', sourceUpdatedAt: '', lastSuccessfulSourceBuild: null,
     lastSuccessfulAt: null, error: ''

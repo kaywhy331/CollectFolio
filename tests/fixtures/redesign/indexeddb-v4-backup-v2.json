@@ -264,7 +264,7 @@
     "alerts": []
   },
   "expected": {
-    "summary": { "marketValue": 79, "costBasis": 89, "gain": -10, "returnPercent": -11.235955056179776, "uniqueItems": 3, "totalQuantity": 6 },
+    "summary": { "marketValue": 79, "costBasis": 89, "gain": 20, "returnPercent": 33.89830508474576, "uniqueItems": 3, "totalQuantity": 6 },
     "currentSnapshotIds": ["portfolio:2026-08-08"],
     "scanDraftCount": 1,
     "restrictedCatalogValue": 0,

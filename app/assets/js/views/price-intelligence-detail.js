@@ -1,10 +1,10 @@
 import { externalImage } from '../core/components.js';
-import { holdingCostBasis, holdingCostCurrency, holdingMarketCurrency, holdingMarketValue } from '../core/calculations.js';
+import { holdingCostBasis, holdingCostCurrency, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus } from '../core/calculations.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { forecastProjectionChart } from '../core/ui.js';
-import { historyLineChart } from '../core/history-chart.js';
+import { HISTORY_CHART_RANGES, historyLineChart, normalizeHistoryPoints } from '../core/history-chart.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
 import { historyKeyForItem } from '../services/history-trajectory.js';
@@ -145,8 +145,8 @@ function uniqueHoldingForReference(holdings = [], ref = {}, currency = 'USD') {
 export function renderPriceIntelligenceDetail(detail, state) {
   if (!detail?.catalogRef) {
     if (detail?.loading) return '<section class="empty-state" role="status"><span class="empty-symbol">◇</span><h2>Opening shared card…</h2><p>Checking the linked catalog provider.</p></section>';
-    const message = detail?.error || 'Open a card from Search, your holdings, or your watchlist.';
-    return `<section class="empty-state"><span class="empty-symbol">◇</span><h2>${detail?.error ? 'Shared card unavailable' : 'No card selected'}</h2><p>${escapeHTML(message)}</p><button class="button" type="button" data-go="${detail?.error ? 'search' : 'portfolio'}">${detail?.error ? 'Find a card' : 'Back to portfolio'}</button></section>`;
+    const message = detail?.error || 'Open an item from Discover, Collection, or Watchlist.';
+    return `<section class="empty-state"><span class="empty-symbol">◇</span><h2>${detail?.error ? 'Shared item unavailable' : 'No item selected'}</h2><p>${escapeHTML(message)}</p><button class="button" type="button" data-go="${detail?.error ? 'search' : 'portfolio'}">${detail?.error ? 'Find an item' : 'Back to Collection'}</button></section>`;
   }
   const ref = detail.catalogRef;
   const currency = ref.currency || state.settings.currency || 'USD';
@@ -179,39 +179,103 @@ export function renderPriceIntelligenceDetail(detail, state) {
   const trajectoryMarkup = trajectorySection(trajectoryItem, state, trajectorySectionId);
   const historyMarkup = historySection(trajectoryItem, state);
 
-  return `<div class="detail-back"><button class="button ghost small" type="button" data-action="close-detail">← Back</button><span>Card detail</span></div>
+  return `<div class="detail-back"><button class="button ghost small" type="button" data-action="close-detail">← Back</button><span>Item detail</span></div>
     ${headerCard(detail, ref, intelligence, holding, Boolean(watchedEntry), currency, state, localScenario, watchedEntry?.watchKey)}
-    <nav class="detail-tabs" aria-label="Card detail sections"><a href="#detail-overview">Overview</a><a href="#detail-market">Market</a><a href="#detail-forecast">Forecast</a><a href="#detail-sales">Sales</a><a href="#detail-data">Details</a></nav>
+    ${ownershipActionBar(ref, intelligence, holding, Boolean(watchedEntry), currency, watchedEntry?.watchKey)}
+    <nav class="detail-tabs" aria-label="Item detail sections"><a href="#detail-overview">Overview</a><a href="#detail-market">Market</a><a href="#detail-forecast">Outlook</a><a href="#detail-sales">Sales</a><a href="#detail-data">Data</a></nav>
     <div class="detail-sections">${localScenarioSection(holding, localScenario)}${intelligence ? intelligenceSections(intelligence, currency, Boolean(localScenario), trajectoryMarkup) : unsupportedSection(ref, state, Boolean(localScenario), trajectoryMarkup)}
-    ${historyMarkup}
+    ${historyMarkup || priceHistoryPendingSection()}
     ${salesSection(ref)}
     ${dataDetailsSection(ref, intelligence)}
     ${allAttributesSection(detail.item, ref, currency)}
     ${intelligence ? attributionFootnote(intelligence) : ''}</div>`;
 }
 
-function headerCard(detail, ref, intelligence, holding, watching, currency, state, localScenario, watchedKey = '') {
+function recordedCost(holding) {
+  return holding && [holding.purchasePrice, holding.fees].some((value) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value)));
+}
+
+function humanizeType(value, fallback = 'Not specified') {
+  const text = String(value || '').trim().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+  return text ? text.replace(/\b\w/g, (letter) => letter.toUpperCase()) : fallback;
+}
+
+function typeAwareMetadata(item, ref, holding) {
+  const rawFormat = item?.productFormat || item?.format || item?.subTypeName || ref.productFormat || ref.finish || '';
+  const sealed = ref.conditionClass === 'sealed' || /\b(pack|box|case|bundle|display|sealed|tin)\b/i.test(rawFormat);
+  const graded = Boolean(holding?.grade) || ref.conditionClass === 'graded';
+  const type = sealed ? 'Sealed product' : graded ? 'Graded collectible' : /comic/i.test(item?.category || ref.category) ? 'Comic' : 'Trading card';
+  const format = sealed ? humanizeType(rawFormat, 'Sealed product') : humanizeType(item?.productFormat || item?.format, 'Single card');
+  const condition = sealed
+    ? (/sealed/i.test(holding?.condition || item?.condition || '') ? 'Factory sealed' : 'Unconfirmed')
+    : graded ? (holding?.grade ? `${holding.gradeCompany || 'Graded'} ${holding.grade}` : 'Graded')
+      : holding?.condition || ref.marketCondition || 'Unconfirmed';
+  return [
+    ['Type', type], ['Format', format], ['Condition', condition], ['Language', item?.language || holding?.item?.language || 'Not specified'],
+    ['Edition', humanizeType(ref.edition, 'Standard')], ['Set', ref.setName || 'Not specified']
+  ];
+}
+
+function detailPriceModel(ref, intelligence, holding, currency) {
+  const manual = holding?.manualMarketPrice !== '' && holding?.manualMarketPrice !== null && holding?.manualMarketPrice !== undefined
+    && Number.isFinite(Number(holding.manualMarketPrice));
+  if (manual) return {
+    label: 'Manual current value', display: formatCurrency(Number(holding.manualMarketPrice), holdingMarketCurrency(holding)),
+    status: `Your saved value${updatedAgo(holding.updatedAt || holding.createdAt) ? ` · ${updatedAgo(holding.updatedAt || holding.createdAt)}` : ''}`,
+    confidence: 'Manual value · not a market observation', tone: 'partial'
+  };
   const observed = intelligence?.observed || null;
+  if (observed) return {
+    label: 'Current market value', display: formatCurrency(observed.price, observed.currency),
+    status: `${observed.source || 'Approved source'}${updatedAgo(observed.observedAt) ? ` · ${updatedAgo(observed.observedAt)}` : ''}`,
+    confidence: COVERAGE_NAMES[intelligence.supportTier] || 'Approved market evidence', tone: intelligence.supportTier >= 4 ? 'supported' : 'partial'
+  };
   const catalogPrice = catalogPriceForValuation(ref);
-  const price = observed ? formatCurrency(observed.price, observed.currency) : catalogPrice === null ? '—' : formatCurrency(catalogPrice, currency);
-  const tier = intelligence ? intelligence.supportTier : 0;
-  const freshness = observed ? updatedAgo(observed.observedAt) : '';
-  const identityPills = [ref.finish, ref.language?.toUpperCase(), ref.conditionClass, ref.marketCondition, ref.edition !== 'standard' ? ref.edition : '']
+  if (catalogPrice !== null) return {
+    label: 'Current catalog value', display: formatCurrency(catalogPrice, currency),
+    status: `${ref.priceSource || 'Permitted catalog value'}${ref.priceUpdatedAt && updatedAgo(ref.priceUpdatedAt) ? ` · ${updatedAgo(ref.priceUpdatedAt)}` : ''}`,
+    confidence: 'Catalog price · market history pending', tone: 'partial'
+  };
+  return { label: 'Current value', display: 'Unpriced', status: 'No verified current value is available.', confidence: 'No verified market price', tone: 'unsupported' };
+}
+
+function headerCard(detail, ref, intelligence, holding, watching, currency, state, localScenario) {
+  const price = detailPriceModel(ref, intelligence, holding, currency);
+  const identityPills = [ref.finish, (detail.item?.language || holding?.item?.language) ? ref.language?.toUpperCase() : '', ref.edition !== 'standard' ? ref.edition : '']
     .filter((value) => value && value !== 'unspecified')
     .map((value) => `<span class="pill">${escapeHTML(value)}</span>`).join('');
-  const priceStatus = observed ? `${escapeHTML(observed.source || 'Approved source')}${freshness ? ` · ${escapeHTML(freshness)}` : ''}` : catalogPrice === null ? 'Market pricing has not been verified yet.' : `${escapeHTML(ref.priceSource || 'Permitted catalog value')}${ref.priceUpdatedAt ? ` · ${escapeHTML(updatedAgo(ref.priceUpdatedAt))}` : ''}`;
   const holdingValue = holding ? holdingMarketValue(holding) : 0;
-  const holdingCost = holding ? holdingCostBasis(holding) : 0;
   const holdingValueCurrency = holding ? holdingMarketCurrency(holding) : currency;
   const holdingCostCurrencyCode = holding ? holdingCostCurrency(holding) : currency;
   const imageAvailable = Boolean(ref.image || ref.imageSmall || holding?.userImage);
+  const imageMarkup = externalImage({ ...ref, userImage: holding?.userImage || '' }, 'detail-image', { loading: 'eager' });
+  const media = imageAvailable
+    ? `<button class="detail-image-frame" type="button" data-action="zoom-detail-image" aria-label="Enlarge image of ${escapeAttribute(ref.name || 'collectible')}">${imageMarkup}<span class="sr-only">Open image zoom</span></button>`
+    : `<div class="detail-image-frame">${imageMarkup}</div><span class="fine-print">No verified artwork is available.</span>`;
   const localAvailable = ['early', 'limited', 'available'].includes(localScenario?.status);
   const outlookPanel = localAvailable
-    ? `<div class="forecast"><span>Manual scenario</span><strong>${escapeHTML(formatCurrency(localScenario.q25, localScenario.currency))}–${escapeHTML(formatCurrency(localScenario.q75, localScenario.currency))}</strong><small>${localScenario.horizon}-day range · ${escapeHTML(localScenario.confidence.label)} confidence</small></div>`
+    ? `<div class="scenario"><span>Your scenario</span><strong>${escapeHTML(formatCurrency(localScenario.q25, localScenario.currency))}–${escapeHTML(formatCurrency(localScenario.q75, localScenario.currency))}</strong><small>${localScenario.horizon}-day range · ${localScenario.status === 'available' ? 'Moderate' : 'Limited'} evidence</small></div>`
     : intelligence?.supportTier >= 4 && Object.keys(intelligence.forecasts).length
       ? `<div class="forecast"><span>Published forecast</span><strong>${Object.keys(intelligence.forecasts).length} horizon${Object.keys(intelligence.forecasts).length === 1 ? '' : 's'}</strong><small>Approved ranges below</small></div>`
-      : '<div class="forecast"><span>Manual scenario</span><strong>—</strong><small>Add a saved value to begin</small></div>';
-  return `<section class="detail-product" id="detail-overview"><div class="detail-media"><div class="detail-image-frame">${externalImage({ ...ref, userImage: holding?.userImage || '' }, 'detail-image', { loading: 'eager' })}</div>${imageAvailable ? '<button class="button ghost small" type="button" data-action="zoom-detail-image">Zoom image</button>' : '<span class="fine-print">No verified artwork is available.</span>'}</div><div class="detail-identity"><p class="eyebrow">${escapeHTML(ref.setName || 'Collectible')}</p><h1>${escapeHTML(ref.name || 'Unnamed collectible')}</h1>${ref.enrichment ? `<p class="fine-print detail-enrichment-note">Image and details enriched from ${escapeHTML(ref.enrichment.provider)}${ref.enrichment.rarity && ref.enrichment.rarity !== ref.rarity ? ` &middot; ${escapeHTML(ref.enrichment.rarity)}` : ''}</p>` : ''}<p class="detail-subtitle">${escapeHTML([ref.setName, ref.number ? `#${ref.number}` : '', ref.rarity].filter(Boolean).join(' · ') || 'Custom catalog entry')}</p><div class="detail-identity-pills">${identityPills || '<span>Variant not specified</span>'}</div><dl class="detail-metadata"><div><dt>Variant</dt><dd>${escapeHTML(ref.finish || 'Not specified')}</dd></div><div><dt>Language</dt><dd>${escapeHTML(ref.language || 'Not specified')}</dd></div><div><dt>State</dt><dd>${escapeHTML(ref.conditionClass === 'graded' ? 'Graded' : ref.conditionClass === 'sealed' ? 'Sealed' : 'Raw')}</dd></div><div><dt>Market condition</dt><dd>${escapeHTML(ref.marketCondition || 'Not confirmed')}</dd></div><div><dt>Edition</dt><dd>${escapeHTML(ref.edition || 'Standard')}</dd></div></dl>${holding ? `<section class="detail-holding"><div><span>Your holding</span><strong>${escapeHTML(String(holding.quantity || 0))} owned · ${escapeHTML(holding.grade ? `${holding.gradeCompany || 'Graded'} ${holding.grade}` : holding.condition || 'Condition not set')}</strong></div><dl><div><dt>Portfolio value</dt><dd>${escapeHTML(formatCurrency(holdingValue, holdingValueCurrency))}${holding.manualMarketPrice !== '' && holding.manualMarketPrice != null ? ' · Manual' : ''}</dd></div><div><dt>Cost basis</dt><dd>${escapeHTML(formatCurrency(holdingCost, holdingCostCurrencyCode))}</dd></div></dl>${holdingValueCurrency !== holdingCostCurrencyCode ? `<p class="fine-print">${escapeHTML(holdingValueCurrency)} value and ${escapeHTML(holdingCostCurrencyCode)} cost are kept separate; no exchange rate was guessed.</p>` : ''}${holding.notes ? `<p>${escapeHTML(holding.notes)}</p>` : ''}</section>` : '<p class="detail-not-owned">Not in your portfolio yet. Add this exact printing without leaving the page.</p>'}</div><aside class="detail-market-panel"><div><span>Current market value</span><strong>${escapeHTML(price)}</strong><small>${priceStatus}</small></div>${intelligence?.supportTier >= 2 && intelligence.trend.return30d !== null ? `<div><span>30-day movement</span><strong class="${intelligence.trend.return30d >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${intelligence.trend.return30d >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(intelligence.trend.return30d) * 100))}</strong><small>${escapeHTML(trendLabel(intelligence.trend.status))}</small></div>` : '<div><span>30-day movement</span><strong>—</strong><small>Not enough approved history</small></div>'}${outlookPanel}<div class="detail-primary-actions">${holding ? `<button class="button" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Edit holding</button>` : '<button class="button" type="button" data-action="add-from-detail">Add to portfolio</button>'}<button class="button secondary" type="button" data-action="toggle-watch" data-detail-watch="1">${watching ? 'Watching' : 'Watch'}</button>${watching ? `<button class="button ghost" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(watchedKey || ref.watchKey)}">Compare</button>` : ''}<button class="button ghost" type="button" data-action="share-detail">Share</button></div></aside></section>`;
+      : '';
+  const movement = intelligence?.supportTier >= 2 && intelligence.trend.return30d !== null
+    ? `<div><span>30-day movement</span><strong class="${intelligence.trend.return30d >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${intelligence.trend.return30d >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(intelligence.trend.return30d) * 100))}</strong><small>${escapeHTML(trendLabel(intelligence.trend.status))}</small></div>`
+    : '<p class="detail-market-unavailable">30-day movement will appear after additional verified updates.</p>';
+  const metadata = typeAwareMetadata(detail.item || ref, ref, holding)
+    .map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join('');
+  const pricingStatus = holding ? holdingPricingStatus(holding) : 'unpriced';
+  const holdingSection = holding
+    ? `<section class="detail-holding"><div><span>Your collection</span><strong>${escapeHTML(String(holding.quantity || 0))} owned</strong></div><dl><div><dt>Current value</dt><dd>${pricingStatus === 'unpriced' ? 'Unpriced' : escapeHTML(formatCurrency(holdingValue, holdingValueCurrency))}${pricingStatus === 'manual' ? ' · Manual' : ''}</dd></div><div><dt>Cost basis</dt><dd>${recordedCost(holding) ? escapeHTML(formatCurrency(holdingCostBasis(holding), holdingCostCurrencyCode)) : 'Not recorded'}</dd></div></dl>${holdingValueCurrency !== holdingCostCurrencyCode ? `<p class="fine-print">${escapeHTML(holdingValueCurrency)} value and ${escapeHTML(holdingCostCurrencyCode)} cost are kept separate; no exchange rate was guessed.</p>` : ''}${holding.notes ? `<p>${escapeHTML(holding.notes)}</p>` : ''}</section>`
+    : '<p class="detail-not-owned">Not in your collection yet. Add this exact item without leaving the page.</p>';
+  return `<section class="detail-product" id="detail-overview"><div class="detail-media">${media}</div><div class="detail-identity"><p class="eyebrow">${escapeHTML(ref.setName || 'Collectible')}</p><h1>${escapeHTML(ref.name || 'Unnamed collectible')}</h1>${ref.enrichment ? `<p class="fine-print detail-enrichment-note">Image and details enriched from ${escapeHTML(ref.enrichment.provider)}${ref.enrichment.rarity && ref.enrichment.rarity !== ref.rarity ? ` &middot; ${escapeHTML(ref.enrichment.rarity)}` : ''}</p>` : ''}<p class="detail-subtitle">${escapeHTML([ref.setName, ref.number ? `#${ref.number}` : '', ref.rarity].filter(Boolean).join(' · ') || 'Custom catalog entry')}</p><div class="detail-identity-pills">${identityPills || '<span>Variant not specified</span>'}</div><button class="button ghost small" type="button" data-action="share-detail">Share item</button></div><aside class="detail-market-panel"><div><span>${escapeHTML(price.label)}</span><strong>${escapeHTML(price.display)}</strong><small>${escapeHTML(price.status)}</small><span class="support-badge ${escapeAttribute(price.tone)}">${escapeHTML(price.confidence)}</span></div>${movement}${outlookPanel}</aside><div class="detail-secondary"><dl class="detail-metadata">${metadata}</dl>${holdingSection}</div></section>`;
+}
+
+function ownershipActionBar(ref, intelligence, holding, watching, currency, watchedKey = '') {
+  const price = detailPriceModel(ref, intelligence, holding, currency);
+  const actions = holding
+    ? `<button class="button" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Update quantity</button><button class="button secondary" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Edit purchase</button><button class="button ghost" type="button" data-action="view-detail-purchases">View purchases</button>`
+    : '<button class="button" type="button" data-action="add-from-detail">Add to collection</button>';
+  return `<section class="detail-action-bar" aria-label="Item actions"><div><span>${escapeHTML(price.label)}</span><strong>${escapeHTML(price.display)}</strong></div><div>${actions}<button class="button secondary" type="button" data-action="toggle-watch" data-detail-watch="1">${watching ? 'Watching' : 'Watch'}</button>${watching && watchedKey ? `<button class="button ghost" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(watchedKey)}">Compare</button>` : ''}</div></section>`;
 }
 
 function intelligenceSections(intelligence, fallbackCurrency, hasLocalScenario = false, trajectoryMarkup = '') {
@@ -272,7 +336,7 @@ function forecastSection(intelligence, currency, hasLocalScenario = false, traje
   const forecasts = Object.values(intelligence.forecasts).sort((left, right) => left.horizon - right.horizon);
   if (intelligence.supportTier < 4 || !forecasts.length) {
     if (trajectoryMarkup) return trajectoryMarkup;
-    return `<section class="card" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">Published forecasts appear only after a rights-cleared model run passes horizon-specific baseline, leakage, and calibration gates. The manual scenario remains separate above.</p></section>`;
+    return `<section class="card" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">Published forecasts appear only after a rights-cleared model run passes horizon-specific evidence checks. Your scenario remains separate above.</p></section>`;
   }
   const projection = forecastProjectionChart(intelligence.observed?.price, forecasts, currency, {
     history: intelligence.history,
@@ -303,6 +367,9 @@ function trajectorySection(item, state, sectionId) {
     return `<section class="card trajectory-insufficient" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>Insufficient evidence for a price forecast</h2><p class="muted">This printing does not yet have enough published price history to support a modeled trajectory. This is not a fabricated estimate.</p></section>`;
   }
   const packet = entry.packet;
+  if (isTrajectoryStale(packet, entry.manifest?.asOf || entry.groupAsOf)) {
+    return `<section class="card trajectory-insufficient" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>A fresher market observation is required</h2><p class="muted">The last price behind this forecast is too old relative to its publication. CollectFolio withholds the modeled values instead of presenting a stale baseline as current.</p></section>`;
+  }
   const isColdStart = packet.confidence === 'cold-start';
   // Serve-all-cohorts mode (Kevin 2026-08-18): low-history and
   // insufficient-history packets are served everywhere, labeled as early
@@ -321,8 +388,8 @@ function trajectorySection(item, state, sectionId) {
   return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
 }
 
-// 0.8.17: observed weekly price-history bar chart, with published
-// trajectory-v1 estimates overlaid at their served horizons when
+// Observed weekly price history, with the latest published trajectory-v1
+// estimates overlaid at their served horizons when
 // available. Fail-closed and independent of trajectorySection above --
 // an item with no published history object renders nothing here even if
 // it has a forecast, and an item with history but no forecast still gets
@@ -331,25 +398,45 @@ function historySection(item, state) {
   const historyKey = historyKeyForItem(item || {});
   if (!historyKey) return '';
   const historyEntry = state.priceHistory?.byKey?.[historyKey];
-  if (!historyEntry?.available || !Array.isArray(historyEntry.points) || !historyEntry.points.length) return '';
+  if (!historyEntry?.available || !Array.isArray(historyEntry.points)) return '';
+  const validPoints = normalizeHistoryPoints(historyEntry.points);
+  if (new Set(validPoints.map((point) => point.date)).size < 2) return '';
   const trajectoryKey = trajectoryKeyForItem(item || {});
   const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
   const packet = trajectoryEntry?.eligibility === 'published' ? trajectoryEntry.packet : null;
   const stale = packet ? isTrajectoryStale(packet, trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf) : false;
-  const chart = historyLineChart(historyEntry.points, packet, state.settings?.currency || 'USD', { stale });
+  const selectedRange = HISTORY_CHART_RANGES.includes(state.priceHistory?.range) ? state.priceHistory.range : '1Y';
+  const showForecast = state.priceHistory?.showForecast !== false;
+  const chart = historyLineChart(
+    validPoints.map((point) => [point.date, point.price]),
+    packet,
+    state.settings?.currency || 'USD',
+    { stale, range: selectedRange, showForecast }
+  );
   if (!chart) return '';
-  return `<section class="card history-chart-card" id="detail-history"><div class="section-heading"><div><p class="eyebrow">Price timeline</p><h2>Observed prices${packet ? ' with rolling forecast' : ''}</h2><p class="muted">Observed weekly market prices for this exact printing, on a day-scaled timeline.${packet ? ' The dashed path is the published rolling projection: green when trending up, red when trending down.' : ''}</p></div></div>${chart}</section>`;
+  const rangeControls = HISTORY_CHART_RANGES.map((range) => `<button type="button" data-history-range="${escapeAttribute(range)}" aria-pressed="${range === selectedRange}">${escapeHTML(range)}</button>`).join('');
+  const forecastControl = packet
+    ? `<button type="button" class="history-forecast-toggle" data-history-forecast aria-label="Show forecast" aria-pressed="${showForecast}"><span class="history-forecast-toggle-dot" aria-hidden="true"></span><span>Forecast</span><small aria-hidden="true">${showForecast ? 'On' : 'Off'}</small></button>`
+    : '';
+  const explainer = packet
+    ? 'Observed weekly prices for this exact printing. Forecast shows one latest as-of path; daily hover values interpolate between weekly model checkpoints, while uncertainty is calibrated at 30 and 90 days.'
+    : 'Observed weekly market prices for this exact printing, positioned on a calendar-time axis.';
+  return `<section class="card history-chart-card" id="detail-history"><div class="section-heading history-chart-heading"><div><p class="eyebrow">Price timeline</p><h2>${packet ? 'Price history &amp; latest forecast' : 'Price history'}</h2><p class="muted">${explainer}</p></div></div><div class="history-chart-toolbar"><div><span class="history-chart-control-label">History range</span><div class="range-control history-range-control" role="group" aria-label="History range">${rangeControls}</div></div>${forecastControl}</div>${chart}</section>`;
+}
+
+function priceHistoryPendingSection() {
+  return '<section class="card price-history-pending" id="detail-history"><p class="eyebrow">Price history</p><h2>Additional updates needed</h2><p class="muted">Price history will appear after additional verified updates.</p></section>';
 }
 
 function localScenarioSection(holding, scenario) {
   if (!holding || !scenario) return '';
   const usable = ['early', 'limited', 'available'].includes(scenario.status);
-  if (!usable) return `<section class="card forecast-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Manual scenario outlook</p><h2>${scenario.status === 'stale' ? 'Update the saved value' : 'Add a value to start'}</h2><p class="muted">${escapeHTML(scenario.reason || 'No usable local value is saved for this holding.')}</p></div><span class="support-badge unsupported">Unavailable</span></div><p>${escapeHTML(scenario.nextAction || 'Edit this holding to add a catalog or manual unit value.')}</p></section>`;
+  if (!usable) return `<section class="card forecast-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Your scenario</p><h2>${scenario.status === 'stale' ? 'Update the saved value' : 'Add a value to start'}</h2><p class="muted">${escapeHTML(scenario.reason || 'No usable value is saved for this item.')}</p></div><span class="support-badge unsupported">Unavailable</span></div><p>${escapeHTML(scenario.nextAction || 'Edit this item to add a catalog or manual unit value.')}</p></section>`;
   const history = (scenario.history || []).filter((entry) => entry.source === scenario.source && entry.currency === scenario.currency);
   const projection = forecastProjectionChart(scenario.observed, [scenario], scenario.currency, {
     mode: 'local-scenario', history, asOfDate: scenario.observedAt
   });
-  return `<section class="card forecast-card product-outlook-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Manual scenario outlook</p><h2>${scenario.horizon}-day range from your saved value</h2><p class="muted">Available without a published market forecast. This is a modeled scenario, not an appraisal.</p></div><span class="support-badge partial">${escapeHTML(scenario.confidence.label)} confidence</span></div>
+  return `<section class="card forecast-card product-outlook-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Your scenario</p><h2>${scenario.horizon}-day range from your saved value</h2><p class="muted">Available without a published market forecast. This is a modeled scenario, not an appraisal.</p></div><span class="support-badge modeled">${scenario.status === 'available' ? 'Moderate evidence' : 'Limited evidence'}</span></div>
     <div class="actual-forecast-split"><div class="actual"><span>Saved unit value</span><strong>${escapeHTML(formatCurrency(scenario.observed, scenario.currency))}</strong><small>${escapeHTML(scenario.source === 'manual' ? 'Your estimate' : scenario.sourceLabel || 'Catalog price')} · value date ${escapeHTML((scenario.valueAsOf || scenario.observedAt).slice(0, 10))}</small></div><div class="forecast"><span>Middle 50% scenario</span><strong>${escapeHTML(formatCurrency(scenario.q25, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q75, scenario.currency))}</strong><small>Midpoint ${escapeHTML(formatCurrency(scenario.q50, scenario.currency))}</small></div></div>${projection}
     <div class="forecast-grid"><div><span>Broad 80% range</span><strong>${escapeHTML(formatCurrency(scenario.q10, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q90, scenario.currency))}</strong></div><div><span>Local history</span><strong>${scenario.observationCount} same-source check${scenario.observationCount === 1 ? '' : 's'}</strong></div></div>
     <p class="fine-print">${escapeHTML(scenario.confidence.detail)} Manual and catalog values never create cross-source returns. Model ${escapeHTML(scenario.modelVersion)}.</p><p class="forecast-warning">Scenario only; not a market observation, appraisal, recommendation, or guaranteed return.</p></section>`;
@@ -380,12 +467,15 @@ function unsupportedSection(ref, state, hasLocalScenario = false, trajectoryMark
   } else {
     reasons.push('No approved intelligence publication exists for this exact variant yet.');
   }
-  const forecastBlock = trajectoryMarkup || `<section class="card" id="${hasLocalScenario ? 'detail-published-forecast' : 'detail-forecast'}"><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">${hasLocalScenario ? 'Your manual scenario above remains available and separately labeled.' : 'An unavailable published forecast never prevents collection tracking.'}</p></section>`;
-  return `<section class="card pricing-unavailable" id="detail-market" role="status"><p class="eyebrow">Card identified</p><h2>Market pricing has not been verified yet.</h2><p class="muted">You can still add this printing, enter a manual portfolio value, or watch it for future pricing.</p><details><summary>Why intelligence is unavailable</summary><ul class="evidence-list">${reasons.map((reason) => `<li>${escapeHTML(reason)}</li>`).join('')}</ul><p class="fine-print">Nothing here is a fabricated estimate.</p></details></section>${forecastBlock}`;
+  const forecastBlock = trajectoryMarkup || `<section class="card" id="${hasLocalScenario ? 'detail-published-forecast' : 'detail-forecast'}"><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">${hasLocalScenario ? 'Your scenario above explains whether a modeled range is available; it remains separate from published forecasts.' : 'An unavailable published forecast never prevents collection tracking.'}</p></section>`;
+  return `<section class="card pricing-unavailable" id="detail-market" role="status"><p class="eyebrow">Item identified</p><h2>Market pricing has not been verified yet.</h2><p class="muted">You can still add this item, enter a manual collection value, or watch it for future pricing.</p><details><summary>Why intelligence is unavailable</summary><ul class="evidence-list">${reasons.map((reason) => `<li>${escapeHTML(reason)}</li>`).join('')}</ul><p class="fine-print">Nothing here is a fabricated estimate.</p></details></section>${forecastBlock}`;
 }
 
 function salesSection(ref) {
-  return `<section class="card" id="detail-sales"><p class="eyebrow">Verified sales</p><h2>No exact-variant sales published</h2><p class="muted">Sales will appear only when the record identifies whether each transaction is raw, graded, sealed, or another exact variant. This ${escapeHTML(ref.conditionClass || 'raw')} printing has no approved sales feed.</p></section>`;
+  const hint = [ref.productKind, ref.productFormat, ref.conditionClass, ref.category].filter(Boolean).join(' ').toLowerCase();
+  const type = /sealed|booster|box|pack|bundle|deck|tin/.test(hint)
+    ? 'sealed product' : /comic|issue/.test(hint) ? 'comic issue' : /slab|graded/.test(hint) ? 'graded item' : 'raw item';
+  return `<section class="card" id="detail-sales"><p class="eyebrow">Verified sales</p><h2>No exact-variant sales published</h2><p class="muted">Sales will appear only when each transaction identifies the exact collectible type and variant. This ${escapeHTML(type)} has no approved sales feed.</p></section>`;
 }
 
 function dataDetailsSection(ref, intelligence) {
@@ -396,7 +486,14 @@ function dataDetailsSection(ref, intelligence) {
     : ref.mappingStatus === 'source_exact'
       ? 'Source card known; exact verification pending'
       : 'Exact verification pending';
-  return `<details class="data-details" id="detail-data"><summary><span>Data details</span><span>Source, verification, and model information</span></summary><div><span class="support-badge ${tone}">${escapeHTML(COVERAGE_NAMES[tier])}</span><dl><div><dt>Market source</dt><dd>${escapeHTML(ref.provider || 'Custom entry')}</dd></div><div><dt>Source reference</dt><dd>${escapeHTML(ref.externalId || 'Not available')}</dd></div><div><dt>Verification status</dt><dd>${escapeHTML(verification)}</dd></div><div><dt>Exact card reference</dt><dd>${escapeHTML(ref.canonicalVariantId || 'Not assigned')}</dd></div></dl></div></details>`;
+  const forecasts = intelligence ? Object.values(intelligence.forecasts || {}) : [];
+  const modelVersions = [...new Set([
+    ...forecasts.map((forecast) => forecast.modelVersion),
+    ...(intelligence?.scorecards || []).map((scorecard) => scorecard.modelVersion)
+  ].filter(Boolean))];
+  const observationCount = (intelligence?.history?.length || 0) + (intelligence?.observed ? 1 : 0);
+  const sourceCount = new Set((intelligence?.sourceAttributions || []).map((source) => source.name || source.attribution).filter(Boolean)).size;
+  return `<details class="data-details" id="detail-data"><summary><span>Data &amp; Methodology</span><span>Sources, checks, identifiers, and calculations</span></summary><div><span class="support-badge ${tone}">${escapeHTML(COVERAGE_NAMES[tier])}</span><dl><div><dt>Market source</dt><dd>${escapeHTML(ref.provider || 'Custom entry')}</dd></div><div><dt>Source reference</dt><dd>${escapeHTML(ref.externalId || 'Not available')}</dd></div><div><dt>Verification status</dt><dd>${escapeHTML(verification)}</dd></div><div><dt>Internal catalog reference</dt><dd>${escapeHTML(ref.canonicalVariantId || 'Not assigned')}</dd></div><div><dt>Model version</dt><dd>${escapeHTML(modelVersions.join(', ') || 'No model applied')}</dd></div><div><dt>Source checks</dt><dd>${sourceCount ? `${sourceCount} approved source${sourceCount === 1 ? '' : 's'}` : 'No approved modeled source coverage'}</dd></div><div><dt>Data quality</dt><dd>${observationCount} verified observation${observationCount === 1 ? '' : 's'}</dd></div><div><dt>Calculation time</dt><dd>${escapeHTML(intelligence?.publishedAt || 'No modeled calculation')}</dd></div><div><dt>Calculation method</dt><dd>Current values remain separate from manual scenarios and published forecasts. Ranges render only when their supporting evidence contract passes validation.</dd></div></dl></div></details>`;
 }
 
 function attributionFootnote(intelligence) {

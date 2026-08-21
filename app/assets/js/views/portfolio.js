@@ -2,9 +2,8 @@ import { emptyState, externalImage, pageHeader } from '../core/components.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { filterAndSortHoldings, holdingCostBasis, holdingCostCurrency, holdingGain, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioSummary, returnPercent } from '../core/calculations.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from '../core/pricing-policy.js';
-import { buildHoldingLocalScenario } from '../core/local-scenarios.js';
 import { filterAndSortPortfolioSets, groupPortfolioSets } from '../core/portfolio-sets.js';
-import { forecastProjectionChart, trendChart } from '../core/ui.js';
+import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
 import { findWatchedItem } from '../services/watchlist.js';
@@ -21,8 +20,8 @@ export function renderPortfolio(state) {
   const watchlistsEnabled = state.featureFlags?.watchlists !== false;
   const section = watchlistsEnabled ? state.portfolio.section || 'holdings' : 'holdings';
   const labels = {
-    holdings: ['Collection', 'Portfolio', `${state.holdings.length} unique holdings across your local portfolio.`],
-    sets: ['Collection map', 'Sets', 'Group the exact printings already recorded in your local portfolio.'],
+    holdings: ['Personal Collection', 'Collection', `${state.holdings.length} purchase${state.holdings.length === 1 ? '' : 's'} saved on this device.`],
+    sets: ['Collection map', 'Sets', 'Group the exact printings already recorded in your collection.'],
     watchlist: ['Collection', 'Watchlist', `${state.watchlistItems.length} exact variant${state.watchlistItems.length === 1 ? '' : 's'} saved on this device.`],
     forecasts: ['Evidence before prediction', 'Insights', 'Model output stays gated until its data rights and validation requirements pass.']
   };
@@ -36,8 +35,8 @@ export function renderPortfolio(state) {
 }
 
 function segmentedControl(section, watchlistsEnabled) {
-  const sections = [['holdings', 'Holdings'], ['sets', 'Sets'], ...(watchlistsEnabled ? [['watchlist', 'Watchlist']] : [])];
-  return `<div class="segmented-control" role="tablist" aria-label="Portfolio sections">
+  const sections = [['holdings', 'Items'], ['sets', 'Sets'], ...(watchlistsEnabled ? [['watchlist', 'Watchlist']] : [])];
+  return `<div class="segmented-control" role="tablist" aria-label="Collection sections">
     ${sections.map(([value, label]) => `<button type="button" role="tab" class="segment-button ${section === value ? 'active' : ''}" aria-selected="${section === value}" data-portfolio-section="${value}">${label}</button>`).join('')}
   </div>`;
 }
@@ -53,13 +52,13 @@ function setValueStatus(group, currency) {
     group.unpricedHoldingCount ? `${group.unpricedHoldingCount} unpriced` : '',
     group.excludedCurrencyCount ? `${group.excludedCurrencyCount} other-currency excluded` : ''
   ].filter(Boolean).join(' · ');
-  return { value, gaps: gaps || `${group.pricedHoldingCount} valued lot${group.pricedHoldingCount === 1 ? '' : 's'}` };
+  return { value, gaps: gaps || `${group.pricedHoldingCount} valued purchase${group.pricedHoldingCount === 1 ? '' : 's'}` };
 }
 
 function portfolioSetCard(group, currency) {
   const cover = group.coverHolding || {};
   const value = setValueStatus(group, currency);
-  return `<article class="portfolio-set-card"><div class="portfolio-set-art">${externalImage({ ...(cover.item || {}), userImage: cover.userImage }, 'holding-image')}<span>${escapeHTML(group.game)}</span></div><div class="portfolio-set-main"><div><p class="eyebrow">${escapeHTML(group.game || group.category)}</p><h3>${escapeHTML(group.setName)}</h3><p>${group.uniquePrintingCount} distinct printing${group.uniquePrintingCount === 1 ? '' : 's'} · ${group.copyCount} cop${group.copyCount === 1 ? 'y' : 'ies'} across ${group.holdingCount} acquisition lot${group.holdingCount === 1 ? '' : 's'}</p></div><dl><div><dt>Tracked value</dt><dd>${escapeHTML(value.value)}<small>${escapeHTML(value.gaps)}</small></dd></div><div><dt>Last changed</dt><dd>${escapeHTML(readableDate(group.latestUpdatedAt))}<small>Saved on this device</small></dd></div></dl><p class="fine-print">Catalog total not linked; completion percentage is intentionally unavailable.</p><button class="button secondary small" type="button" data-action="view-set-holdings" data-set-name="${escapeAttribute(group.setName)}" data-set-category="${escapeAttribute(group.category)}">View holdings</button></div></article>`;
+  return `<article class="portfolio-set-card"><div class="portfolio-set-art">${externalImage({ ...(cover.item || {}), userImage: cover.userImage }, 'holding-image')}<span>${escapeHTML(group.game)}</span></div><div class="portfolio-set-main"><div><p class="eyebrow">${escapeHTML(group.game || group.category)}</p><h3>${escapeHTML(group.setName)}</h3><p>${group.uniquePrintingCount} distinct printing${group.uniquePrintingCount === 1 ? '' : 's'} · ${group.copyCount} cop${group.copyCount === 1 ? 'y' : 'ies'} across ${group.holdingCount} purchase${group.holdingCount === 1 ? '' : 's'}</p></div><dl><div><dt>Tracked value</dt><dd>${escapeHTML(value.value)}<small>${escapeHTML(value.gaps)}</small></dd></div><div><dt>Last changed</dt><dd>${escapeHTML(readableDate(group.latestUpdatedAt))}<small>Saved on this device</small></dd></div></dl><p class="fine-print">Catalog total not linked; completion percentage is intentionally unavailable.</p><button class="button secondary small" type="button" data-action="view-set-holdings" data-set-name="${escapeAttribute(group.setName)}" data-set-category="${escapeAttribute(group.category)}">View items</button></div></article>`;
 }
 
 const DEFAULT_CATEGORY_LABELS = Object.freeze({
@@ -85,8 +84,8 @@ function categoryLabel(category, holdings = []) {
 function setsSection(state) {
   const currency = state.settings.currency || 'USD';
   const collection = groupPortfolioSets(state.holdings, { currency });
-  if (!state.holdings.length) return emptyState('Build your first set group', 'Add a catalog card or record a set name on a custom collectible. Sets are derived from holdings already saved on this device.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Add collectible</button><button class="button ghost" type="button" data-go="search">Browse cards</button></div>');
-  if (!collection.totalSets) return emptyState('No set names recorded yet', `${collection.unassignedHoldings} holding${collection.unassignedHoldings === 1 ? '' : 's'} remain safely in Holdings, but cannot be grouped until a set name is recorded.`, '<button class="button" type="button" data-go="portfolio" data-portfolio-target="holdings">Review holdings</button>');
+  if (!state.holdings.length) return emptyState('Build your first set group', 'Add a catalog card or record a set name on a custom collectible. Sets are derived from items already saved on this device.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan an item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>');
+  if (!collection.totalSets) return emptyState('No set names recorded yet', `${collection.unassignedHoldings} item${collection.unassignedHoldings === 1 ? '' : 's'} cannot be grouped until a set name is recorded.`, '<button class="button" type="button" data-go="portfolio" data-portfolio-target="holdings">Review items</button>');
   const controls = {
     query: state.portfolio.setQuery || '',
     category: state.portfolio.setCategory || 'all',
@@ -98,53 +97,54 @@ function setsSection(state) {
   const categories = [...new Map(collection.sets.map((group) => [group.category, group.game || group.category])).entries()]
     .sort((left, right) => String(left[1]).localeCompare(String(right[1])));
   const unassigned = collection.unassignedHoldings
-    ? `<p class="fine-print" role="status">${collection.unassignedHoldings} holding${collection.unassignedHoldings === 1 ? '' : 's'} (${collection.unassignedCopies} cop${collection.unassignedCopies === 1 ? 'y' : 'ies'}) without a set name stay in Holdings and are not hidden inside a guessed group.</p>`
+    ? `<p class="fine-print" role="status">${collection.unassignedHoldings} item${collection.unassignedHoldings === 1 ? '' : 's'} (${collection.unassignedCopies} cop${collection.unassignedCopies === 1 ? 'y' : 'ies'}) without a set name stays in Items and is never placed in a guessed group.</p>`
     : '';
-  return `<section class="portfolio-sets-summary" aria-label="Set collection summary"><dl><div><dt>Named sets</dt><dd>${collection.totalSets}</dd></div><div><dt>Distinct printings</dt><dd>${collection.distinctPrintings}</dd></div><div><dt>Copies in named sets</dt><dd>${collection.totalCopies}</dd></div></dl><p>Counts come only from exact local holding identity. An authoritative catalog total must be linked before CollectFolio will show set completion.</p>${unassigned}</section>
+  return `<section class="portfolio-sets-summary" aria-label="Set collection summary"><dl><div><dt>Named sets</dt><dd>${collection.totalSets}</dd></div><div><dt>Distinct printings</dt><dd>${collection.distinctPrintings}</dd></div><div><dt>Copies in named sets</dt><dd>${collection.totalCopies}</dd></div></dl><p>Counts come only from exact saved item identity. An authoritative catalog total must be linked before CollectFolio will show set completion.</p>${unassigned}</section>
     <section class="portfolio-set-controls" aria-label="Set controls"><label class="sr-only" for="portfolio-set-query">Search collected sets</label><input id="portfolio-set-query" type="search" value="${escapeAttribute(controls.query)}" placeholder="Search collected sets" data-portfolio-set-query><label>Category<select data-portfolio-set-category><option value="all">All categories</option>${categories.map(([category, label]) => `<option value="${escapeAttribute(category)}" ${controls.category === category ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select></label><label>Sort<select data-portfolio-set-sort>${[['recent-desc', 'Recently changed'], ['alpha', 'Set A–Z'], ['printings-desc', 'Most printings'], ['value-desc', 'Highest tracked value']].map(([value, label]) => `<option value="${value}" ${controls.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></section>
     <div class="portfolio-result-heading"><div><strong>${shown.length} set${shown.length === 1 ? '' : 's'}</strong><span>${shown.length === collection.totalSets ? 'All named sets' : `Filtered from ${collection.totalSets}`}</span></div>${controls.query || controls.category !== 'all' || controls.sort !== 'recent-desc' ? '<button class="button ghost small" type="button" data-action="clear-portfolio-set-filters">Clear filters</button>' : ''}</div>
-    ${visible.length ? `<div class="portfolio-set-grid">${visible.map((group) => portfolioSetCard(group, currency)).join('')}</div>${shown.length > visible.length ? `<button class="button secondary portfolio-load-more" type="button" data-action="load-more-portfolio-sets">Show ${Math.min(PORTFOLIO_SET_PAGE_SIZE, shown.length - visible.length)} more</button>` : ''}` : emptyState('No sets match these filters', 'Clear the set search or category filter to see every named set in your portfolio.', '<button class="button ghost" type="button" data-action="clear-portfolio-set-filters">Clear filters</button>')}`;
+    ${visible.length ? `<div class="portfolio-set-grid">${visible.map((group) => portfolioSetCard(group, currency)).join('')}</div>${shown.length > visible.length ? `<button class="button secondary portfolio-load-more" type="button" data-action="load-more-portfolio-sets">Show ${Math.min(PORTFOLIO_SET_PAGE_SIZE, shown.length - visible.length)} more</button>` : ''}` : emptyState('No sets match these filters', 'Clear the set search or category filter to see every named set in your collection.', '<button class="button ghost" type="button" data-action="clear-portfolio-set-filters">Clear filters</button>')}`;
 }
 
 function holdingsSection(state) {
   const currency = state.settings.currency || 'USD';
   const summary = portfolioSummary(state.holdings, { currency });
-  const shown = filterAndSortHoldings(state.holdings, { ...state.portfolio, currency });
+  const shownPurchases = filterAndSortHoldings(state.holdings, { ...state.portfolio, currency });
+  const groupMode = state.portfolio.groupMode === 'purchases' ? 'purchases' : 'grouped';
+  const shown = groupMode === 'grouped' ? groupMatchingHoldings(shownPurchases, currency) : shownPurchases;
   const view = PORTFOLIO_VIEWS.includes(state.portfolio.view || state.settings?.portfolioView) ? (state.portfolio.view || state.settings.portfolioView) : 'gallery';
   const selected = (state.portfolio.selected || []).filter((id) => state.holdings.some((holding) => holding.id === id));
+  const selectionMode = groupMode === 'purchases' && Boolean(state.portfolio.selectionMode || selected.length);
   const limit = Math.max(1, Number(state.portfolio.limit) || 100);
   const visible = shown.slice(0, limit);
   return `${portfolioSummaryBar(state, summary, currency)}
-    ${portfolioValueTrendModule(state, currency)}
-    ${holdingsControls(state, view)}
-    ${bulkToolbar(selected)}
-    <div class="portfolio-result-heading"><div><strong>${shown.length} holding${shown.length === 1 ? '' : 's'}</strong><span>${selected.length ? `${selected.length} selected` : 'Exact lots remain separate'}</span></div><button class="button ghost small" type="button" data-action="export-csv">Export CSV</button></div>
-    ${visible.length ? `<div class="portfolio-holdings ${escapeAttribute(view)}">${visible.map((holding) => holdingCard(holding, currency, state, view, selected.includes(holding.id))).join('')}</div>${shown.length > visible.length ? `<button class="button secondary portfolio-load-more" type="button" data-action="load-more-holdings">Show ${Math.min(100, shown.length - visible.length)} more</button>` : ''}` : state.holdings.length ? emptyState('No holdings match these filters', 'Remove a filter or clear the search to see the rest of your portfolio.', '<button class="button ghost" type="button" data-action="clear-portfolio-filters">Clear all filters</button>') : emptyState('Add your first collectible', 'Search, scan, import, or create a custom item. Pricing is optional.', '<button class="button" type="button" data-go="add">Add collectible</button>')}`;
+    ${holdingsControls(state, view, groupMode, selectionMode)}
+    ${bulkToolbar(selected, selectionMode)}
+    <div class="portfolio-result-heading"><div><strong>${shown.length} ${groupMode === 'grouped' ? `item${shown.length === 1 ? '' : 's'}` : `purchase${shown.length === 1 ? '' : 's'}`}</strong><span>${selectionMode ? `${selected.length} selected` : groupMode === 'purchases' ? 'Showing individual purchases' : `${shownPurchases.length} purchase${shownPurchases.length === 1 ? '' : 's'} grouped by matching item`}</span></div></div>
+    ${visible.length ? `<div class="portfolio-holdings ${escapeAttribute(view)}">${visible.map((entry) => groupMode === 'grouped' ? groupedHoldingCard(entry, currency, state, view) : holdingCard(entry, currency, state, view, selected.includes(entry.id), selectionMode)).join('')}</div>${shown.length > visible.length ? `<button class="button secondary portfolio-load-more" type="button" data-action="load-more-holdings">Show ${Math.min(100, shown.length - visible.length)} more</button>` : ''}` : state.holdings.length ? emptyState('No items match these filters', 'Remove a filter or clear the search to see the rest of your collection.', '<button class="button ghost" type="button" data-action="clear-portfolio-filters">Clear all filters</button>') : emptyCollectionState()}`;
 }
 
-// 0.8.17: a portfolio-page value line graph, consistent styling with the
-// overview module's chart -- built from the same retro TCGCSV
-// price-history reconstruction merged with local snapshots (snapshots
-// win on overlap). Renders nothing when there are no holdings at all;
-// otherwise always renders (trendChart itself falls back to its own
-// empty-chart placeholder only if literally zero points resolve, which
-// cannot happen once a holding exists because today's live snapshot is
-// always included).
-function portfolioValueTrendModule(state, currency) {
-  if (!state.holdings.length) return '';
+function collectionSparkline(state, currency) {
   const historyPoints = historyPointsByHoldingId(state.holdings, state.priceHistory);
-  const { points: series, coverage } = overviewSeriesWithHistory(
+  const { points } = overviewSeriesWithHistory(
     state.holdings, state.snapshots, historyPoints, state.overview?.range || '3M', new Date(), currency
   );
-  const change = overviewChange(series);
-  const tone = change.amount === null ? 'neutral' : change.amount >= 0 ? 'positive' : 'negative';
-  const movement = change.amount === null
-    ? ''
-    : `<span class="${tone}"><span aria-hidden="true">${change.amount >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(Math.abs(change.amount), currency))}${change.percent === null ? '' : ` (${escapeHTML(formatPercent(change.percent))})`}</span>`;
-  return `<section class="card overview-module portfolio-value-trend"><div class="section-heading compact"><div><p class="eyebrow">Value over time</p><h2>Value trend</h2></div>${movement}</div>
-    ${trendChart(series, currency)}
-    ${coverage.total ? `<div class="overview-chart-meta"><span><strong>${coverage.percent}%</strong> chart history coverage across this portfolio</span></div>` : ''}
-  </section>`;
+  const valid = points.filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(String(point?.date)) && Number.isFinite(Number(point?.marketValue)));
+  if (new Set(valid.map((point) => point.date)).size < 2) return '';
+  const width = 128; const height = 38; const pad = 3;
+  const values = valid.map((point) => Number(point.marketValue));
+  const min = Math.min(...values); const max = Math.max(...values); const range = max - min;
+  const coordinates = valid.map((point, index) => {
+    const x = pad + ((width - pad * 2) * index / Math.max(1, valid.length - 1));
+    const y = range ? height - pad - ((Number(point.marketValue) - min) / range) * (height - pad * 2) : height / 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const change = overviewChange(valid);
+  const summary = change.amount === null
+    ? 'Collection value history'
+    : Math.abs(change.amount) < 0.005
+      ? 'Collection value was unchanged over this range'
+      : `Collection value ${change.amount > 0 ? 'increased' : 'decreased'} by ${formatCurrency(Math.abs(change.amount), currency)} over this range`;
+  return `<svg class="collection-sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttribute(summary)}"><polyline points="${coordinates}" vector-effect="non-scaling-stroke"></polyline></svg>`;
 }
 
 function portfolioSummaryBar(state, summary, currency) {
@@ -157,11 +157,14 @@ function portfolioSummaryBar(state, summary, currency) {
   const latestValue = state.holdings.map((holding) => holding.updatedAt || holding.createdAt).filter(Boolean).sort().at(-1);
   const latest = latestValue && !Number.isNaN(new Date(latestValue).valueOf())
     ? new Date(latestValue).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
-    : 'No holdings yet';
+    : 'No items yet';
   const excluded = summary.excludedMarketItems || summary.excludedCostItems
     ? `<p class="fine-print" role="status">${summary.excludedMarketItems} market value${summary.excludedMarketItems === 1 ? '' : 's'} and ${summary.excludedCostItems} cost basis entr${summary.excludedCostItems === 1 ? 'y' : 'ies'} in ${escapeHTML(summary.excludedCurrencies.join(', '))} are excluded from ${escapeHTML(currency)} totals; no exchange rate was guessed.</p>`
     : '';
-  return `<section class="portfolio-summary-bar" aria-label="Portfolio summary"><div class="portfolio-summary-primary"><span>Local portfolio · ${escapeHTML(currency)} only</span><strong>${escapeHTML(formatCurrency(summary.marketValue, currency))}</strong><small>${summary.uniqueItems} unique · ${summary.totalQuantity} total</small></div><dl><div><dt>Cost basis</dt><dd>${escapeHTML(formatCurrency(summary.costBasis, currency))}</dd></div><div><dt>Comparable gain or loss</dt><dd class="${summary.gain >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}</dd><small>${escapeHTML(formatPercent(summary.returnPercent))}${summary.excludedGainItems ? ` · ${summary.excludedGainItems} mixed-currency excluded` : ''}</small></div><div><dt>Pricing coverage</dt><dd>${coverage.toFixed(0)}%</dd><small>${pricing.market} market · ${pricing.manual} manual · ${pricing.unpriced} unpriced</small></div><div><dt>Last updated</dt><dd>${escapeHTML(latest)}</dd><small>Saved on this device</small></div></dl>${excluded}</section>`;
+  const gain = summary.gainEligibleItems
+    ? `<div><dt>Estimated gain or loss</dt><dd class="${summary.gain >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}</dd><dd class="metric-note"><small>${escapeHTML(formatPercent(summary.returnPercent))} · ${summary.gainEligibleItems} comparable</small></dd></div>`
+    : '<div><dt>Estimated gain or loss</dt><dd>Unavailable</dd><dd class="metric-note"><small>Add both cost and current value</small></dd></div>';
+  return `<section class="portfolio-summary-bar" aria-label="Collection summary"><div class="portfolio-summary-primary"><span>Collection value · ${escapeHTML(currency)} only</span><div class="collection-value-line"><strong>${covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : 'Value not available'}</strong>${covered ? collectionSparkline(state, currency) : ''}</div><small>${summary.uniqueItems} purchase${summary.uniqueItems === 1 ? '' : 's'} · ${summary.totalQuantity} total item${summary.totalQuantity === 1 ? '' : 's'}</small></div><dl>${gain}<div><dt>Pricing coverage</dt><dd>${covered} of ${state.holdings.length} · ${coverage.toFixed(0)}%</dd><dd class="metric-note"><small>${pricing.market} market · ${pricing.manual} manual · ${pricing.unpriced} unpriced</small></dd></div><div><dt>Last updated</dt><dd>${escapeHTML(latest)}</dd><dd class="metric-note"><small>Saved on this device</small></dd></div></dl>${excluded}</section>`;
 }
 
 function options(values, selected, emptyLabel) {
@@ -176,21 +179,66 @@ function activeFilterChips(state) {
     ...Object.entries(filters).filter(([key, value]) => key !== 'setNameExact' && value).map(([key, value]) => [key, `${({ setName: 'Set', ownership: 'Type', condition: 'Condition', gradeCompany: 'Grader', language: 'Language', tags: 'Tag', pricing: 'Pricing', performance: 'Performance' })[key] || key}: ${value}`])
   ].filter(Boolean);
   if (!entries.length) return '';
-  return `<div class="active-filters" aria-label="Active portfolio filters">${entries.map(([key, label]) => `<button type="button" data-action="remove-portfolio-filter" data-filter="${escapeAttribute(key)}">${escapeHTML(label)} <span aria-hidden="true">×</span></button>`).join('')}<button class="clear" type="button" data-action="clear-portfolio-filters">Clear all</button></div>`;
+  return `<div class="active-filters" aria-label="Active collection filters">${entries.map(([key, label]) => `<button type="button" data-action="remove-portfolio-filter" data-filter="${escapeAttribute(key)}">${escapeHTML(label)} <span aria-hidden="true">×</span></button>`).join('')}<button class="clear" type="button" data-action="clear-portfolio-filters">Clear all</button></div>`;
 }
 
-function holdingsControls(state, view) {
+function holdingsControls(state, view, groupMode, selectionMode) {
   const filters = state.portfolio.filters || {};
   const hasFilters = state.portfolio.query || state.portfolio.category !== 'all' || Object.values(filters).some(Boolean);
+  const activeCount = (state.portfolio.category !== 'all' ? 1 : 0) + Object.values(filters).filter(Boolean).length;
   const categories = new Map(Object.entries(DEFAULT_CATEGORY_LABELS));
   categoryLabels(state.holdings).forEach((label, category) => categories.set(category, label));
   const categoryOptions = [['all', 'All categories'], ...[...categories.entries()].sort((left, right) => left[1].localeCompare(right[1]))];
-  return `<section class="portfolio-controls" aria-label="Holdings controls"><div class="portfolio-command"><label class="sr-only" for="portfolio-query">Search holdings</label><input id="portfolio-query" type="search" value="${escapeAttribute(state.portfolio.query)}" placeholder="Search holdings" data-portfolio-query><div class="view-toggle" role="group" aria-label="Holding view"><button type="button" data-portfolio-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Gallery view">▦</button><button type="button" data-portfolio-view="list" aria-pressed="${view === 'list'}" aria-label="List view">☷</button></div></div><details class="portfolio-filter-panel" ${hasFilters ? 'open' : ''}><summary><span>Filters &amp; sort</span><span>${hasFilters ? 'Active' : 'All holdings'}</span></summary><div class="portfolio-filter-grid"><label>Category<select data-portfolio-category>${categoryOptions.map(([value, label]) => `<option value="${escapeAttribute(value)}" ${state.portfolio.category === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select></label><label>Set<select data-portfolio-filter="setName">${options(state.holdings.map((holding) => holding.item?.setName), filters.setName, 'All sets')}</select></label><label>Type<select data-portfolio-filter="ownership"><option value="">All types</option>${[['raw', 'Raw'], ['graded', 'Graded'], ['sealed', 'Sealed']].map(([value, label]) => `<option value="${value}" ${filters.ownership === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Condition<select data-portfolio-filter="condition">${options(state.holdings.map((holding) => holding.condition), filters.condition, 'All conditions')}</select></label><label>Grading company<select data-portfolio-filter="gradeCompany">${options(state.holdings.map((holding) => holding.gradeCompany), filters.gradeCompany, 'All graders')}</select></label><label>Language<select data-portfolio-filter="language">${options(state.holdings.map((holding) => holding.item?.language), filters.language, 'All languages')}</select></label><label>Tag<select data-portfolio-filter="tags">${options(state.holdings.flatMap((holding) => holding.tags || []), filters.tags, 'All tags')}</select></label><label>Pricing<select data-portfolio-filter="pricing"><option value="">All pricing states</option>${[['market', 'Market priced'], ['manual', 'Manual value'], ['unpriced', 'Unpriced']].map(([value, label]) => `<option value="${value}" ${filters.pricing === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Performance<select data-portfolio-filter="performance"><option value="">Gain and loss</option><option value="gain" ${filters.performance === 'gain' ? 'selected' : ''}>Gain</option><option value="loss" ${filters.performance === 'loss' ? 'selected' : ''}>Loss</option></select></label><label>Sort<select data-portfolio-sort>${[['value-desc', 'Highest value'], ['gain-desc', 'Largest gain'], ['gain-asc', 'Largest loss'], ['recent-desc', 'Recently added'], ['updated-desc', 'Recently changed'], ['name-asc', 'Name A–Z'], ['set-asc', 'Set order'], ['quantity-desc', 'Highest quantity'], ['missing-desc', 'Missing information']].map(([value, label]) => `<option value="${value}" ${state.portfolio.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></div></details>${activeFilterChips(state)}</section>`;
+  const sortOptions = [['value-desc', 'Highest value'], ['gain-desc', 'Largest gain'], ['gain-asc', 'Largest loss'], ['recent-desc', 'Recently added'], ['updated-desc', 'Recently changed'], ['name-asc', 'Name A–Z'], ['set-asc', 'Set order'], ['quantity-desc', 'Highest quantity'], ['missing-desc', 'Missing information']];
+  return `<section class="portfolio-controls collection-toolbar" aria-label="Collection tools"><div class="portfolio-command"><label class="sr-only" for="portfolio-query">Search collection</label><input id="portfolio-query" type="search" value="${escapeAttribute(state.portfolio.query)}" placeholder="Search collection" data-portfolio-query><label class="collection-sort"><span class="sr-only">Sort collection</span><select data-portfolio-sort aria-label="Sort collection">${sortOptions.map(([value, label]) => `<option value="${value}" ${state.portfolio.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><div class="collection-mode-toggle" role="group" aria-label="Collection item grouping"><button type="button" data-collection-group-mode="grouped" aria-pressed="${groupMode === 'grouped'}">Grouped items</button><button type="button" data-collection-group-mode="purchases" aria-pressed="${groupMode === 'purchases'}">Purchases</button></div><div class="view-toggle" role="group" aria-label="Collection view"><button type="button" data-portfolio-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Grid view">▦</button><button type="button" data-portfolio-view="list" aria-pressed="${view === 'list'}" aria-label="List view">☷</button></div><details class="collection-overflow"><summary aria-label="More collection actions">•••</summary><div><button class="button ghost small" type="button" data-action="export-csv">Export CSV</button><button class="button ghost small" type="button" data-action="${selectionMode ? 'clear-holding-selection' : 'start-holding-selection'}">${selectionMode ? 'Exit selection' : 'Select'}</button></div></details></div><details class="portfolio-filter-panel" ${hasFilters ? 'open' : ''}><summary><span>Filters${activeCount ? ` <strong class="filter-count" aria-label="${activeCount} active">${activeCount}</strong>` : ''}</span><span>${activeCount ? `${activeCount} active` : 'All items'}</span></summary><div class="portfolio-filter-grid"><label>Category<select data-portfolio-category>${categoryOptions.map(([value, label]) => `<option value="${escapeAttribute(value)}" ${state.portfolio.category === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select></label><label>Set<select data-portfolio-filter="setName">${options(state.holdings.map((holding) => holding.item?.setName), filters.setName, 'All sets')}</select></label><label>Type<select data-portfolio-filter="ownership"><option value="">All types</option>${[['raw', 'Raw'], ['graded', 'Graded'], ['sealed', 'Sealed']].map(([value, label]) => `<option value="${value}" ${filters.ownership === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Condition<select data-portfolio-filter="condition">${options(state.holdings.map((holding) => holding.condition), filters.condition, 'All conditions')}</select></label><label>Grading company<select data-portfolio-filter="gradeCompany">${options(state.holdings.map((holding) => holding.gradeCompany), filters.gradeCompany, 'All graders')}</select></label><label>Language<select data-portfolio-filter="language">${options(state.holdings.map((holding) => holding.item?.language), filters.language, 'All languages')}</select></label><label>Tag<select data-portfolio-filter="tags">${options(state.holdings.flatMap((holding) => holding.tags || []), filters.tags, 'All tags')}</select></label><label>Pricing<select data-portfolio-filter="pricing"><option value="">All pricing states</option>${[['market', 'Market priced'], ['manual', 'Manual value'], ['unpriced', 'Unpriced']].map(([value, label]) => `<option value="${value}" ${filters.pricing === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Performance<select data-portfolio-filter="performance"><option value="">Gain and loss</option><option value="gain" ${filters.performance === 'gain' ? 'selected' : ''}>Gain</option><option value="loss" ${filters.performance === 'loss' ? 'selected' : ''}>Loss</option></select></label></div></details>${activeFilterChips(state)}</section>`;
 }
 
-function bulkToolbar(selected) {
-  if (!selected.length) return '';
-  return `<div class="bulk-toolbar" role="region" aria-label="Bulk holding actions"><strong>${selected.length} selected</strong><div><button class="button secondary small" type="button" data-action="bulk-edit-holdings" ${selected.length === 1 ? '' : 'disabled'}>Edit</button><button class="button secondary small" type="button" data-action="bulk-move-holdings">Move</button><button class="button secondary small" type="button" data-action="bulk-tag-holdings">Add tags</button><button class="button secondary small" type="button" data-action="bulk-duplicate-holdings">Duplicate</button><button class="button secondary small" type="button" data-action="bulk-export-holdings">Export</button><button class="button danger small" type="button" data-action="bulk-delete-holdings">Delete</button><button class="button ghost small" type="button" data-action="clear-holding-selection">Clear</button></div></div>`;
+function bulkToolbar(selected, selectionMode) {
+  if (!selectionMode) return '';
+  return `<div class="bulk-toolbar" role="region" aria-label="Bulk purchase actions"><strong>${selected.length} selected</strong><div><button class="button secondary small" type="button" data-action="bulk-edit-holdings" ${selected.length === 1 ? '' : 'disabled'}>Edit</button><button class="button secondary small" type="button" data-action="bulk-move-holdings" ${selected.length ? '' : 'disabled'}>Move</button><button class="button secondary small" type="button" data-action="bulk-tag-holdings" ${selected.length ? '' : 'disabled'}>Add tags</button><button class="button secondary small" type="button" data-action="bulk-duplicate-holdings" ${selected.length ? '' : 'disabled'}>Duplicate</button><button class="button secondary small" type="button" data-action="bulk-export-holdings" ${selected.length ? '' : 'disabled'}>Export</button><button class="button danger small" type="button" data-action="bulk-delete-holdings" ${selected.length ? '' : 'disabled'}>Delete</button><button class="button ghost small" type="button" data-action="clear-holding-selection">Done</button></div></div>`;
+}
+
+function emptyCollectionState() {
+  return emptyState('Start your collection', 'Scan a photo, search for an exact item, import a backup, or create something custom. Pricing can be added later.', '<div class="empty-collection-actions"><button class="button" type="button" data-go="add">Scan</button><button class="button secondary" type="button" data-go="search">Search</button><button class="button ghost" type="button" data-action="import-json">Import</button><button class="button ghost" type="button" data-action="custom-holding">Custom item</button><input class="sr-only" id="backup-file" type="file" accept="application/json,.json" aria-label="Choose CollectFolio backup, up to 128 MB"></div>');
+}
+
+function normalizedIdentityPart(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function matchingHoldingKey(holding) {
+  const item = holding?.item || {};
+  const external = holding.canonicalVariantId || item.canonicalVariantId
+    || (item.provider && item.externalId ? `${item.provider}:${item.externalId}` : '')
+    || item.id;
+  const identity = external || [item.category, item.game, item.name, item.setName, item.number, item.variant, item.language, item.productFormat].map(normalizedIdentityPart).join('|');
+  const ownership = holding.grade ? `graded:${normalizedIdentityPart(holding.gradeCompany)}:${normalizedIdentityPart(holding.grade)}` : normalizedIdentityPart(holding.ownershipType || item.productFormat || 'raw');
+  return `${identity}|${ownership}`;
+}
+
+export function groupMatchingHoldings(holdings = [], currency = 'USD') {
+  const groups = new Map();
+  holdings.forEach((holding) => {
+    const key = matchingHoldingKey(holding);
+    if (!groups.has(key)) groups.set(key, { key, holdings: [], item: holding.item || {}, coverHolding: holding });
+    groups.get(key).holdings.push(holding);
+  });
+  return [...groups.values()].map((group) => {
+    const statuses = group.holdings.map(holdingPricingStatus);
+    const priced = group.holdings.filter((holding) => holdingPricingStatus(holding) !== 'unpriced' && holdingMarketCurrency(holding) === currency);
+    const gains = group.holdings.map((holding) => holdingGain(holding, currency)).filter((value) => value !== null);
+    return {
+      ...group,
+      quantity: group.holdings.reduce((sum, holding) => sum + Math.max(0, Number(holding.quantity) || 0), 0),
+      marketValue: priced.reduce((sum, holding) => sum + holdingMarketValue(holding, currency), 0),
+      pricedPurchaseCount: priced.length,
+      unpricedPurchaseCount: statuses.filter((status) => status === 'unpriced').length,
+      excludedCurrencyCount: group.holdings.filter((holding) => holdingPricingStatus(holding) !== 'unpriced' && holdingMarketCurrency(holding) !== currency).length,
+      gain: gains.reduce((sum, value) => sum + value, 0),
+      gainEligibleCount: gains.length,
+      pricingStatus: new Set(statuses).size === 1 ? statuses[0] : 'mixed'
+    };
+  });
 }
 
 const finiteOrNull = (value) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value)) ? Number(value) : null;
@@ -293,36 +341,48 @@ function forecastSection(state) {
   return `${status}<div class="section-heading"><div><p class="eyebrow">${publications.length} product${publications.length === 1 ? '' : 's'} · ${outlookCount} approved horizon${outlookCount === 1 ? '' : 's'}</p><h2>Product outlooks</h2></div></div><div class="forecast-list">${publications.map((publication) => forecastCard(state, publication)).join('')}</div>`;
 }
 
-function holdingCard(holding, currency, state, view, selected) {
+function groupedHoldingCard(group, currency, state, view) {
+  const holding = group.coverHolding;
+  const identity = [group.item?.game, group.item?.setName, group.item?.number ? `#${group.item.number}` : '', group.item?.variant, group.item?.language].filter(Boolean).join(' · ');
+  const sourceLabel = group.pricingStatus === 'market' ? 'Market' : group.pricingStatus === 'manual' ? 'Manual' : group.pricingStatus === 'unpriced' ? 'Unpriced' : 'Mixed sources';
+  const sources = [...new Set(group.holdings.map((entry) => entry.manualMarketPrice !== '' && entry.manualMarketPrice != null
+    ? 'Manual value' : catalogPriceDisclosure(entry.item) || entry.item?.priceSource || 'No verified market price'))];
+  const valueNote = [
+    group.pricedPurchaseCount ? `${group.pricedPurchaseCount} priced purchase${group.pricedPurchaseCount === 1 ? '' : 's'}` : '',
+    group.unpricedPurchaseCount ? `${group.unpricedPurchaseCount} unpriced` : '',
+    group.excludedCurrencyCount ? `${group.excludedCurrencyCount} other-currency` : '',
+    sources.join(', ')
+  ].filter(Boolean).join(' · ') || 'No verified market price';
+  const gain = group.gainEligibleCount
+    ? `<dd class="${group.gain >= 0 ? 'positive' : 'negative'}">${escapeHTML(formatCurrency(group.gain, currency))}</dd><dd class="metric-note"><small>${group.gainEligibleCount} comparable purchase${group.gainEligibleCount === 1 ? '' : 's'}</small></dd>`
+    : '<dd>Unavailable</dd><dd class="metric-note"><small>Add cost and current value</small></dd>';
+  const attention = group.unpricedPurchaseCount ? `<span class="holding-attention">${group.unpricedPurchaseCount} need${group.unpricedPurchaseCount === 1 ? 's' : ''} a value</span>` : '';
+  return `<article class="portfolio-holding-card grouped ${escapeAttribute(view)}" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}" tabindex="0" aria-label="Inspect ${escapeAttribute(group.item?.name || 'item')}"><div class="holding-art">${externalImage({ ...group.item, userImage: holding.userImage }, 'holding-image')}<span class="value-source ${escapeAttribute(group.pricingStatus)}">${escapeHTML(sourceLabel)}</span></div><div class="holding-identity"><h3>${escapeHTML(group.item?.name || 'Unnamed item')}</h3><p>${escapeHTML(identity || 'Custom collection item')}</p><div class="holding-pills"><span>Qty ${escapeHTML(String(group.quantity))}</span><span>${group.holdings.length} purchase${group.holdings.length === 1 ? '' : 's'}</span>${group.item?.rarity ? `<span>${escapeHTML(group.item.rarity)}</span>` : ''}${attention}</div></div><dl class="holding-values"><div><dt>Current value</dt><dd>${group.pricedPurchaseCount ? escapeHTML(formatCurrency(group.marketValue, currency)) : 'Unpriced'}</dd><dd class="metric-note"><small>${escapeHTML(valueNote)}</small></dd></div><div><dt>Estimated gain or loss</dt>${gain}</div></dl><div class="holding-actions grouped-actions"><button class="button secondary small" type="button" data-action="show-individual-purchases">View purchases</button><button class="button ghost small" type="button" data-action="toggle-watch" data-holding-id="${escapeAttribute(holding.id)}">${findWatchedItem(state.watchlistItems, holding.item) ? 'Watching' : 'Watch'}</button></div></article>`;
+}
+
+function holdingCard(holding, currency, state, view, selected, selectionMode) {
   const value = holdingMarketValue(holding);
   const cost = holdingCostBasis(holding);
   const gain = holdingGain(holding);
   const valueCurrency = holdingMarketCurrency(holding);
   const costCurrency = holdingCostCurrency(holding);
+  const hasRecordedCost = (holding.purchasePrice !== '' && holding.purchasePrice !== null && holding.purchasePrice !== undefined && Number.isFinite(Number(holding.purchasePrice)))
+    || (holding.fees !== '' && holding.fees !== null && holding.fees !== undefined && Number.isFinite(Number(holding.fees)) && Number(holding.fees) > 0);
   const pricingStatus = holdingPricingStatus(holding);
   const providerPrice = holding.item?.price;
   const restrictedDisclosure = catalogPriceDisclosure(holding.item);
   const source = holding.manualMarketPrice !== '' && holding.manualMarketPrice != null
     ? providerPrice == null ? 'Manual value · market price unavailable' : restrictedDisclosure ? `Manual value · ${restrictedDisclosure}` : `Manual override · market reference retained at ${formatCurrency(providerPrice, holding.item?.currency || 'USD')}`
-    : restrictedDisclosure || holding.item?.priceSource || 'Pricing unavailable';
+    : restrictedDisclosure || holding.item?.priceSource || 'No verified market price';
   const watching = Boolean(findWatchedItem(state.watchlistItems, holding.item, {
     canonicalVariantId: holding.canonicalVariantId,
     conditionClass: holding.grade ? 'graded' : 'raw',
     marketCondition: holding.grade ? `${holding.gradeCompany || 'unknown'}-${holding.grade || 'ungraded'}` : holding.marketCondition
   }));
-  const publication = holding.canonicalVariantId
-    ? selectPublicationForHolding(state.intelligence?.byVariant?.[holding.canonicalVariantId], holding, valueCurrency)
-    : null;
-  const intelligence = publication ? normalizeIntelligencePayload(publication) : null;
-  const localScenario = buildHoldingLocalScenario(holding, state.localValueObservations || [], 90);
-  const movement = intelligence?.supportTier >= 2 && intelligence.trend.return30d !== null
-    ? `<span class="${intelligence.trend.return30d >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${intelligence.trend.return30d >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(intelligence.trend.return30d) * 100))} / 30D</span>`
-    : '<span>30D movement unavailable</span>';
-  const forecastAvailable = Boolean(intelligence?.supportTier >= 4 && Object.keys(intelligence.forecasts).length);
-  const scenarioAvailable = ['early', 'limited', 'available'].includes(localScenario.status);
   const identity = [holding.item?.game, holding.item?.setName, holding.item?.number ? `#${holding.item.number}` : '', holding.item?.variant, holding.item?.language].filter(Boolean).join(' · ');
   const condition = holding.grade ? `${holding.gradeCompany || 'Graded'} ${holding.grade}` : holding.condition || 'Condition not set';
-  return `<article class="portfolio-holding-card ${escapeAttribute(view)}" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}" tabindex="0" aria-label="Inspect ${escapeAttribute(holding.item?.name || 'holding')}"><button class="holding-select" type="button" data-action="toggle-holding-selection" data-id="${escapeAttribute(holding.id)}" aria-pressed="${selected}" aria-label="${selected ? 'Deselect' : 'Select'} ${escapeAttribute(holding.item?.name || 'holding')}"><span aria-hidden="true">${selected ? '✓' : ''}</span></button><div class="holding-art">${externalImage({ ...holding.item, userImage: holding.userImage }, 'holding-image')}<span class="value-source ${escapeAttribute(pricingStatus)}">${escapeHTML(pricingStatus === 'market' ? 'Market' : pricingStatus === 'manual' ? 'Manual' : 'Unpriced')}</span></div><div class="holding-identity"><h3>${escapeHTML(holding.item?.name || 'Unnamed item')}</h3><p>${escapeHTML(identity || 'Custom catalog entry')}</p><div class="holding-pills"><span>${escapeHTML(condition)}</span><span>Qty ${escapeHTML(String(holding.quantity || 0))}</span>${holding.item?.rarity ? `<span>${escapeHTML(holding.item.rarity)}</span>` : ''}${(holding.tags || []).slice(0, 2).map((tag) => `<span>#${escapeHTML(tag)}</span>`).join('')}</div></div><dl class="holding-values"><div><dt>Current value</dt><dd>${pricingStatus === 'unpriced' ? '—' : escapeHTML(formatCurrency(value, valueCurrency))}</dd><small>${escapeHTML(source)}${valueCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}</small></div><div><dt>Cost basis</dt><dd>${escapeHTML(formatCurrency(cost, costCurrency))}</dd><small>Recorded acquisition${costCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}</small></div><div><dt>Gain or loss</dt><dd class="${pricingStatus === 'unpriced' || gain === null ? '' : gain >= 0 ? 'positive' : 'negative'}">${pricingStatus === 'unpriced' || gain === null ? '—' : escapeHTML(formatCurrency(gain, valueCurrency))}</dd><small>${pricingStatus === 'unpriced' ? 'Waiting for a value' : gain === null ? `${escapeHTML(valueCurrency)} value and ${escapeHTML(costCurrency)} cost cannot be combined` : escapeHTML(formatPercent(returnPercent(value, cost)))}</small></div></dl><div class="holding-outlook">${movement}<span class="${scenarioAvailable ? 'forecast-available' : ''}">${scenarioAvailable ? `Manual scenario · ${escapeHTML(localScenario.confidence.label)}` : 'Add value for scenario'}</span>${forecastAvailable ? '<span class="forecast-available">Published outlook available</span>' : ''}</div><div class="holding-actions"><button class="button ghost small" type="button" data-action="toggle-watch" data-holding-id="${escapeAttribute(holding.id)}">${watching ? 'Watching' : 'Watch'}</button><button class="button ghost small" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Edit</button><button class="button ghost small" type="button" data-action="delete-holding" data-id="${escapeAttribute(holding.id)}">Delete</button></div></article>`;
+  const selection = selectionMode ? `<button class="holding-select" type="button" data-action="toggle-holding-selection" data-id="${escapeAttribute(holding.id)}" aria-pressed="${selected}" aria-label="${selected ? 'Deselect' : 'Select'} ${escapeAttribute(holding.item?.name || 'purchase')}"><span aria-hidden="true">${selected ? '✓' : ''}</span></button>` : '';
+  return `<article class="portfolio-holding-card ${escapeAttribute(view)}" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}" tabindex="0" aria-label="Inspect ${escapeAttribute(holding.item?.name || 'purchase')}">${selection}<div class="holding-art">${externalImage({ ...holding.item, userImage: holding.userImage }, 'holding-image')}<span class="value-source ${escapeAttribute(pricingStatus)}">${escapeHTML(pricingStatus === 'market' ? 'Market' : pricingStatus === 'manual' ? 'Manual' : 'Unpriced')}</span></div><div class="holding-identity"><h3>${escapeHTML(holding.item?.name || 'Unnamed item')}</h3><p>${escapeHTML(identity || 'Custom collection item')}</p><div class="holding-pills"><span>${escapeHTML(condition)}</span><span>Qty ${escapeHTML(String(holding.quantity || 0))}</span>${holding.item?.rarity ? `<span>${escapeHTML(holding.item.rarity)}</span>` : ''}${pricingStatus === 'unpriced' ? '<span class="holding-attention">Needs a value</span>' : ''}${(holding.tags || []).slice(0, 2).map((tag) => `<span>#${escapeHTML(tag)}</span>`).join('')}</div></div><dl class="holding-values"><div><dt>Current value</dt><dd>${pricingStatus === 'unpriced' ? 'Unpriced' : escapeHTML(formatCurrency(value, valueCurrency))}</dd><dd class="metric-note"><small>${escapeHTML(source)}${valueCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}</small></dd></div><div><dt>Cost basis</dt><dd>${hasRecordedCost ? escapeHTML(formatCurrency(cost, costCurrency)) : 'Not recorded'}</dd><dd class="metric-note"><small>${hasRecordedCost ? `Recorded purchase${costCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}` : 'Add purchase details to calculate'}</small></dd></div><div><dt>Estimated gain or loss</dt><dd class="${gain === null ? '' : gain >= 0 ? 'positive' : 'negative'}">${gain === null ? 'Unavailable' : escapeHTML(formatCurrency(gain, valueCurrency))}</dd><dd class="metric-note"><small>${gain === null ? 'Needs both cost and current value' : escapeHTML(formatPercent(returnPercent(value, cost)))}</small></dd></div></dl><div class="holding-actions"><button class="button ghost small" type="button" data-action="toggle-watch" data-holding-id="${escapeAttribute(holding.id)}">${watching ? 'Watching' : 'Watch'}</button><button class="button ghost small" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Edit</button><button class="button ghost small" type="button" data-action="delete-holding" data-id="${escapeAttribute(holding.id)}">Delete</button></div></article>`;
 }
 
 function compareBar(selection) {
@@ -346,7 +406,7 @@ function watchlistCard(model, currency, alerts = [], compareSelection = []) {
   const updated = update && !Number.isNaN(new Date(update).valueOf()) ? new Date(update).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Not available';
   const signals = alerts.slice(0, 2).map((alert) => `<p class="watch-signal positive" role="status">● ${escapeHTML(alert.message)}</p>`).join('');
   const rankReason = 'Opportunity ranking withheld until offer price, taxes, shipping, selling fees, and liquidity evidence are recorded. Forecast upside alone is not profit.';
-  return `<article class="watch-card"><div class="watch-card-art">${externalImage(ref, 'holding-image')}<span class="watch-alert-state ${alerts.length ? 'triggered' : alertsEnabled ? 'active' : ''}">${escapeHTML(alertText)}</span></div><div class="watch-card-main"><div class="watch-card-title"><div><h3>${escapeHTML(ref.name || 'Unnamed watched card')}</h3><p>${escapeHTML([ref.setName, ref.number, ref.rarity, ref.finish].filter(Boolean).join(' · '))}</p></div><button class="icon-button" type="button" data-action="remove-watch" data-watch-key="${escapeAttribute(entry.watchKey)}" aria-label="Remove ${escapeAttribute(ref.name || 'card')} from Watchlist">×</button></div><div class="watch-values"><div class="actual"><span>Current market</span><strong>${currentPrice === null ? 'Price unavailable' : escapeHTML(formatCurrency(currentPrice, displayCurrency))}</strong><small>${escapeHTML(observed?.source || catalogPriceDisclosure(ref) || ref.priceSource || 'No approved observed-price source')}</small></div><div class="forecast"><span>Future outlook</span><strong>${escapeHTML(forecastRange)}</strong><small>${escapeHTML(forecastMeta)}</small></div></div><dl class="watch-stats"><div><dt>7-day move</dt><dd class="${change7d === null ? '' : change7d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change7d))}</dd></div><div><dt>30-day move</dt><dd class="${change30d === null ? '' : change30d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change30d))}</dd></div><div><dt>Target</dt><dd>${targetPrice === null ? 'Not set' : escapeHTML(formatCurrency(targetPrice, targetCurrency))}<small>${escapeHTML(distance)}</small></dd></div><div><dt>Last price update</dt><dd>${escapeHTML(updated)}<small>${escapeHTML(ref.salesFrequency || 'Liquidity unavailable')}</small></dd></div></dl>${intelligence ? intelligenceSummary(intelligence, displayCurrency) : `<span class="support-badge unsupported">${escapeHTML(SUPPORT_LABELS[0])} · ${escapeHTML(support)}</span>`}<p class="opportunity-reason">${escapeHTML(rankReason)}</p>${signals}<div class="item-actions"><button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(entry.watchKey)}">Details</button><button class="button ghost small" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(entry.watchKey)}">${compareSelection.includes(entry.watchKey) ? '☑ Comparing' : '☐ Compare'}</button><button class="button secondary small" type="button" data-action="add-watched" data-watch-key="${escapeAttribute(entry.watchKey)}">Add to portfolio</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(entry.watchKey)}">Target &amp; alerts</button></div></div></article>`;
+  return `<article class="watch-card"><div class="watch-card-art">${externalImage(ref, 'holding-image')}<span class="watch-alert-state ${alerts.length ? 'triggered' : alertsEnabled ? 'active' : ''}">${escapeHTML(alertText)}</span></div><div class="watch-card-main"><div class="watch-card-title"><div><h3>${escapeHTML(ref.name || 'Unnamed watched card')}</h3><p>${escapeHTML([ref.setName, ref.number, ref.rarity, ref.finish].filter(Boolean).join(' · '))}</p></div><button class="icon-button" type="button" data-action="remove-watch" data-watch-key="${escapeAttribute(entry.watchKey)}" aria-label="Remove ${escapeAttribute(ref.name || 'card')} from Watchlist">×</button></div><div class="watch-values"><div class="actual"><span>Current market</span><strong>${currentPrice === null ? 'Price unavailable' : escapeHTML(formatCurrency(currentPrice, displayCurrency))}</strong><small>${escapeHTML(observed?.source || catalogPriceDisclosure(ref) || ref.priceSource || 'No approved observed-price source')}</small></div><div class="forecast"><span>Future outlook</span><strong>${escapeHTML(forecastRange)}</strong><small>${escapeHTML(forecastMeta)}</small></div></div><dl class="watch-stats"><div><dt>7-day move</dt><dd class="${change7d === null ? '' : change7d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change7d))}</dd></div><div><dt>30-day move</dt><dd class="${change30d === null ? '' : change30d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change30d))}</dd></div><div><dt>Target</dt><dd>${targetPrice === null ? 'Not set' : escapeHTML(formatCurrency(targetPrice, targetCurrency))}<small>${escapeHTML(distance)}</small></dd></div><div><dt>Last price update</dt><dd>${escapeHTML(updated)}<small>${escapeHTML(ref.salesFrequency || 'Liquidity unavailable')}</small></dd></div></dl>${intelligence ? intelligenceSummary(intelligence, displayCurrency) : `<span class="support-badge unsupported">${escapeHTML(SUPPORT_LABELS[0])} · ${escapeHTML(support)}</span>`}<p class="opportunity-reason">${escapeHTML(rankReason)}</p>${signals}<div class="item-actions"><button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(entry.watchKey)}">Details</button><button class="button ghost small" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(entry.watchKey)}">${compareSelection.includes(entry.watchKey) ? '☑ Comparing' : '☐ Compare'}</button><button class="button secondary small" type="button" data-action="add-watched" data-watch-key="${escapeAttribute(entry.watchKey)}">Add to collection</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(entry.watchKey)}">Target &amp; alerts</button></div></div></article>`;
 }
 
 function intelligenceSummary(intelligence, currency, compact = false) {

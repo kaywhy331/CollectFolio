@@ -23,6 +23,8 @@ const required = [
   'app/assets/js/services/tcgcsv-refresh-status.js',
   'app/assets/js/core/catalog-identity.js', 'app/assets/js/core/intelligence-contract.js',
   'app/assets/js/core/intelligence-alerts.js', 'app/assets/js/core/insights.js', 'app/assets/js/core/local-scenarios.js',
+  'app/assets/js/core/data-freshness.js', 'app/assets/js/core/scenario-lab.js',
+  'app/assets/js/services/scan-detection-worker.js',
   'app/assets/js/views/insights.js', 'app/assets/js/views/onboarding.js', 'app/assets/js/views/profile.js',
   'analytics/pyproject.toml', 'analytics/README.md',
   'analytics/src/collectfolio_analytics/observations.py', 'analytics/src/collectfolio_analytics/trends.py',
@@ -99,7 +101,10 @@ const required = [
   'supabase/migrations/0018_forecast_execution_and_scorecards.sql',
   'supabase/migrations/0019_centralized_historical_price_imports.sql',
   'supabase/migrations/0020_tcgcsv_market_universe.sql',
-  'PRD/redesign.md', 'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
+  'supabase/migrations/0021_account_owned_sync_keys.sql',
+  'PRD/redesign.md', 'PRD/CollectFolio Premium UX Redesign — PRD & UI-UX Specification.md',
+  'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
+  'docs/PREMIUM_UX_DESIGN_SYSTEM.md', 'docs/PREMIUM_UX_ACCEPTANCE.md',
   'docs/REDESIGN_COMPATIBILITY.md', 'docs/REDESIGN_FOUNDATION.md', 'docs/REDESIGN_CORE_VERTICAL_SLICE.md',
   'docs/REDESIGN_INTAKE_COLLECTION_MANAGEMENT.md', 'docs/REDESIGN_FORECASTING_INSIGHTS.md',
   'docs/REDESIGN_ACCOUNT_SYNC_RELEASE.md', 'docs/REDESIGN_FINAL_ACCEPTANCE.md',
@@ -120,7 +125,7 @@ const required = [
   'docs/receipts/TCGCSV_FULL_COHORT_R2_2026_08_15.md',
   'docs/receipts/TCGCSV_ROLLING_R2_2026_08_15.md',
   'tests/redesign-protection.test.js',
-  'tests/local-scenarios.test.js',
+  'tests/local-scenarios.test.js', 'tests/data-freshness.test.js', 'tests/scenario-lab.test.js',
   'tests/router.test.js', 'tests/view-models.test.js', 'tests/overview.test.js',
   'tests/discover.test.js', 'tests/catalog-browse.test.js', 'tests/portfolio-redesign.test.js', 'tests/portfolio-sets.test.js',
   'tests/intake-management.test.js', 'tests/watchlist-management.test.js', 'tests/insights.test.js',
@@ -137,6 +142,7 @@ const required = [
   'tests/fixtures/redesign/cloud-sync.json',
   'tests/fixtures/redesign/legacy-routes.json',
   'tests/e2e/catalog-pagination.spec.js', 'tests/e2e/browse-sets.spec.js', 'tests/e2e/portfolio-sets.spec.js', 'tests/e2e/protection-baseline.spec.js',
+  'tests/e2e/premium-ux-acceptance.spec.js',
   'tests/e2e/phase5.spec.js', 'tests/e2e/service-worker.spec.js',
   'tests/e2e/protection-baseline.spec.js-snapshots/legacy-overview-empty-chromium-linux.png',
   'tests/e2e/protection-baseline.spec.js-snapshots/core-slice-overview-empty-chromium-linux.png'
@@ -159,8 +165,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.21' || packageLock.version !== '0.8.21' || packageLock.packages?.['']?.version !== '0.8.21') {
-  errors.push('Application and lockfile versions must agree on 0.8.21.');
+if (packageJSON.version !== '0.8.27' || packageLock.version !== '0.8.27' || packageLock.packages?.['']?.version !== '0.8.27') {
+  errors.push('Application and lockfile versions must agree on 0.8.27.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -442,7 +448,7 @@ for (const file of sourceFiles) {
 
 const index = await readFile(resolve(app, 'index.html'), 'utf8');
 for (const reference of ['/manifest.webmanifest', '/runtime-config.js', '/assets/css/app.css', '/assets/js/app.js']) if (!index.includes(reference)) errors.push(`index.html does not reference ${reference}`);
-for (const destination of ['overview', 'discover', 'add', 'portfolio', 'insights']) if (!index.includes(`data-nav="${destination}"`)) errors.push(`index.html is missing ${destination} navigation.`);
+for (const destination of ['home', 'discover', 'scan', 'collection', 'insights']) if (!index.includes(`data-nav="${destination}"`)) errors.push(`index.html is missing ${destination} navigation.`);
 for (const action of ['search', 'settings']) if (!index.includes(`data-shell-action="${action}"`)) errors.push(`index.html is missing the supported ${action} shell control.`);
 for (const unsupported of ['notifications', 'switch-portfolio']) if (index.includes(`data-shell-action="${unsupported}"`)) errors.push(`index.html must not expose unsupported ${unsupported} shell controls.`);
 
@@ -450,8 +456,8 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.21-dev'")) errors.push('Local runtime config must identify the 0.8.21 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.21'")) errors.push('Production builds must default APP_VERSION to 0.8.21.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.27-dev'")) errors.push('Local runtime config must identify the 0.8.27 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.27'")) errors.push('Production builds must default APP_VERSION to 0.8.27.');
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
 }
@@ -563,7 +569,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.21'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.21.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.27'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.27.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
@@ -651,6 +657,26 @@ const migration = await readFile(resolve(root, 'supabase/migrations/0001_initial
 for (const table of ['profiles', 'holdings', 'holding_deletions', 'portfolio_snapshots', 'scan_sessions']) {
   if (!migration.includes(`create table if not exists public.${table}`)) errors.push(`Migration missing ${table}.`);
   if (!migration.includes(`alter table public.${table} enable row level security`)) errors.push(`Migration missing RLS for ${table}.`);
+}
+
+const accountOwnedSyncMigration = await readFile(
+  resolve(root, 'supabase/migrations/0021_account_owned_sync_keys.sql'), 'utf8'
+);
+for (const contract of [
+  'holdings_pkey primary key (user_id, id)',
+  'scan_sessions_pkey primary key (user_id, id)',
+  'create index holdings_id_idx on public.holdings (id)',
+  'create index scan_sessions_id_idx on public.scan_sessions (id)'
+]) {
+  if (!accountOwnedSyncMigration.includes(contract)) {
+    errors.push(`Account-owned sync migration missing contract ${contract}.`);
+  }
+}
+if (!/^begin;/m.test(accountOwnedSyncMigration) || !/commit;\s*$/.test(accountOwnedSyncMigration)) {
+  errors.push('Account-owned sync migration must replace ownership keys transactionally.');
+}
+if (/delete\s+from\s+public\.(?:holdings|scan_sessions)/i.test(accountOwnedSyncMigration)) {
+  errors.push('Account-owned sync migration must retain every holding and scan session.');
 }
 
 const intelligenceMigration = await readFile(resolve(root, 'supabase/migrations/0002_price_intelligence_foundation.sql'), 'utf8');

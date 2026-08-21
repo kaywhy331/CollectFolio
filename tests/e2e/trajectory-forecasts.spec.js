@@ -7,7 +7,7 @@ const TCGCSV_ORIGIN = 'https://tcgcsv-e2e.example.test';
 async function skipOnboarding(page) {
   await page.goto('/');
   const onboarding = page.getByRole('heading', { name: 'Set up CollectFolio' });
-  const overview = page.getByRole('heading', { name: 'Overview', exact: true });
+  const overview = page.getByRole('heading', { name: 'Home', exact: true });
   await expect(onboarding.or(overview).first()).toBeVisible();
   if (await onboarding.isVisible()) {
     await page.getByRole('button', { name: /Skip setup and use recommended defaults/ }).click();
@@ -66,6 +66,8 @@ function manifestPayload() {
 function groupPayload(groupId) {
   if (groupId === 100) {
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -86,6 +88,8 @@ function groupPayload(groupId) {
   }
   if (groupId === 101) {
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -94,9 +98,11 @@ function groupPayload(groupId) {
         productId: 5002,
         subTypeName: 'Holofoil',
         confidence: 'cold-start',
-        lastKnownPrice: 80,
-        lastKnownDate: '2026-08-05',
-        medianPath: [{ date: '2026-08-05', price: 80 }],
+        // The publisher's cold-start contract has no observed-price anchor;
+        // its pure hedonic-prior path begins at the publication date.
+        lastKnownPrice: null,
+        lastKnownDate: null,
+        medianPath: [{ date: '2026-08-10', price: 80 }],
         horizons: {
           30: { q10: 50, q25: 65, q50: 85, q75: 105, q90: 130 },
           90: { q10: 40, q25: 60, q50: 95, q75: 130, q90: 170 }
@@ -110,6 +116,8 @@ function groupPayload(groupId) {
     // must render only the 3-month estimate and never fabricate a 30-day
     // one that was never published.
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -131,6 +139,8 @@ function groupPayload(groupId) {
     // Serve-all-cohorts mode: a low-history packet serves both horizons
     // with an explicit early-estimate label.
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -149,7 +159,7 @@ function groupPayload(groupId) {
       }]
     };
   }
-  return { asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] };
+  return { categoryId: 3, groupId, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] };
 }
 
 async function configureTrajectoryStubs(page) {
@@ -209,8 +219,8 @@ async function configureTrajectoryStubs(page) {
 }
 
 async function runSearch(page) {
-  await page.goto('/discover?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Card, set, number, character, or player').fill('Trajectory');
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Trajectory');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const eligibleCard = page.locator('.result-card', { hasText: 'Trajectory Eligible Card' });
   const coldStartCard = page.locator('.result-card', { hasText: 'Trajectory Cold Start Card' });
@@ -231,27 +241,26 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
 
   const { eligibleCard, coldStartCard, excludedCard } = await runSearch(page);
 
-  // State 1 -- published/standard: a modeled outlook with no cold-start
-  // labeling, presented as the normal published forecast.
+  // State 1 -- published/standard: the compact tile shows the modeled
+  // values without forecast disclaimer copy.
   await expect(eligibleCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(eligibleCard.getByText('Published outlook', { exact: true })).toBeVisible();
+  await expect(eligibleCard.getByText('1 mo est.', { exact: true })).toBeVisible();
+  await expect(eligibleCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  await expect(eligibleCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
   await expect(eligibleCard.getByText('cold start estimate')).toHaveCount(0);
 
-  // State 2 -- published/cold-start: explicitly labeled, never presented
-  // as a standard-confidence forecast.
-  await expect(coldStartCard.getByText(/cold start estimate/).first()).toBeVisible();
-  await expect(coldStartCard.locator('.result-outlook-note')).toContainText('Cold start estimate');
+  // State 2 -- published/cold-start: the tile remains concise; the richer
+  // confidence context is retained on the detail page below.
+  await expect(coldStartCard.locator('.result-market-outlook')).toBeVisible();
+  await expect(coldStartCard.locator('.result-outlook-note')).toHaveCount(0);
 
   // State 3 -- excluded (collapses with "unknown" per the fail-closed
-  // manifest map): no fabricated band, no local-scenario-v1 standing in.
-  // Uniform template (Kevin 2026-08-18): the outlook block still renders
-  // with the same 1 mo / 3 mo slots as every other card, but with explicit
-  // "—" placeholders instead of values.
-  await expect(excludedCard.getByText('No published outlook', { exact: true })).toBeVisible();
-  await expect(excludedCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(excludedCard.getByText('1 mo est.', { exact: true })).toBeVisible();
-  await expect(excludedCard.getByText('3 mo est.', { exact: true })).toBeVisible();
-  await expect(excludedCard.getByText('Not enough data yet').first()).toBeVisible();
+  // manifest map): the result card omits the outlook component entirely
+  // instead of drawing empty slots or allowing a local scenario to stand in.
+  await expect(excludedCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
+  await expect(excludedCard.locator('.result-market-outlook')).toHaveCount(0);
+  await expect(excludedCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  await expect(excludedCard.getByText('3 mo est.', { exact: true })).toHaveCount(0);
   await expect(excludedCard.locator('.result-market-outlook dd', { hasText: '$' })).toHaveCount(0);
 
   // Drill into the eligible card's detail view for the full trajectory
@@ -297,11 +306,12 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
 
   await expect(ninetyDayOnlyCard.locator('.result-market-outlook')).toBeVisible();
   await expect(ninetyDayOnlyCard.getByText('3 mo est.', { exact: true })).toBeVisible();
-  // Uniform template (Kevin 2026-08-18): the 1 mo slot still renders, but
-  // as an explicit placeholder -- never a fabricated 30-day value.
-  await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toBeVisible();
-  await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(1);
-  await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toBeVisible();
+  // Only a gate-passed horizon is rendered; a missing horizon does not
+  // reserve a chart/value slot that could be mistaken for an estimate.
+  await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.locator('.result-outlook-note')).toHaveCount(0);
 
   await ninetyDayOnlyCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
@@ -311,7 +321,7 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 });
 
-test('serve-all-cohorts (2026-08-18): a low-history packet renders labeled early estimates on card and detail', async ({ page }) => {
+test('serve-all-cohorts (2026-08-18): a low-history packet keeps cards concise and labels detail context', async ({ page }) => {
   await configureTrajectoryStubs(page);
   await skipOnboarding(page);
 
@@ -320,8 +330,8 @@ test('serve-all-cohorts (2026-08-18): a low-history packet renders labeled early
   await expect(earlyEstimateCard.locator('.result-market-outlook')).toBeVisible();
   await expect(earlyEstimateCard.getByText('1 mo est.', { exact: true })).toBeVisible();
   await expect(earlyEstimateCard.getByText('3 mo est.', { exact: true })).toBeVisible();
-  await expect(earlyEstimateCard.getByText(/early estimate/).first()).toBeVisible();
-  await expect(earlyEstimateCard.locator('.result-outlook-note')).toContainText('Early estimate');
+  await expect(earlyEstimateCard.getByText(/early estimate/).first()).toHaveCount(0);
+  await expect(earlyEstimateCard.locator('.result-outlook-note')).toHaveCount(0);
   await expect(earlyEstimateCard.getByText('cold start estimate')).toHaveCount(0);
 
   await earlyEstimateCard.click();

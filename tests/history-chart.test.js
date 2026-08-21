@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   downsampleHistoryPoints,
+  filterHistoryPointsByRange,
+  HISTORY_CHART_RANGES,
   historyLineChart,
   interpolateDailyPath,
   normalizeHistoryPoints,
@@ -47,6 +49,24 @@ test('downsampleHistoryPoints buckets down to at most targetBars, never drops a 
   assert.ok(bars.length > 0);
   // Last bucket's date is the most recent observed date.
   assert.equal(bars.at(-1).date, points.at(-1)[0]);
+});
+
+test('history ranges are explicit and filter relative to the latest observation', () => {
+  assert.deepEqual(HISTORY_CHART_RANGES, ['1M', '3M', '6M', '1Y', 'All']);
+  const points = [
+    ['2025-07-01', 10],
+    ['2026-01-01', 20],
+    ['2026-05-01', 30],
+    ['2026-07-15', 40],
+    ['2026-08-01', 50],
+    ['2026-08-20', 60]
+  ];
+  assert.deepEqual(filterHistoryPointsByRange(points, '1M').map((point) => point.date), ['2026-08-01', '2026-08-20']);
+  assert.deepEqual(filterHistoryPointsByRange(points, '3M').map((point) => point.date), ['2026-07-15', '2026-08-01', '2026-08-20']);
+  assert.equal(filterHistoryPointsByRange(points, '6M').length, 4);
+  assert.equal(filterHistoryPointsByRange(points, '1Y').length, 5);
+  assert.equal(filterHistoryPointsByRange(points, 'All').length, 6);
+  assert.equal(filterHistoryPointsByRange(points, 'invalid').length, 6);
 });
 
 test('selectServedForecastBars only returns horizons the packet actually carries, never fabricated', () => {
@@ -95,6 +115,39 @@ test('historyLineChart appends projection marks with whiskers only for served ho
   assert.match(html, /\+30d est\./);
   assert.match(html, /\+90d est\./);
   assert.match(html, /forecast-present/);
+  assert.match(html, /class="history-forecast-band"/);
+  assert.match(html, /Latest forecast/);
+});
+
+test('historyLineChart can hide the forecast without removing its observed history', () => {
+  const packet = {
+    confidence: 'standard',
+    horizons: {
+      30: { q10: 90, q50: 100, q90: 110 },
+      90: { q10: 80, q50: 120, q90: 160 }
+    }
+  };
+  const html = historyLineChart(weeklyPoints(10), packet, 'USD', { showForecast: false });
+  assert.match(html, /class="chart-line chart-market history-line"/);
+  assert.match(html, /data-forecast-visible="false"/);
+  assert.doesNotMatch(html, /history-forecast-line/);
+  assert.doesNotMatch(html, /history-forecast-band/);
+  assert.doesNotMatch(html, /history-bar-whisker/);
+  assert.doesNotMatch(html, /Latest forecast/);
+});
+
+test('historyLineChart applies the selected history range before plotting', () => {
+  const points = [
+    ['2025-08-01', 10],
+    ['2026-01-01', 20],
+    ['2026-07-01', 30],
+    ['2026-08-01', 40],
+    ['2026-08-20', 50]
+  ];
+  const html = historyLineChart(points, null, 'USD', { range: '1M' });
+  const coords = /polyline points="([^"]+)"/.exec(html)[1].split(' ');
+  assert.equal(coords.length, 2);
+  assert.match(html, /data-history-range="1M"/);
 });
 
 test('historyLineChart applies cold-start warning-tone styling consistent with the trajectory chart', () => {
@@ -165,7 +218,7 @@ test('interpolateDailyPath fills every calendar day between weekly checkpoints',
   assert.equal(daily[3].price, 103); // straight-line resampling, no invented levels
 });
 
-test('historyLineChart draws the rolling daily projection from the published median path', () => {
+test('historyLineChart draws the latest daily-interpolated projection from the published median path', () => {
   const packet = {
     confidence: 'standard',
     lastKnownDate: '2026-02-24',

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { forecastProjectionChart, trendChart } from '../app/assets/js/core/ui.js';
 
-test('portfolio chart renders currency scale, dates, series, and exact latest values', () => {
+test('collection chart renders a fitted currency scale, dates, series, and exact latest values', () => {
   const html = trendChart([
     { date: '2026-07-01', marketValue: 1000, costBasis: 800 },
     { date: '2026-07-15', marketValue: 1200, costBasis: 900 },
@@ -15,6 +15,14 @@ test('portfolio chart renders currency scale, dates, series, and exact latest va
   assert.match(html, /Latest market/);
   assert.match(html, /\$1,500\.00/);
   assert.match(html, /\$1,000\.00/);
+  assert.match(html, /data-chart-points=/);
+});
+
+test('collection chart requires two distinct valid observations', () => {
+  const html = trendChart([{ date: '2026-07-01', marketValue: 1000, costBasis: null }], 'USD');
+  assert.match(html, /Collection history starts here/);
+  assert.doesNotMatch(html, /<svg/);
+  assert.doesNotMatch(html, /chart-axis-label/);
 });
 
 test('forecast chart relates an approved observation to ordered horizon bands', () => {
@@ -29,6 +37,7 @@ test('forecast chart relates an approved observation to ordered horizon bands', 
   assert.match(html, /forecast-band-80/);
   assert.match(html, /90D modeled median/);
   assert.match(html, /\+15\.0%/);
+  assert.match(html, /data-chart-points=/);
 });
 
 test('forecast chart fails closed without an observation or with unordered ranges', () => {
@@ -44,9 +53,17 @@ test('forecast chart has an honestly labeled local-scenario mode', () => {
     history: [{ price: 95, observedAt: '2026-07-01T00:00:00.000Z' }],
     asOfDate: '2026-08-01T00:00:00.000Z'
   });
-  assert.match(html, /Local scenario projection/);
+  assert.match(html, /Your scenario projection/);
   assert.match(html, /Saved value now/);
   assert.match(html, /30D modeled scenario median/);
   assert.match(html, /Local value checks/);
   assert.doesNotMatch(html, /Approved forecast projection/);
+});
+
+test('neutral local scenarios use words instead of a misleading positive zero return', () => {
+  const html = forecastProjectionChart(100, [
+    { horizon: 30, q10: 90, q25: 95, q50: 100, q75: 105, q90: 110 }
+  ], 'USD', { mode: 'local-scenario' });
+  assert.match(html, /Unchanged scenario/);
+  assert.doesNotMatch(html, /\+0\.0%/);
 });
