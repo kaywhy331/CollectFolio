@@ -282,6 +282,53 @@ test('foundation shell stays truthful and keyboard-operable across breakpoints',
   }
 });
 
+test('a blocked local database upgrade explains recovery instead of loading forever', async ({ context, page }) => {
+  const fixturePath = '/__collectfolio-blocked-upgrade-fixture__.html';
+  await page.route(`**${fixturePath}`, (route) => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><title>CollectFolio blocked upgrade fixture</title>'
+  }));
+  await page.goto(fixturePath);
+  await page.unroute(`**${fixturePath}`);
+  await page.evaluate(async () => {
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('collectfolio');
+      request.addEventListener('success', resolve, { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    globalThis.blockingCollectFolioDatabase = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('collectfolio', 5);
+      request.addEventListener('upgradeneeded', () => {
+        request.result.createObjectStore('holdings', { keyPath: 'id' });
+      }, { once: true });
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+  });
+
+  const appPage = await context.newPage();
+  await appPage.goto('/');
+  await expect(appPage.getByRole('heading', { name: 'Local collection needs attention' })).toBeVisible();
+  await expect(appPage.locator('#main-content').getByText(/Close every other CollectFolio tab or installed app window/)).toBeVisible();
+  await expect(appPage.getByText('Opening your local collection…')).toHaveCount(0);
+
+  await page.evaluate(() => globalThis.blockingCollectFolioDatabase.close());
+  await appPage.getByRole('button', { name: 'Try again' }).click();
+  await dismissOnboarding(appPage, 'Home');
+
+  const nextVersion = await page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('collectfolio', 7);
+    request.addEventListener('success', () => {
+      const version = request.result.version;
+      request.result.close();
+      resolve(version);
+    }, { once: true });
+    request.addEventListener('error', () => reject(request.error), { once: true });
+    request.addEventListener('blocked', () => reject(new Error('The current app did not release its database connection.')), { once: true });
+  }));
+  expect(nextVersion).toBe(7);
+});
+
 test('routes restore filters and Quick Inspector preserves context, focus, and full detail', async ({ page }) => {
   // catalog-v2 B3: the 'Market source' filter's secondary-provider options
   // (scryfall included) were removed -- only 'all' and 'tcgcsv' remain.

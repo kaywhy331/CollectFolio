@@ -195,7 +195,9 @@ function render(state = getState()) {
     && !state.settings.onboardingComplete
     && !state.settings.onboardingSkipped
     && !['add', 'scan'].includes(state.activeView);
-  if (!state.ready) renderRoot('<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local collection…</p></section>');
+  if (!state.ready) renderRoot(state.localOpenError
+    ? `<section class="empty-state" role="alert"><h1>Local collection needs attention</h1><p>${escapeHTML(state.localOpenError)}</p><button class="button" type="button" data-action="retry-local-open">Try again</button></section>`
+    : '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local collection…</p></section>');
   else if (onboardingVisible) renderRoot(renderOnboarding(state));
   else if (inspectorOpen) {
     const underlay = activeDetail.origin === 'search' ? renderSearch(state) : activeDetail.origin === 'insights' ? renderInsights(state) : renderPortfolio(state);
@@ -1950,6 +1952,10 @@ root.addEventListener('click', async (event) => {
   }
   const action = event.target.closest('[data-action]');
   if (!action) return;
+  if (action.dataset.action === 'retry-local-open') {
+    location.reload();
+    return;
+  }
   if (action.dataset.action === 'retry-image') {
     event.preventDefault();
     event.stopPropagation();
@@ -2662,8 +2668,9 @@ loadLocal().then(() => {
     activeRoute.key === 'discover' ? hydrateCatalogGames() : Promise.resolve()
   ]);
 }).then(loadFeatureFlags).then(hydrateIntelligence).catch((error) => {
-  setState({ ready: true });
-  showToast(error.message || 'Could not open local collection', 'error', 8000);
+  const message = error.message || 'Could not open local collection';
+  if (!getState().ready) setState({ localOpenError: message });
+  showToast(message, 'error', 8000);
 });
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
