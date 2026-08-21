@@ -78,6 +78,7 @@ const required = [
   'cloudflare/tcgcsv-refresh/wrangler.jsonc',
   'cloudflare/tcgcsv-refresh/worker-configuration.d.ts',
   'scripts/tcgcsv-r2-refresh-client.mjs',
+  '.github/workflows/netlify-deploy.yml',
   '.github/workflows/analytics-check.yml',
   '.github/workflows/price-intelligence-research.yml',
   '.github/workflows/tcgcsv-market-universe.yml',
@@ -456,8 +457,10 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
+const netlifyDeployWorkflow = await readFile(resolve(root, '.github/workflows/netlify-deploy.yml'), 'utf8');
 if (!runtimeConfig.includes("APP_VERSION: '0.8.27-dev'")) errors.push('Local runtime config must identify the 0.8.27 development build.');
 if (!buildScript.includes("process.env.APP_VERSION || '0.8.27'")) errors.push('Production builds must default APP_VERSION to 0.8.27.');
+if (!/^\s+APP_VERSION: 0\.8\.27$/m.test(netlifyDeployWorkflow)) errors.push('Netlify production deploys must bake APP_VERSION 0.8.27.');
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
 }
