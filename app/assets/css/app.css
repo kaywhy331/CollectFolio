@@ -439,6 +439,14 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .cost-dot { background: var(--blue); }
 .chart-latest { display: flex; flex-wrap: wrap; gap: .45rem 1rem; color: var(--muted); font-size: .76rem; }
 .chart-latest strong { color: var(--text); }
+/* SVG text inherits the fixed 760-unit chart viewBox. Counter-scale its axis
+   labels at compact widths so their rendered size remains readable. */
+@media (max-width: 767px) {
+  .collection-trend-chart .chart-axis-label { font-size: clamp(12px, calc(39.5px - 3.6vw), 28px); }
+}
+@media (min-width: 768px) and (max-width: 1199px) {
+  .collection-trend-chart .chart-axis-label { font-size: 14px; }
+}
 .projection-chart { display: grid; gap: .8rem; margin: 1rem 0; }
 .forecast-band { stroke: none; }
 .forecast-band-80 { fill: color-mix(in srgb, var(--blue) 11%, transparent); }

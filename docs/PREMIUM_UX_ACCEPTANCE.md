@@ -22,6 +22,30 @@ The implementation passes the premium acceptance layer:
 
 The Chrome DevTools audit found a development-server ES-module waterfall rather than a CSS bottleneck. Adding an early `modulepreload` for the application graph reduced its measured maximum critical request path from 2,011 ms to 276 ms. The raw HTTP/1.1 development trace has no CrUX field data and is not used as the production percentile; the repeatable release fixture remains the lab performance gate.
 
+## Post-deploy visual follow-up — 2026-08-21
+
+A populated migration fixture was audited against the live `0.8.28` application at
+1440 × 900 and 390 × 844 across Home, Discover, Scan, Collection, and Insights.
+The ten representative captures produced no browser errors and did not reveal a P0
+workflow, hierarchy, overflow, or action-reachability defect.
+
+The audit did expose one narrow-screen readability gap in the collection-value
+chart: its fixed desktop SVG viewBox scaled 11-unit axis labels to approximately
+4–5 CSS pixels on a phone. The next-release change gives that chart a scoped mobile
+axis treatment and sufficient plot margin. A 320 × 720 browser regression now
+measures the rendered label boxes, requires readable height, and proves that every
+label stays inside the chart. The audited post-fix fixture renders those labels at
+13 CSS pixels at 320 px.
+
+An apparent clipped global header in whole-viewport Chromium screenshots was
+investigated and rejected as a capture artifact: live DOM geometry, overflow, and
+route-by-route element screenshots all show the complete header within the viewport.
+
+The remaining follow-ups still require evidence that repository automation cannot
+manufacture: a moderated external collector study, physical-device review, manual
+screen-reader review, and consented production field metrics. None is represented
+as complete by this receipt.
+
 ## Required usability-task simulations
 
 | # | Task | Acceptance evidence | Result |
