@@ -4,7 +4,7 @@ import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { CURRENCIES, DEFAULT_LANGUAGES } from '../core/settings.js';
 import { RAW_MARKET_CONDITIONS } from '../core/market-series.js';
 import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from '../core/utils.js';
-import { normalizeAcquisition, scanReviewSummary, scanReviewTotals, selectedCropItem } from '../services/scan-review.js';
+import { cropHasApprovableIdentity, normalizeAcquisition, scanReviewSummary, scanReviewTotals, selectedCropItem } from '../services/scan-review.js';
 import { findWatchedItem } from '../services/watchlist.js';
 
 const CONDITIONS = ['Mint', 'Near Mint', 'Excellent', 'Good', 'Played', 'Poor', 'Graded'];
@@ -60,6 +60,7 @@ function matchStatus(crop, selected) {
   if (!selected && ['queued', 'identifying'].includes(crop.status)) return ['possible', crop.status === 'queued' ? 'Queued' : 'Identifying'];
   if (!selected) return ['unmatched', 'Unmatched'];
   if (crop.customItem) return ['possible', 'Custom identity'];
+  if (cropHasApprovableIdentity(crop)) return ['exact', 'Exact source identity'];
   const bucket = matchBucketFor(selected);
   return [bucket, bucket === 'exact' ? 'Exact source identity' : bucket === 'likely' ? 'Likely match' : 'Possible match'];
 }
@@ -68,9 +69,14 @@ function selectedMatch(crop, selected, state) {
   if (!selected) return '';
   const watching = Boolean(findWatchedItem(state.watchlistItems, selected));
   const [bucket, label] = matchStatus(crop, selected);
+  const approvable = cropHasApprovableIdentity(crop);
+  const approved = crop.approved && approvable;
+  const helpId = `exact-match-help-${crop.id}`;
+  const confirmationLabel = crop.customItem ? 'Confirm custom item' : approvable ? 'Confirm exact item' : 'Exact catalog match required';
   return `<section class="selected-match">
     <div><p class="eyebrow">Proposed match</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>
-    <div class="button-row"><button class="button ${crop.approved ? 'secondary' : ''}" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="${crop.approved}">${crop.approved ? 'Confirmed · remove confirmation' : 'Confirm exact item'}</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
+    <div class="button-row"><button class="button ${approved ? 'secondary' : ''}" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="${approved}" ${approvable ? '' : `disabled aria-describedby="${escapeAttribute(helpId)}"`}>${approved ? 'Confirmed · remove confirmation' : confirmationLabel}</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
+    ${approvable ? '' : `<p id="${escapeAttribute(helpId)}" class="fine-print">Choose a catalog-linked exact identity or create a custom item. Similarity alone is never approval.</p>`}
   </section>`;
 }
 
@@ -79,7 +85,7 @@ function candidateList(crop) {
   return `<details class="candidate-disclosure" ${crop.selectedId ? '' : 'open'}><summary>Choose or replace match <span>${crop.candidates.length} candidates</span></summary><div class="candidate-list">${crop.candidates.slice(0, 9).map((candidate) => {
     const price = catalogPriceForValuation(candidate);
     const similarity = candidate.matchScore >= 0.72 ? 'Strong similarity' : candidate.matchScore >= 0.45 ? 'Moderate similarity' : 'Possible candidate';
-    return `<button class="candidate ${candidate.id === crop.selectedId ? 'selected' : ''}" type="button" data-action="select-candidate" data-id="${escapeAttribute(crop.id)}" data-candidate="${escapeAttribute(candidate.id)}">${externalImage(candidate, 'candidate-image', { loading: 'eager' })}<strong>${escapeHTML(candidate.name)}</strong><span>${escapeHTML([candidate.setName, candidate.number, candidate.variant].filter(Boolean).join(' · '))}</span><span>${price === null ? 'Current value unavailable' : escapeHTML(formatCurrency(price, candidate.currency || 'USD'))} · ${similarity}</span></button>`;
+    return `<button class="candidate ${candidate.id === crop.selectedId ? 'selected' : ''}" type="button" data-action="select-candidate" data-id="${escapeAttribute(crop.id)}" data-candidate="${escapeAttribute(candidate.id)}">${externalImage(candidate, 'candidate-image', { loading: 'lazy' })}<strong>${escapeHTML(candidate.name)}</strong><span>${escapeHTML([candidate.setName, candidate.number, candidate.variant].filter(Boolean).join(' · '))}</span><span>${price === null ? 'Current value unavailable' : escapeHTML(formatCurrency(price, candidate.currency || 'USD'))} · ${similarity}${candidate.tcgcsvMappingStatus === 'mapped' ? ' · TCGCSV linked' : ''}</span></button>`;
   }).join('')}</div></details>`;
 }
 
@@ -126,12 +132,14 @@ export function renderScanReview(draft, state = {}) {
   const summary = scanReviewSummary(draft);
   const currency = state.settings?.currency || 'USD';
   const totals = scanReviewTotals(draft, currency);
-  return `${pageHeader('Collection intake', `Review ${draft.crops.length} detected item${draft.crops.length === 1 ? '' : 's'}`, 'Resolve each identity, add shared purchase details, then explicitly approve only the items you want.', '<button class="button secondary small" type="button" data-action="save-scan">Save draft</button>')}
+  const sourceAvailable = Boolean(state.scanSourceAvailable);
+  const headerActions = `<div class="button-row"><button class="button secondary small" type="button" data-action="save-scan">Save draft</button><button class="button danger small" type="button" data-action="discard-scan" data-draft-id="${escapeAttribute(draft.id)}">Discard draft</button></div>`;
+  return `${pageHeader('Collection intake', `Review ${draft.crops.length} detected item${draft.crops.length === 1 ? '' : 's'}`, 'Resolve each identity, add shared purchase details, then explicitly approve only the items you want.', headerActions)}
     <nav class="intake-steps" aria-label="Intake progress"><span class="complete">1 · Scan or upload</span><span aria-current="step">2 · Review detected items</span><span>3 · Confirm and add</span></nav>
     ${queueSummary(summary)}
     ${draft.submissionError ? `<p class="inline-warning" role="status">${escapeHTML(draft.submissionError)}</p>` : ''}
-    <section class="scan-source-privacy"><div><span aria-hidden="true">◇</span><p><strong>${draft.sourceImage ? 'Full source photo saved on this device during review.' : 'Full source photo is no longer retained.'}</strong> Crops and decisions stay in local browser storage. Text recognition and image comparison run locally; only text queries and catalog identifiers may reach enabled catalog sources. No photo is uploaded.</p></div>${draft.sourceImage ? '<button class="button ghost small" type="button" data-action="delete-source-photo">Delete full source photo</button>' : ''}</section>
+    <section class="scan-source-privacy"><div><span aria-hidden="true">◇</span><p><strong>${sourceAvailable ? 'A bounded source working copy is held only in memory for this open review.' : 'The full source photo is not stored with this draft.'}</strong> Crops and decisions stay in local browser storage. Text recognition and image comparison run locally; only text queries and catalog identifiers may reach enabled catalog sources. No photo is uploaded.</p></div>${sourceAvailable ? '<button class="button ghost small" type="button" data-action="release-source-photo">Release source copy now</button>' : ''}</section>
     ${bulkAcquisition(draft)}
-    <div class="review-list">${draft.crops.map((crop, index) => cropCard(crop, index, state, Boolean(draft.sourceImage))).join('')}</div>
+    <div class="review-list">${draft.crops.map((crop, index) => cropCard(crop, index, state, sourceAvailable)).join('')}</div>
     ${confirmationBar(draft, summary, totals, currency)}`;
 }

@@ -18,7 +18,7 @@
 // hydration -- provider APIs get one request per opened detail view, not
 // one per list row (API etiquette, PRD B2 "APP" note).
 import { getRecord, putRecord } from '../core/db.js';
-import { requestTCGCSVCatalog } from './providers/tcgcsv.js';
+import { getTCGCSVProduct, requestTCGCSVCatalog, tcgcsvGameId } from './providers/tcgcsv.js';
 import { getPokemonCard } from './providers/pokemon.js';
 import { getScryfallCard } from './providers/scryfall.js';
 import { getYGOCard } from './providers/ygoprodeck.js';
@@ -33,6 +33,12 @@ const PROVIDER_CARD_FETCHERS = Object.freeze({
   pokemon: getPokemonCard,
   scryfall: getScryfallCard,
   ygoprodeck: getYGOCard
+});
+
+const BRIDGE_CATEGORY_IDS = Object.freeze({
+  scryfall: Object.freeze([1]),
+  ygoprodeck: Object.freeze([2]),
+  pokemon: Object.freeze([3, 85])
 });
 
 function bridgeCacheKey(categoryId) {
@@ -75,6 +81,100 @@ export async function fetchBridgeTable(categoryId, { session, fetchImpl, bypassC
 export function bridgeProductMatch(bridgeTable, groupId, productId) {
   if (!bridgeTable || !Array.isArray(bridgeTable.products)) return null;
   return bridgeTable.products.find((row) => Number(row.groupId) === Number(groupId) && Number(row.productId) === Number(productId)) || null;
+}
+
+export function bridgeProviderMatches(bridgeTable, provider, externalId) {
+  if (!bridgeTable || bridgeTable.provider !== provider || !Array.isArray(bridgeTable.products) || !externalId) return [];
+  return bridgeTable.products.filter((row) => String(row.providerCardId || '') === String(externalId));
+}
+
+function uniqueBridgeIdentity(categoryId, row) {
+  const groupId = Number(row?.groupId);
+  const productId = Number(row?.productId);
+  if (![categoryId, groupId, productId].every((value) => Number.isSafeInteger(value) && value > 0)) return null;
+  return { categoryId, groupId, productId, externalId: `${categoryId}:${groupId}:${productId}` };
+}
+
+// Reverse the approved bridge for image-only provider candidates. The bridge,
+// rather than image similarity, supplies the exact TCGCSV identity. Ambiguous
+// or unpublished mappings remain provider candidates and therefore cannot be
+// approved as exact by the intake service.
+export async function mapProviderCandidatesToTCGCSV(candidates = [], opts = {}) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  const fetchTable = opts.fetchTable || fetchBridgeTable;
+  const fetchOpts = { ...opts };
+  delete fetchOpts.fetchTable;
+  const providers = [...new Set(rows.map((item) => String(item?.provider || '')).filter((provider) => BRIDGE_CATEGORY_IDS[provider]))];
+  const tables = new Map();
+  await Promise.all(providers.flatMap((provider) => BRIDGE_CATEGORY_IDS[provider].map(async (categoryId) => {
+    const table = await fetchTable(categoryId, fetchOpts);
+    if (table?.provider === provider) tables.set(`${provider}:${categoryId}`, table);
+  })));
+
+  return rows.map((item) => {
+    const provider = String(item?.provider || '');
+    const identities = (BRIDGE_CATEGORY_IDS[provider] || []).flatMap((categoryId) =>
+      bridgeProviderMatches(tables.get(`${provider}:${categoryId}`), provider, item.externalId)
+        .map((row) => ({ identity: uniqueBridgeIdentity(categoryId, row), row }))
+        .filter((entry) => entry.identity));
+    const unique = [...new Map(identities.map((entry) => [entry.identity.externalId, entry])).values()];
+    if (unique.length !== 1) {
+      return { ...item, matchBucket: 'likely', tcgcsvMappingStatus: unique.length ? 'ambiguous' : 'unmapped' };
+    }
+    const { identity, row } = unique[0];
+    const visualSource = {
+      provider,
+      externalId: String(item.externalId || ''),
+      matchMethod: String(row.matchMethod || ''),
+      image: String(item.image || ''),
+      imageSmall: String(item.imageSmall || '')
+    };
+    return {
+      ...item,
+      id: `tcgcsv:${identity.externalId}`,
+      externalId: identity.externalId,
+      provider: 'tcgcsv',
+      category: tcgcsvGameId(identity.categoryId),
+      categoryId: identity.categoryId,
+      groupId: identity.groupId,
+      productId: identity.productId,
+      matchBucket: 'exact',
+      tcgcsvMappingStatus: 'mapped',
+      visualSource,
+      enrichment: { ...visualSource, name: item.name || '', rarity: item.rarity || '' }
+    };
+  });
+}
+
+// Fetch the complete TCGCSV record only for the candidate the collector
+// selects. This retains lazy catalog behavior while ensuring the saved holding
+// carries TCGCSV prices, attributes, and trajectory keys.
+export async function hydrateMappedVisualCandidate(candidate = {}, opts = {}) {
+  if (candidate.provider !== 'tcgcsv' || candidate.tcgcsvMappingStatus !== 'mapped') return candidate;
+  const getProduct = opts.getProduct || getTCGCSVProduct;
+  const requestOpts = { ...opts };
+  delete requestOpts.getProduct;
+  try {
+    const product = await getProduct(candidate.externalId, requestOpts);
+    if (!product) return candidate;
+    const source = candidate.visualSource || {};
+    return {
+      ...candidate,
+      ...product,
+      image: source.image || product.image,
+      imageSmall: source.imageSmall || source.image || product.imageSmall,
+      matchBucket: 'exact',
+      matchScore: candidate.matchScore,
+      visualScore: candidate.visualScore,
+      tcgcsvMappingStatus: 'mapped',
+      visualSource: source,
+      enrichment: candidate.enrichment || null
+    };
+  } catch {
+    // The approved bridge already supplies exact identity. A transient detail
+    // request must not replace it with a guessed or legacy identity.
+    return candidate;
+  }
 }
 
 export async function fetchProviderCard(provider, externalId, opts = {}) {

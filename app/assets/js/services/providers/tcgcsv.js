@@ -436,12 +436,13 @@ export async function searchTCGCSV(query, { category = 'all', session, fetchImpl
     .slice(0, MAX_SEARCH_RESULTS);
 }
 
-export async function getTCGCSVProduct(externalId) {
+export async function getTCGCSVProduct(externalId, opts = {}) {
   const match = /^(\d+):(\d+):(\d+)$/.exec(String(externalId || ''));
   if (!match) throw new Error('This catalog product identifier is invalid.');
   const [categoryId, groupId, productId] = match.slice(1).map(Number);
   const payload = await requestTCGCSVCatalog(
-    `/catalog/products/${categoryId}/${groupId}/${productId}`
+    `/catalog/products/${categoryId}/${groupId}/${productId}`,
+    opts
   );
   return normalizeTCGCSVProduct(payload.product, {
     category: payload.category,

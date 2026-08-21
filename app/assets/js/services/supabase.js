@@ -1,12 +1,13 @@
 import { dataUrlBytes } from '../core/utils.js';
 import { isUUID } from '../core/catalog-identity.js';
 import { portfolioSnapshotId } from '../core/calculations.js';
-import { deleteRecord, getAll, putRecord, recordDailySnapshot, recordLocalHoldingObservations } from '../core/db.js';
+import { claimSettingValue, deleteRecord, getAll, putRecord, recordDailySnapshot, recordLocalHoldingObservations } from '../core/db.js';
 import { isSupportedPricingPolicyVersion } from '../core/pricing-policy.js';
 import { mergeWatchlistItems, mergeWatchlistTombstones } from './watchlist.js';
 
 const SESSION_KEY = 'collectfolio:supabase-session';
 const INLINE_IMAGE_LIMIT = 180 * 1024;
+const SYNC_CONTEXT_MARKER = Symbol('account-bound-sync-context');
 export const SUPABASE_REQUEST_TIMEOUT_MS = 12_000;
 export const SYNC_PAGE_SIZE = 500;
 export const SYNC_WRITE_BATCH_SIZE = 20;
@@ -354,14 +355,14 @@ function holdingRow(holding, userId) {
 }
 
 export async function syncPortfolioSnapshots(session, userId) {
+  const encodedUserId = encodeURIComponent(userId);
   await recordDailySnapshot();
   const [localSnapshots, remoteRows] = await Promise.all([
     getAll('snapshots'),
-    requestAllPages('/rest/v1/portfolio_snapshots?select=id,data,snapshot_date,updated_at&order=id.asc', { session })
+    requestAllPages(`/rest/v1/portfolio_snapshots?user_id=eq.${encodedUserId}&select=user_id,id,data,snapshot_date,updated_at&order=id.asc`, { session })
   ]);
-  const remoteSnapshots = Array.isArray(remoteRows)
-    ? remoteRows.map(remotePortfolioSnapshot).filter(Boolean)
-    : [];
+  const remoteSnapshots = accountOwnedRows(remoteRows, userId, 'portfolio snapshots')
+    .map(remotePortfolioSnapshot).filter(Boolean);
   const merged = mergePortfolioSnapshots(localSnapshots, remoteSnapshots);
   for (const snapshot of merged) await putRecord('snapshots', snapshot);
   if (merged.length) {
@@ -425,13 +426,15 @@ function missingWatchlistMarketCondition(error) {
 
 export async function requestWatchlistItems(encodedWatchlistId, {
   session,
+  userId = '',
   requester = requestAllPages
 } = {}) {
-  const base = `/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&select=`;
-  const common = 'watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc';
+  const ownerFilter = userId ? `user_id=eq.${encodeURIComponent(userId)}&` : '';
+  const base = `/rest/v1/watchlist_items?${ownerFilter}watchlist_id=eq.${encodedWatchlistId}&select=`;
+  const common = 'user_id,watch_key,catalog_variant_id,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc';
   try {
     return {
-      rows: await requester(`${base}watch_key,catalog_variant_id,market_condition,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc`, { session }),
+      rows: await requester(`${base}user_id,watch_key,catalog_variant_id,market_condition,catalog_snapshot,target_price,alert_percent_change,alert_trend_change,alert_range_change,alert_forecast_change,notes,created_at,updated_at&order=watch_key.asc`, { session }),
       supportsMarketCondition: true
     };
   } catch (error) {
@@ -446,21 +449,81 @@ export async function requestWatchlistItems(encodedWatchlistId, {
 function jwtSubject(token) {
   const segment = token?.split('.')[1];
   if (!segment) throw new Error('Your cloud session is invalid. Sign in again.');
-  const normalized = segment.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-  return JSON.parse(atob(padded)).sub;
+  try {
+    const normalized = segment.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    return JSON.parse(atob(padded)).sub;
+  } catch {
+    throw new Error('Your cloud session is invalid. Sign in again.');
+  }
 }
 
-export async function syncPortfolio() {
-  const session = await validSession();
-  const userId = session.user?.id || jwtSubject(session.access_token);
+export function sessionUserId(session) {
+  const tokenUserId = String(jwtSubject(session?.access_token) || '').toLowerCase();
+  const claimedUserId = String(session?.user?.id || '').toLowerCase();
+  if (!isUUID(tokenUserId) || (claimedUserId && claimedUserId !== tokenUserId)) {
+    throw new Error('Your cloud session does not match its signed-in account. Sign in again.');
+  }
+  return tokenUserId;
+}
+
+export async function accountBoundSyncContext(session = null, {
+  claimOwner = (userId) => claimSettingValue('syncOwnerId', userId)
+} = {}) {
+  const activeSession = session || await validSession();
+  const userId = sessionUserId(activeSession);
+  const ownerId = String(await claimOwner(userId) || '').toLowerCase();
+  if (ownerId !== userId) {
+    const error = new Error('This device’s cloud synchronization is linked to a different account. Sign back into that account, or export a backup and clear this device before connecting another account.');
+    error.code = 'SYNC_ACCOUNT_MISMATCH';
+    throw error;
+  }
+  return Object.freeze({ session: activeSession, userId, [SYNC_CONTEXT_MARKER]: true });
+}
+
+export function accountOwnedRows(rows, userId, label = 'data') {
+  const source = Array.isArray(rows) ? rows : [];
+  if (source.some((row) => row?.user_id !== userId)) {
+    throw new Error(`Cloud ${label} returned a row outside the signed-in account.`);
+  }
+  return source;
+}
+
+async function resolveSyncContext(context) {
+  if (!context) return accountBoundSyncContext();
+  if (!context[SYNC_CONTEXT_MARKER]) return accountBoundSyncContext(context.session || context);
+  if (context.userId !== sessionUserId(context.session)) {
+    throw new Error('Cloud synchronization changed accounts before it could start.');
+  }
+  return context;
+}
+
+export async function upsertHoldingRows(rows, session, { upsert = upsertInBatches } = {}) {
+  try {
+    await upsert('/rest/v1/holdings?on_conflict=user_id,id', rows, {
+      session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
+    });
+  } catch (error) {
+    // Compatibility for a hosted database awaiting migration 0021. The old
+    // global key can only fail on a cross-owner collision because RLS still
+    // forbids updating that row; it can never overwrite another account.
+    if (error?.code !== '42P10') throw error;
+    await upsert('/rest/v1/holdings?on_conflict=id', rows, {
+      session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
+    });
+  }
+}
+
+export async function syncPortfolio(syncContext = null) {
+  const { session, userId } = await resolveSyncContext(syncContext);
+  const encodedUserId = encodeURIComponent(userId);
   const [localHoldings, localTombstones, remoteHoldingRows, remoteTombstoneRows] = await Promise.all([
     getAll('holdings'), getAll('deletions'),
-    requestAllPages('/rest/v1/holdings?select=id,data,user_image,updated_at&order=id.asc', { session }),
-    requestAllPages('/rest/v1/holding_deletions?select=holding_id,deleted_at&order=holding_id.asc', { session })
+    requestAllPages(`/rest/v1/holdings?user_id=eq.${encodedUserId}&select=user_id,id,data,user_image,updated_at&order=id.asc`, { session }),
+    requestAllPages(`/rest/v1/holding_deletions?user_id=eq.${encodedUserId}&select=user_id,holding_id,deleted_at&order=holding_id.asc`, { session })
   ]);
-  const remoteHoldings = (remoteHoldingRows || []).map(remoteHolding);
-  const remoteTombstones = (remoteTombstoneRows || []).map((row) => ({ id: row.holding_id, deletedAt: row.deleted_at, dirty: false }));
+  const remoteHoldings = accountOwnedRows(remoteHoldingRows, userId, 'holdings').map(remoteHolding);
+  const remoteTombstones = accountOwnedRows(remoteTombstoneRows, userId, 'holding deletions').map((row) => ({ id: row.holding_id, deletedAt: row.deleted_at, dirty: false }));
   const tombstones = mergeTombstones(localTombstones, remoteTombstones);
 
   if (tombstones.length) {
@@ -473,7 +536,7 @@ export async function syncPortfolio() {
   const deletedIds = new Set(tombstones.map((entry) => entry.id));
   for (const id of deletedIds) await deleteRecord('holdings', id);
   await forEachInBatches([...deletedIds], (id) =>
-    request(`/rest/v1/holdings?id=eq.${encodeURIComponent(id)}`, {
+    request(`/rest/v1/holdings?user_id=eq.${encodedUserId}&id=eq.${encodeURIComponent(id)}`, {
       method: 'DELETE', session, headers: { Prefer: 'return=minimal' }
     }));
 
@@ -483,18 +546,17 @@ export async function syncPortfolio() {
   // Capture their reconciled current values locally after LWW resolution.
   await recordLocalHoldingObservations(merged);
   if (merged.length) {
-    await upsertInBatches('/rest/v1/holdings?on_conflict=id', merged.map((holding) => holdingRow(holding, userId)), {
-      session, headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }
-    });
+    const rows = merged.map((holding) => holdingRow(holding, userId));
+    await upsertHoldingRows(rows, session);
   }
   for (const tombstone of tombstones) await putRecord('deletions', { ...tombstone, dirty: false });
   const snapshots = await syncPortfolioSnapshots(session, userId);
   return { holdings: merged.length, deletions: tombstones.length, snapshots, omittedImages: merged.filter((holding) => holding.userImage && dataUrlBytes(holding.userImage) > INLINE_IMAGE_LIMIT).length };
 }
 
-export async function syncWatchlist() {
-  const session = await validSession();
-  const userId = session.user?.id || jwtSubject(session.access_token);
+export async function syncWatchlist(syncContext = null) {
+  const { session, userId } = await resolveSyncContext(syncContext);
+  const encodedUserId = encodeURIComponent(userId);
   const watchlistId = await request('/rest/v1/rpc/get_or_create_default_watchlist', {
     method: 'POST', session, body: {}
   });
@@ -504,12 +566,12 @@ export async function syncWatchlist() {
   const [localItems, localTombstones, remoteResult, remoteDeletionRows] = await Promise.all([
     getAll('watchlistItems'),
     getAll('watchlistDeletions'),
-    requestWatchlistItems(encodedWatchlistId, { session }),
-    requestAllPages(`/rest/v1/watchlist_deletions?watchlist_id=eq.${encodedWatchlistId}&select=watch_key,deleted_at&order=watch_key.asc`, { session })
+    requestWatchlistItems(encodedWatchlistId, { session, userId }),
+    requestAllPages(`/rest/v1/watchlist_deletions?user_id=eq.${encodedUserId}&watchlist_id=eq.${encodedWatchlistId}&select=user_id,watch_key,deleted_at&order=watch_key.asc`, { session })
   ]);
 
-  const remoteItems = (remoteResult.rows || []).map(remoteWatchlistItem);
-  const remoteTombstones = (remoteDeletionRows || []).map((row) => ({
+  const remoteItems = accountOwnedRows(remoteResult.rows, userId, 'Watchlist items').map(remoteWatchlistItem);
+  const remoteTombstones = accountOwnedRows(remoteDeletionRows, userId, 'Watchlist deletions').map((row) => ({
     id: row.watch_key, deletedAt: row.deleted_at, dirty: false
   }));
   const tombstones = mergeWatchlistTombstones(localTombstones, remoteTombstones);
@@ -531,7 +593,7 @@ export async function syncWatchlist() {
   const deletedKeys = new Set(tombstones.map((entry) => entry.id));
   for (const watchKey of deletedKeys) await deleteRecord('watchlistItems', watchKey);
   await forEachInBatches([...deletedKeys], (watchKey) =>
-    request(`/rest/v1/watchlist_items?watchlist_id=eq.${encodedWatchlistId}&watch_key=eq.${encodeURIComponent(watchKey)}`, {
+    request(`/rest/v1/watchlist_items?user_id=eq.${encodedUserId}&watchlist_id=eq.${encodedWatchlistId}&watch_key=eq.${encodeURIComponent(watchKey)}`, {
       method: 'DELETE', session, headers: { Prefer: 'return=minimal' }
     }));
 
@@ -555,7 +617,7 @@ export async function syncWatchlist() {
  * 0007). Callers treat failure as retryable, never blocking. */
 export async function pushDemandAnalyticsOptOut(optedOut) {
   const session = await validSession();
-  const userId = session.user?.id || jwtSubject(session.access_token);
+  const userId = sessionUserId(session);
   await request(`/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`, {
     method: 'PATCH',
     session,
@@ -578,12 +640,13 @@ export async function fetchDemandAnalyticsOptOut() {
   }
 }
 
-export async function syncAll() {
-  const portfolio = await syncPortfolio();
+export async function syncAll(syncContext = null) {
+  const context = await resolveSyncContext(syncContext);
+  const portfolio = await syncPortfolio(context);
   try {
-    return { ...portfolio, watchlist: await syncWatchlist(), watchlistError: '' };
+    return { ...portfolio, userId: context.userId, watchlist: await syncWatchlist(context), watchlistError: '' };
   } catch (error) {
-    return { ...portfolio, watchlist: null, watchlistError: error.message || 'Watchlist sync is not available.' };
+    return { ...portfolio, userId: context.userId, watchlist: null, watchlistError: error.message || 'Watchlist sync is not available.' };
   }
 }
 

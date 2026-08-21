@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyEnrichmentToItem,
+  bridgeProviderMatches,
   bridgeProductMatch,
   fetchBridgeTable,
   fetchProviderCard,
-  getEnrichmentForItem
+  getEnrichmentForItem,
+  hydrateMappedVisualCandidate,
+  mapProviderCandidatesToTCGCSV
 } from '../app/assets/js/services/catalog-enrichment.js';
 
 // Same minimal in-memory IndexedDB shim used by forecast-trajectory.test.js
@@ -90,6 +93,66 @@ test('bridgeProductMatch finds a row by groupId+productId and is fail-closed oth
   assert.equal(bridgeProductMatch(table, 1102, 9999), null);
   assert.equal(bridgeProductMatch(null, 1102, 5001), null);
   assert.equal(bridgeProductMatch({ products: null }, 1102, 5001), null);
+});
+
+test('reverse bridge maps one provider image candidate to exact TCGCSV identity', async () => {
+  const visual = {
+    id: 'pokemon:poke-1', externalId: 'poke-1', provider: 'pokemon', category: 'pokemon',
+    game: 'Pokémon', name: 'Pikachu VMAX', setName: 'Silver Tempest', number: '7',
+    image: 'https://images.example/large.png', imageSmall: 'https://images.example/small.png', matchScore: 0.94
+  };
+  assert.equal(bridgeProviderMatches(bridgeTable(), 'pokemon', 'poke-1').length, 1);
+  const [mapped] = await mapProviderCandidatesToTCGCSV([visual], {
+    fetchTable: async (categoryId) => categoryId === 3 ? bridgeTable() : null
+  });
+  assert.equal(mapped.id, 'tcgcsv:3:1102:5001');
+  assert.equal(mapped.provider, 'tcgcsv');
+  assert.equal(mapped.categoryId, 3);
+  assert.equal(mapped.groupId, 1102);
+  assert.equal(mapped.productId, 5001);
+  assert.equal(mapped.matchBucket, 'exact');
+  assert.equal(mapped.tcgcsvMappingStatus, 'mapped');
+  assert.equal(mapped.visualSource.externalId, 'poke-1');
+});
+
+test('reverse bridge fails closed for missing and ambiguous provider mappings', async () => {
+  const visual = { id: 'pokemon:poke-1', externalId: 'poke-1', provider: 'pokemon', name: 'Pikachu', matchScore: 0.9 };
+  const [missing] = await mapProviderCandidatesToTCGCSV([visual], { fetchTable: async () => null });
+  assert.equal(missing.provider, 'pokemon');
+  assert.equal(missing.matchBucket, 'likely');
+  assert.equal(missing.tcgcsvMappingStatus, 'unmapped');
+
+  const ambiguousTable = bridgeTable({
+    products: [
+      { groupId: 1102, productId: 5001, providerCardId: 'poke-1', matchMethod: 'collector-number' },
+      { groupId: 1102, productId: 5002, providerCardId: 'poke-1', matchMethod: 'collector-number' }
+    ]
+  });
+  const [ambiguous] = await mapProviderCandidatesToTCGCSV([visual], {
+    fetchTable: async (categoryId) => categoryId === 3 ? ambiguousTable : null
+  });
+  assert.equal(ambiguous.provider, 'pokemon');
+  assert.equal(ambiguous.matchBucket, 'likely');
+  assert.equal(ambiguous.tcgcsvMappingStatus, 'ambiguous');
+});
+
+test('selected reverse-bridge candidate hydrates complete TCGCSV attributes without losing provider art', async () => {
+  const candidate = {
+    id: 'tcgcsv:3:1102:5001', externalId: '3:1102:5001', provider: 'tcgcsv',
+    categoryId: 3, groupId: 1102, productId: 5001, tcgcsvMappingStatus: 'mapped',
+    matchBucket: 'exact', matchScore: 0.94, visualScore: 0.93,
+    visualSource: { provider: 'pokemon', externalId: 'poke-1', image: 'https://images.example/large.png', imageSmall: '' }
+  };
+  const hydrated = await hydrateMappedVisualCandidate(candidate, {
+    getProduct: async () => tcgcsvItem({
+      id: candidate.id, externalId: candidate.externalId, groupId: 1102, productId: 5001,
+      image: 'https://tcgcsv.example/5001.jpg', extendedData: [{ name: 'Artist', value: 'Example Artist' }]
+    })
+  });
+  assert.equal(hydrated.provider, 'tcgcsv');
+  assert.equal(hydrated.image, 'https://images.example/large.png');
+  assert.equal(hydrated.extendedData[0].value, 'Example Artist');
+  assert.equal(hydrated.matchBucket, 'exact');
 });
 
 test('fetchBridgeTable is fail-closed on a 404 (unpublished category) and does not throw', async () => {

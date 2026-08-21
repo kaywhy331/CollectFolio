@@ -31,6 +31,22 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 }
       }
+    },
+    {
+      name: 'firefox-recognition',
+      testMatch: '**/image-search.spec.js',
+      use: {
+        ...devices['Desktop Firefox'],
+        viewport: { width: 1440, height: 900 }
+      }
+    },
+    {
+      name: 'webkit-recognition',
+      testMatch: '**/image-search.spec.js',
+      use: {
+        ...devices['Desktop Safari'],
+        viewport: { width: 1440, height: 900 }
+      }
     }
   ],
   webServer: hostedBaseURL ? undefined : {

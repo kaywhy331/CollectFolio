@@ -1,12 +1,13 @@
 import { createId } from '../core/utils.js';
 import { canonicalRawMarketCondition } from '../core/market-series.js';
-import { deleteRecords, getAll, putRecord, saveHolding } from '../core/db.js';
+import { deleteRecord, deleteRecords, getAll, putRecord, saveHolding } from '../core/db.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { matchBucketFor } from '../core/view-models.js';
 import { searchCatalog } from './catalog.js';
 import { candidateEvidenceScore, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
 import { recordDemandEvent } from './demand-events.js';
 import { discoverVisualCandidates } from './visual-index.js';
+import { hydrateMappedVisualCandidate, mapProviderCandidatesToTCGCSV } from './catalog-enrichment.js';
 
 export const ACQUISITION_FIELDS = Object.freeze([
   'quantity', 'condition', 'marketCondition', 'gradeCompany', 'grade', 'purchasePrice', 'purchaseCurrency', 'fees',
@@ -14,6 +15,7 @@ export const ACQUISITION_FIELDS = Object.freeze([
 ]);
 export const COMPLETED_SCAN_RETENTION_DAYS = 30;
 export const COMPLETED_SCAN_RECEIPT_LIMIT = 20;
+const discardedScanDraftIds = new Set();
 
 const text = (value, max) => String(value ?? '').trim().slice(0, max);
 const moneyOrBlank = (value) => value === '' || value === null || value === undefined
@@ -86,6 +88,21 @@ export function selectedCropItem(crop = {}) {
   return crop.customItem || crop.candidates?.find((candidate) => candidate.id === crop.selectedId) || null;
 }
 
+function hasExactTCGCSVIdentity(item = {}) {
+  const match = /^(\d+):(\d+):(\d+)$/.exec(String(item.externalId || ''));
+  if (item.provider !== 'tcgcsv' || !match) return false;
+  const [categoryId, groupId, productId] = match.slice(1).map(Number);
+  return categoryId === Number(item.categoryId)
+    && groupId === Number(item.groupId)
+    && productId === Number(item.productId)
+    && [categoryId, groupId, productId].every((value) => Number.isSafeInteger(value) && value > 0);
+}
+
+export function cropHasApprovableIdentity(crop = {}) {
+  const selected = selectedCropItem(crop);
+  return Boolean(selected && (crop.customItem || matchBucketFor(selected) === 'exact' || hasExactTCGCSVIdentity(selected)));
+}
+
 export function createScanDraft(crops, mode = 'multi', acquisitionDefaults = {}) {
   const now = new Date().toISOString();
   const acquisition = normalizeAcquisition(acquisitionDefaults);
@@ -100,10 +117,41 @@ export function createScanDraft(crops, mode = 'multi', acquisitionDefaults = {})
   };
 }
 
+export function stripPersistedSourcePhoto(draft) {
+  if (!draft || typeof draft !== 'object') return false;
+  let removed = false;
+  for (const key of ['sourceImage', 'sourceImageRetainedAt', 'sourceImageDeletedAt']) {
+    if (Object.prototype.hasOwnProperty.call(draft, key)) {
+      delete draft[key];
+      removed = true;
+    }
+  }
+  return removed;
+}
+
 export async function saveScanDraft(draft) {
+  if (discardedScanDraftIds.has(draft?.id)) {
+    const error = new Error('This scan draft was discarded.');
+    error.name = 'AbortError';
+    throw error;
+  }
+  stripPersistedSourcePhoto(draft);
   draft.updatedAt = new Date().toISOString();
   await putRecord('scans', structuredClone(draft));
   return draft;
+}
+
+export async function discardScanDraft(draftId) {
+  const id = String(draftId || '');
+  if (!id) throw new Error('Scan draft not found.');
+  discardedScanDraftIds.add(id);
+  try {
+    await deleteRecord('scans', id);
+  } catch (error) {
+    discardedScanDraftIds.delete(id);
+    throw error;
+  }
+  return id;
 }
 
 export function compactCompletedScanDraft(draft) {
@@ -130,7 +178,11 @@ export function completedScanRetentionPlan(scans = [], now = Date.now(), {
 } = {}) {
   const cutoff = now - Math.max(0, Number(maxAgeDays) || 0) * 86_400_000;
   const limit = Math.max(0, Math.trunc(Number(maximumReceipts) || 0));
-  const active = (Array.isArray(scans) ? scans : []).filter((scan) => scan?.status !== 'complete');
+  const active = (Array.isArray(scans) ? scans : []).filter((scan) => scan?.status !== 'complete').map((scan) => {
+    const clean = structuredClone(scan);
+    stripPersistedSourcePhoto(clean);
+    return clean;
+  });
   const completed = (Array.isArray(scans) ? scans : []).filter((scan) => scan?.status === 'complete')
     .sort((left, right) => String(right.completedAt || right.updatedAt || '').localeCompare(String(left.completedAt || left.updatedAt || '')));
   const retained = [];
@@ -149,9 +201,11 @@ export function completedScanRetentionPlan(scans = [], now = Date.now(), {
 export async function maintainCompletedScans(scans = null, now = Date.now(), options = {}) {
   const source = Array.isArray(scans) ? scans : await getAll('scans');
   const plan = completedScanRetentionPlan(source, now, options);
-  const changed = plan.compacted.filter((record) => {
+  const changed = plan.records.filter((record) => {
     const current = source.find((entry) => entry.id === record.id);
-    return current?.crops?.length || current?.bulkAcquisition || current?.submissionError;
+    return record.status === 'complete'
+      ? current?.crops?.length || current?.bulkAcquisition || current?.submissionError
+      : ['sourceImage', 'sourceImageRetainedAt', 'sourceImageDeletedAt'].some((key) => Object.prototype.hasOwnProperty.call(current || {}, key));
   });
   await Promise.all([
     ...changed.map((record) => putRecord('scans', record)),
@@ -181,9 +235,9 @@ export function scanReviewSummary(draft = {}) {
   const result = { total: crops.length, exact: 0, needsReview: 0, unmatched: 0, approved: 0 };
   for (const crop of crops) {
     const selected = selectedCropItem(crop);
-    if (crop.approved) result.approved++;
+    if (crop.approved && cropHasApprovableIdentity(crop)) result.approved++;
     if (!selected) result.unmatched++;
-    else if (!crop.customItem && matchBucketFor(selected) === 'exact') result.exact++;
+    else if (!crop.customItem && cropHasApprovableIdentity(crop)) result.exact++;
     else result.needsReview++;
   }
   return result;
@@ -228,7 +282,10 @@ export async function applyAcquisitionToAll(draft, patch = {}) {
   return count;
 }
 
-export async function identifyCrop(draft, cropId, editedQuery = '', { visualSearch = discoverVisualCandidates } = {}) {
+export async function identifyCrop(draft, cropId, editedQuery = '', {
+  visualSearch = discoverVisualCandidates,
+  mapVisualCandidates = mapProviderCandidatesToTCGCSV
+} = {}) {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
   crop.status = 'identifying'; crop.error = ''; crop.approved = false;
@@ -236,12 +293,24 @@ export async function identifyCrop(draft, cropId, editedQuery = '', { visualSear
   await saveScanDraft(draft);
   try {
     let evidence;
+    let recognitionWarning = '';
     if (!editedQuery.trim()) {
-      const ocr = await recognizeText(crop.image);
-      crop.ocrEngine = ocr.engine;
-      crop.ocrText = ocr.accepted ? ocr.text : '';
-      crop.query = ocr.accepted ? ocr.query : '';
-      evidence = ocr;
+      try {
+        const ocr = await recognizeText(crop.image);
+        crop.ocrEngine = ocr.engine;
+        crop.ocrText = ocr.accepted ? ocr.text : '';
+        crop.query = ocr.accepted ? ocr.query : '';
+        evidence = ocr;
+      } catch (error) {
+        // Visual recovery is an independent local recognizer. A disabled or
+        // unavailable OCR engine must not prevent it from resolving an exact
+        // catalog identity through the reviewed bridge.
+        crop.ocrEngine = '';
+        crop.ocrText = '';
+        crop.query = '';
+        evidence = { queries: [] };
+        recognitionWarning = error?.message || 'Text recognition was unavailable.';
+      }
     } else {
       crop.query = editedQuery.trim();
       crop.ocrText = '';
@@ -251,12 +320,12 @@ export async function identifyCrop(draft, cropId, editedQuery = '', { visualSear
     const queries = evidence?.queries?.length ? evidence.queries : crop.query ? [crop.query] : [];
     if (!queries.length) {
       try {
-        crop.candidates = await visualSearch(crop.image);
+        crop.candidates = await mapVisualCandidates(await visualSearch(crop.image));
       } catch { crop.candidates = []; }
       crop.status = crop.candidates.length ? 'matched' : 'unmatched';
       crop.error = crop.candidates.length
-        ? 'Text was unclear, so these Pokémon candidates were recovered by image similarity. Confirm the exact printing.'
-        : 'Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.';
+        ? `${recognitionWarning ? `${recognitionWarning} ` : ''}These Pokémon candidates were recovered by image similarity. Confirm the exact printing.`
+        : `${recognitionWarning ? `${recognitionWarning} ` : ''}Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.`;
       await saveScanDraft(draft);
       return crop;
     }
@@ -264,7 +333,7 @@ export async function identifyCrop(draft, cropId, editedQuery = '', { visualSear
     if (recovered.allAttemptsFailed && recovered.warnings.length) throw new Error('Card catalogs are temporarily unavailable. Check your connection and retry.');
     crop.candidates = await rerankCandidates(crop.image, recovered.candidates.slice(0, 24), evidence);
     if (!crop.candidates.length) {
-      try { crop.candidates = await visualSearch(crop.image); } catch { /* Manual query remains available. */ }
+      try { crop.candidates = await mapVisualCandidates(await visualSearch(crop.image)); } catch { /* Manual query remains available. */ }
     }
     crop.status = crop.candidates.length ? 'matched' : 'unmatched';
     crop.error = crop.candidates.length
@@ -280,10 +349,13 @@ export async function identifyCrop(draft, cropId, editedQuery = '', { visualSear
   return crop;
 }
 
-export async function selectCropCandidate(draft, cropId, candidateId) {
+export async function selectCropCandidate(draft, cropId, candidateId, { hydrate = hydrateMappedVisualCandidate } = {}) {
   const crop = draft.crops.find((entry) => entry.id === cropId);
-  if (!crop || !crop.candidates.some((candidate) => candidate.id === candidateId)) throw new Error('Candidate not found.');
-  crop.selectedId = candidateId; crop.customItem = null; crop.status = 'matched'; crop.approved = false;
+  const candidateIndex = crop?.candidates.findIndex((candidate) => candidate.id === candidateId) ?? -1;
+  if (!crop || candidateIndex < 0) throw new Error('Candidate not found.');
+  const candidate = await hydrate(crop.candidates[candidateIndex]);
+  crop.candidates[candidateIndex] = candidate;
+  crop.selectedId = candidate.id; crop.customItem = null; crop.status = 'matched'; crop.approved = false;
   await saveScanDraft(draft);
   return crop;
 }
@@ -300,7 +372,7 @@ export async function setCropCustomItem(draft, cropId, item) {
 export async function setCropApproval(draft, cropId, approved) {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
-  if (approved && !crop.customItem && !crop.candidates.some((candidate) => candidate.id === crop.selectedId)) throw new Error('Select an exact match or custom item first.');
+  if (approved && !cropHasApprovableIdentity(crop)) throw new Error('Select an exact catalog match or create a custom item first.');
   crop.approved = Boolean(approved);
   await saveScanDraft(draft);
   return crop;
@@ -313,7 +385,7 @@ export async function deleteCrop(draft, cropId) {
 }
 
 export function eligibleApprovedCrops(draft) {
-  return draft.crops.filter((crop) => crop.approved && (crop.customItem || (crop.selectedId && crop.candidates.some((candidate) => candidate.id === crop.selectedId))));
+  return draft.crops.filter((crop) => crop.approved && cropHasApprovableIdentity(crop));
 }
 
 export async function batchAddApproved(draft, currency = 'USD') {

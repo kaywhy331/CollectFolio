@@ -1006,6 +1006,11 @@ span.browse-set-art.placeholder { display: flex; align-items: center; justify-co
 .draft-resume > span:first-child { display: grid; width: 38px; height: 38px; place-items: center; color: var(--accent-ink); font-weight: 900; background: var(--accent); border-radius: 11px; }
 .draft-resume > span:nth-child(2) { display: grid; }
 .draft-resume small { color: var(--muted); }
+.draft-manager { margin-bottom: var(--space-4); }
+.draft-manager .section-heading { margin-bottom: var(--space-2); }
+.draft-list { display: grid; gap: var(--space-2); }
+.draft-resume-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); }
+.draft-resume-row .draft-resume { margin-bottom: 0; }
 .scan-flow-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-bottom: var(--space-4); }
 .scan-flow-preview span { display: grid; min-width: 0; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: var(--space-2); color: var(--muted); font-size: .68rem; font-weight: 750; }
 .scan-flow-preview strong { display: grid; width: 28px; height: 28px; place-items: center; color: var(--accent-ink); background: var(--accent); border-radius: 999px; }

@@ -66,6 +66,8 @@ function manifestPayload() {
 function groupPayload(groupId) {
   if (groupId === 100) {
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -86,6 +88,8 @@ function groupPayload(groupId) {
   }
   if (groupId === 101) {
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -94,9 +98,11 @@ function groupPayload(groupId) {
         productId: 5002,
         subTypeName: 'Holofoil',
         confidence: 'cold-start',
-        lastKnownPrice: 80,
-        lastKnownDate: '2026-08-05',
-        medianPath: [{ date: '2026-08-05', price: 80 }],
+        // The publisher's cold-start contract has no observed-price anchor;
+        // its pure hedonic-prior path begins at the publication date.
+        lastKnownPrice: null,
+        lastKnownDate: null,
+        medianPath: [{ date: '2026-08-10', price: 80 }],
         horizons: {
           30: { q10: 50, q25: 65, q50: 85, q75: 105, q90: 130 },
           90: { q10: 40, q25: 60, q50: 95, q75: 130, q90: 170 }
@@ -110,6 +116,8 @@ function groupPayload(groupId) {
     // must render only the 3-month estimate and never fabricate a 30-day
     // one that was never published.
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -131,6 +139,8 @@ function groupPayload(groupId) {
     // Serve-all-cohorts mode: a low-history packet serves both horizons
     // with an explicit early-estimate label.
     return {
+      categoryId: 3,
+      groupId,
       asOf: '2026-08-10',
       modelVersion: 'trajectory-v1',
       part: 1,
@@ -149,7 +159,7 @@ function groupPayload(groupId) {
       }]
     };
   }
-  return { asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] };
+  return { categoryId: 3, groupId, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] };
 }
 
 async function configureTrajectoryStubs(page) {

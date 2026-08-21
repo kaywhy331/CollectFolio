@@ -101,6 +101,7 @@ const required = [
   'supabase/migrations/0018_forecast_execution_and_scorecards.sql',
   'supabase/migrations/0019_centralized_historical_price_imports.sql',
   'supabase/migrations/0020_tcgcsv_market_universe.sql',
+  'supabase/migrations/0021_account_owned_sync_keys.sql',
   'PRD/redesign.md', 'PRD/CollectFolio Premium UX Redesign — PRD & UI-UX Specification.md',
   'docs/PRD.md', 'docs/TECHNICAL_SPEC.md', 'docs/NETLIFY_DEPLOY.md',
   'docs/PREMIUM_UX_DESIGN_SYSTEM.md', 'docs/PREMIUM_UX_ACCEPTANCE.md',
@@ -164,8 +165,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.26' || packageLock.version !== '0.8.26' || packageLock.packages?.['']?.version !== '0.8.26') {
-  errors.push('Application and lockfile versions must agree on 0.8.26.');
+if (packageJSON.version !== '0.8.27' || packageLock.version !== '0.8.27' || packageLock.packages?.['']?.version !== '0.8.27') {
+  errors.push('Application and lockfile versions must agree on 0.8.27.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -455,8 +456,8 @@ const application = await readFile(resolve(app, 'assets/js/app.js'), 'utf8');
 if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Service-worker registration must remain root-relative for deep links.');
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.26-dev'")) errors.push('Local runtime config must identify the 0.8.26 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.26'")) errors.push('Production builds must default APP_VERSION to 0.8.26.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.27-dev'")) errors.push('Local runtime config must identify the 0.8.27 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.27'")) errors.push('Production builds must default APP_VERSION to 0.8.27.');
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
 }
@@ -568,7 +569,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.26'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.26.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.27'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.27.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
@@ -656,6 +657,26 @@ const migration = await readFile(resolve(root, 'supabase/migrations/0001_initial
 for (const table of ['profiles', 'holdings', 'holding_deletions', 'portfolio_snapshots', 'scan_sessions']) {
   if (!migration.includes(`create table if not exists public.${table}`)) errors.push(`Migration missing ${table}.`);
   if (!migration.includes(`alter table public.${table} enable row level security`)) errors.push(`Migration missing RLS for ${table}.`);
+}
+
+const accountOwnedSyncMigration = await readFile(
+  resolve(root, 'supabase/migrations/0021_account_owned_sync_keys.sql'), 'utf8'
+);
+for (const contract of [
+  'holdings_pkey primary key (user_id, id)',
+  'scan_sessions_pkey primary key (user_id, id)',
+  'create index holdings_id_idx on public.holdings (id)',
+  'create index scan_sessions_id_idx on public.scan_sessions (id)'
+]) {
+  if (!accountOwnedSyncMigration.includes(contract)) {
+    errors.push(`Account-owned sync migration missing contract ${contract}.`);
+  }
+}
+if (!/^begin;/m.test(accountOwnedSyncMigration) || !/commit;\s*$/.test(accountOwnedSyncMigration)) {
+  errors.push('Account-owned sync migration must replace ownership keys transactionally.');
+}
+if (/delete\s+from\s+public\.(?:holdings|scan_sessions)/i.test(accountOwnedSyncMigration)) {
+  errors.push('Account-owned sync migration must retain every holding and scan session.');
 }
 
 const intelligenceMigration = await readFile(resolve(root, 'supabase/migrations/0002_price_intelligence_foundation.sql'), 'utf8');

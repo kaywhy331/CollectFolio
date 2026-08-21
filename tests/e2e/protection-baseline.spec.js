@@ -60,7 +60,7 @@ async function expectNoBlockingAccessibilityViolations(page) {
 
 async function seedLegacyIndexedDB(page) {
   // Fulfill a same-origin inert HTML document so the v4 fixture exists before
-  // any v5 application module can open and upgrade it. A real manifest is not
+  // any v6 application module can open and upgrade it. A real manifest is not
   // suitable here because production hosts may serve it as a download.
   const fixturePath = '/__collectfolio-indexeddb-fixture__.html';
   await page.route(`**${fixturePath}`, (route) => route.fulfill({
@@ -92,7 +92,11 @@ async function seedLegacyIndexedDB(page) {
       for (const name of names) {
         const store = transaction.objectStore(name);
         store.clear();
-        for (const record of stores[name]) store.put(record);
+        for (const record of stores[name]) store.put(name === 'scans' ? {
+          ...record,
+          sourceImage: 'data:image/jpeg;base64,legacy-full-source',
+          sourceImageRetainedAt: '2026-08-01T00:00:00.000Z'
+        } : record);
       }
       transaction.addEventListener('complete', resolve, { once: true });
       transaction.addEventListener('abort', () => reject(transaction.error), { once: true });
@@ -320,22 +324,28 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
       request.addEventListener('success', () => resolve(request.result), { once: true });
       request.addEventListener('error', () => reject(request.error), { once: true });
     });
-    const transaction = database.transaction('localValueObservations');
-    const store = transaction.objectStore('localValueObservations');
-    const rows = await new Promise((resolve, reject) => {
-      const request = store.getAll();
+    const transaction = database.transaction(['localValueObservations', 'scans']);
+    const observationsRequest = transaction.objectStore('localValueObservations').getAll();
+    const scansRequest = transaction.objectStore('scans').getAll();
+    const readRequest = (request) => new Promise((resolve, reject) => {
       request.addEventListener('success', () => resolve(request.result), { once: true });
       request.addEventListener('error', () => reject(request.error), { once: true });
     });
+    const [rows, scans] = await Promise.all([
+      readRequest(observationsRequest), readRequest(scansRequest)
+    ]);
+    const store = transaction.objectStore('localValueObservations');
     const result = {
       version: database.version,
       indexes: [...store.indexNames],
-      rows: rows.map(({ subjectId, source, unitPrice }) => ({ subjectId, source, unitPrice }))
+      rows: rows.map(({ subjectId, source, unitPrice }) => ({ subjectId, source, unitPrice })),
+      scanSourceFieldsRemoved: scans.every((scan) => !('sourceImage' in scan) && !('sourceImageRetainedAt' in scan))
     };
     database.close();
     return result;
   });
-  expect(migration.version).toBe(5);
+  expect(migration.version).toBe(6);
+  expect(migration.scanSourceFieldsRemoved).toBe(true);
   expect(migration.indexes).toEqual(expect.arrayContaining(['subjectId', 'observedAt']));
   expect(migration.rows).toHaveLength(2);
   expect(migration.rows).toEqual(expect.arrayContaining([

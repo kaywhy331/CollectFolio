@@ -33,7 +33,7 @@ function accountCopy(state, status) {
     offline: ['Offline', pending
       ? `${pending} change${pending === 1 ? '' : 's'} is safely stored here and will retry after this device reconnects.`
       : 'Local items remain available. Cloud actions will resume after this device reconnects.'],
-    error: ['Synchronization needs attention', state.settings.lastSyncError || 'Your local collection is unchanged. Retry synchronization when you are ready.']
+    error: ['Synchronization needs attention', state.settings.lastSyncError || state.auth.error || 'Your local collection is unchanged. Retry synchronization when you are ready.']
   };
   return copies[status] || copies.local;
 }

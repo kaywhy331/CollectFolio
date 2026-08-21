@@ -355,7 +355,30 @@ test('Discover uses the same concise forecast tile template as set products', ()
   assert.match(html, /3 mo est\./);
   assert.match(html, /\$130\.00/);
   assert.match(html, /\$140\.00/);
+  assert.match(html, /vs model baseline/);
   assert.doesNotMatch(html, /30D trend|6 mo est\.|1 year est\.|result-outlook-note/);
+});
+
+test('Discover withholds a trajectory whose published baseline is stale', () => {
+  const trajectoryItem = {
+    ...item,
+    provider: 'tcgcsv', externalId: '3:100:5001', category: 'tcgcsv-category-3',
+    categoryId: 3, groupId: 100, productId: 5001, variant: 'Holofoil',
+    pricingEntitlement: 'community-free-access'
+  };
+  const packet = {
+    productId: 5001, subTypeName: 'Holofoil', modelVersion: 'trajectory-v1', confidence: 'standard',
+    lastKnownDate: '2026-01-01', lastKnownPrice: 100, medianPath: [],
+    horizons: { 30: { q10: 80, q25: 90, q50: 105, q75: 120, q90: 140 } }
+  };
+  const html = renderSearch(state({
+    search: { query: 'Lotus', category: 'pokemon', provider: 'tcgcsv', filters: {}, view: 'gallery', loading: false, warnings: [], results: [trajectoryItem] },
+    trajectoryForecasts: {
+      byKey: { '3:100:5001:Holofoil': { eligibility: 'published', packet, manifest: { asOf: '2026-08-10' } } },
+      loading: false, error: ''
+    }
+  }));
+  assert.doesNotMatch(html, /1 mo est\.|result-market-outlook/);
 });
 
 test('Discover landing limits recognizable categories and keeps the universal search primary', () => {
@@ -387,6 +410,23 @@ test('Discover exposes removable filter chips and only supported result sorting'
   assert.doesNotMatch(html, /value="price-desc"/);
   assert.match(html, /Price sorting is unavailable/);
   assert.doesNotMatch(html, /result-market-outlook/);
+});
+
+test('Discover never enables or applies price sorting to rights-suppressed provider values', () => {
+  const restricted = [
+    { ...item, externalId: 'low', name: 'First restricted result', provider: 'pokemon', category: 'pokemon', price: 5, priceSource: 'Pokémon TCG API' },
+    { ...item, externalId: 'high', name: 'Second restricted result', provider: 'pokemon', category: 'pokemon', price: 500, priceSource: 'Pokémon TCG API' }
+  ];
+  const html = renderSearch(state({
+    search: {
+      query: 'restricted', category: 'pokemon', provider: 'all', filters: {},
+      view: 'gallery', sort: 'price-desc', loading: false, warnings: [], results: restricted
+    }
+  }));
+  assert.doesNotMatch(html, /value="price-desc"/);
+  assert.match(html, /Price sorting is unavailable/);
+  assert.ok(html.indexOf('First restricted result') < html.indexOf('Second restricted result'));
+  assert.equal((html.match(/Pricing not supported/g) || []).length, 2);
 });
 
 test('Discover renders related sealed formats as independent tiles without family buckets', () => {
@@ -444,4 +484,20 @@ test('Scan separates camera and upload, previews the workflow, and keeps export 
   assert.match(html, /Import collection/);
   assert.doesNotMatch(html, /data-action="export-json"/);
   assert.doesNotMatch(html, /data-action="start-multi-scan"/);
+  assert.match(html, /full source photo is never saved/i);
+});
+
+test('Scan exposes each saved draft with independent resume and discard controls', () => {
+  const html = renderAdd(state({
+    scanDraftCount: 2,
+    scanDrafts: [
+      { id: 'draft-a', updatedAt: '2026-08-20T12:00:00.000Z', crops: [{ id: 'a' }] },
+      { id: 'draft-b', updatedAt: '2026-08-19T12:00:00.000Z', crops: [{ id: 'b' }, { id: 'c' }] }
+    ]
+  }));
+  assert.equal((html.match(/data-action="resume-scan"/g) || []).length, 2);
+  assert.equal((html.match(/data-action="discard-scan"/g) || []).length, 2);
+  assert.match(html, /data-draft-id="draft-a"/);
+  assert.match(html, /1 cropped item/);
+  assert.match(html, /2 cropped items/);
 });

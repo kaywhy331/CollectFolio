@@ -7,6 +7,8 @@ import {
   getTrajectoryForecastForItem,
   isTrajectoryStale,
   manifestGroupEntry,
+  normalizeTrajectoryBand,
+  normalizeTrajectoryPacket,
   trajectoryForecastEstimates,
   trajectoryKeyForItem
 } from '../app/assets/js/services/forecast-trajectory.js';
@@ -83,6 +85,12 @@ test('manifestGroupEntry is fail-closed: only an explicit published status with 
   const emptyParts = manifestWith(3, 102, { status: 'published', parts: [] });
   assert.equal(manifestGroupEntry(emptyParts, 3, 102).eligibility, 'unknown');
 
+  const incompleteParts = manifestWith(3, 104, { status: 'published', parts: [{ part: 1, partsTotal: 2, objectKey: 'forecasts/3/104.part1.json.gz' }] });
+  assert.equal(manifestGroupEntry(incompleteParts, 3, 104).eligibility, 'unknown');
+
+  const crossedObjectKey = manifestWith(3, 105, { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/999.json.gz' }] });
+  assert.equal(manifestGroupEntry(crossedObjectKey, 3, 105).eligibility, 'unknown');
+
   const unrecognizedStatus = manifestWith(3, 103, { status: 'pending' });
   assert.equal(manifestGroupEntry(unrecognizedStatus, 3, 103).eligibility, 'unknown');
 
@@ -105,9 +113,9 @@ test('fetchTrajectoryGroup merges multi-part payloads in part order and validate
     const fetchImpl = async (url) => {
       calls.push(String(url));
       if (String(url).includes('part1')) {
-        return fakeResponse({ asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 2, variants: [{ productId: 1, subTypeName: 'Holofoil' }] });
+        return fakeResponse({ categoryId: 3, groupId: 200, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 2, variants: [{ productId: 1, subTypeName: 'Holofoil' }] });
       }
-      return fakeResponse({ asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 2, partsTotal: 2, variants: [{ productId: 2, subTypeName: 'Normal' }] });
+      return fakeResponse({ categoryId: 3, groupId: 200, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 2, partsTotal: 2, variants: [{ productId: 2, subTypeName: 'Normal' }] });
     };
     const group = await fetchTrajectoryGroup(3, 200, manifestEntry, { session: {}, fetchImpl, bypassCache: true });
     assert.deepEqual(group.variants.map((v) => v.productId), [1, 2]);
@@ -118,14 +126,36 @@ test('fetchTrajectoryGroup merges multi-part payloads in part order and validate
   }
 });
 
-test('fetchTrajectoryGroup throws when a fetched part is out of sequence with the manifest entry', async () => {
+test('fetchTrajectoryGroup rejects an incomplete manifest part set before fetching it', async () => {
   const restore = installFakeIndexedDB();
   try {
     const manifestEntry = { status: 'published', parts: [{ part: 1, partsTotal: 2, objectKey: 'forecasts/3/201.part1.json.gz' }] };
-    const fetchImpl = async () => fakeResponse({ part: 2, partsTotal: 2, variants: [] }); // wrong part number
+    let calls = 0;
+    const fetchImpl = async () => { calls += 1; return fakeResponse({}); };
     await assert.rejects(
       fetchTrajectoryGroup(3, 201, manifestEntry, { session: {}, fetchImpl, bypassCache: true }),
-      /out of sequence/
+      /invalid part set/
+    );
+    assert.equal(calls, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('fetchTrajectoryGroup rejects a payload count that disagrees with its manifest', async () => {
+  const restore = installFakeIndexedDB();
+  try {
+    const manifestEntry = {
+      status: 'published', eligibleVariantCount: 2,
+      parts: [{ part: 1, partsTotal: 1, variantCount: 1, objectKey: 'forecasts/3/202.json.gz' }]
+    };
+    const fetchImpl = async () => fakeResponse({
+      categoryId: 3, groupId: 202, asOf: '2026-08-10', modelVersion: 'trajectory-v1',
+      part: 1, partsTotal: 1, variants: [{ productId: 1 }]
+    });
+    await assert.rejects(
+      fetchTrajectoryGroup(3, 202, manifestEntry, { session: {}, fetchImpl, bypassCache: true }),
+      /manifest variant count/
     );
   } finally {
     restore();
@@ -148,12 +178,36 @@ test('fetchTrajectoryManifest and fetchTrajectoryGroup reuse the cached value wi
     let groupCalls = 0;
     const groupFetch = async () => {
       groupCalls += 1;
-      return fakeResponse({ asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [{ productId: 9 }] });
+      return fakeResponse({ categoryId: 3, groupId: 300, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [{ productId: 9 }] });
     };
     const entry = { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/300.json.gz' }] };
     await fetchTrajectoryGroup(3, 300, entry, { session: {}, fetchImpl: groupFetch });
     await fetchTrajectoryGroup(3, 300, entry, { session: {}, fetchImpl: groupFetch });
     assert.equal(groupCalls, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('trajectory group cache is bound to the manifest content generation', async () => {
+  const restore = installFakeIndexedDB();
+  try {
+    let calls = 0;
+    const fetchImpl = async () => fakeResponse({
+      categoryId: 3, groupId: 301, asOf: '2026-08-10', modelVersion: 'trajectory-v1',
+      part: 1, partsTotal: 1, variants: [{ productId: ++calls }]
+    });
+    const part = { part: 1, partsTotal: 1, variantCount: 1, objectKey: 'forecasts/3/301.json.gz' };
+    const first = await fetchTrajectoryGroup(3, 301, {
+      status: 'published', eligibleVariantCount: 1,
+      parts: [{ ...part, contentHash: 'a'.repeat(64) }]
+    }, { session: {}, fetchImpl });
+    const second = await fetchTrajectoryGroup(3, 301, {
+      status: 'published', eligibleVariantCount: 1,
+      parts: [{ ...part, contentHash: 'b'.repeat(64) }]
+    }, { session: {}, fetchImpl });
+    assert.equal(calls, 2);
+    assert.notDeepEqual(first.variants, second.variants);
   } finally {
     restore();
   }
@@ -167,7 +221,7 @@ test('concurrent card hydration shares one in-flight group request', async () =>
     const fetchImpl = async () => {
       calls += 1;
       await new Promise((resolve) => setTimeout(resolve, 5));
-      return fakeResponse({ asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] });
+      return fakeResponse({ categoryId: 3, groupId: 302, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] });
     };
     const groups = await Promise.all(Array.from({ length: 24 }, () =>
       fetchTrajectoryGroup(3, 302, entry, { session: {}, fetchImpl })));
@@ -223,13 +277,14 @@ test('getTrajectoryForecast resolves the matching variant end to end and stays f
     const fetchImpl = async (url) => {
       if (String(url).includes('/manifest')) return fakeResponse(manifest);
       return fakeResponse({
-        asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1,
+        categoryId: 3, groupId: 400, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1,
         variants: [{ productId: 55, subTypeName: 'Holofoil', confidence: 'standard', lastKnownPrice: 10, lastKnownDate: '2026-08-01', medianPath: [], horizons: { 30: { q10: 8, q25: 9, q50: 10, q75: 11, q90: 12 } } }]
       });
     };
     const found = await getTrajectoryForecast(3, 400, 55, 'Holofoil', { session: {}, fetchImpl, bypassCache: true });
     assert.equal(found.eligibility, 'published');
     assert.equal(found.packet.productId, 55);
+    assert.equal(found.packet.modelVersion, 'trajectory-v1');
 
     const missingVariant = await getTrajectoryForecast(3, 400, 999, 'Holofoil', { session: {}, fetchImpl, bypassCache: true });
     assert.equal(missingVariant.eligibility, 'unknown');
@@ -287,6 +342,43 @@ test('trajectoryForecastEstimates skips a horizon whose band is missing q50, rat
   const packet = { lastKnownPrice: 50, horizons: { 30: { q10: 40, q25: 45, q75: 55, q90: 60 }, 90: { q10: 40, q25: 45, q50: 60, q75: 70, q90: 80 } } };
   const estimates = trajectoryForecastEstimates(packet);
   assert.deepEqual(Object.keys(estimates), ['90']);
+});
+
+test('trajectory packet validation rejects crossing bands, unknown horizons, invalid paths, and wrong identities', () => {
+  const packet = {
+    productId: 55,
+    subTypeName: 'Holofoil',
+    confidence: 'standard',
+    lastKnownPrice: 50,
+    lastKnownDate: '2026-08-01',
+    medianPath: [{ date: '2026-08-01', price: 50 }, { date: '2026-08-08', price: 51 }],
+    horizons: { 30: { q10: 40, q25: 45, q50: 55, q75: 60, q90: 70 } }
+  };
+  const normalized = normalizeTrajectoryPacket(packet, {
+    expectedProductId: 55,
+    expectedSubTypeName: 'Holofoil',
+    modelVersion: 'trajectory-v1'
+  });
+  assert.equal(normalized.horizons[30].q50, 55);
+  assert.equal(normalizeTrajectoryBand({ q10: 40, q25: 60, q50: 55, q75: 70, q90: 80 }), null);
+  assert.equal(normalizeTrajectoryPacket({ ...packet, horizons: { 180: packet.horizons[30] } }, { modelVersion: 'trajectory-v1' }), null);
+  assert.equal(normalizeTrajectoryPacket({ ...packet, horizons: { '030': packet.horizons[30] } }, { modelVersion: 'trajectory-v1' }), null);
+  assert.equal(normalizeTrajectoryPacket({ ...packet, horizons: { 30: { ...packet.horizons[30], q10: '40' } } }, { modelVersion: 'trajectory-v1' }), null);
+  assert.equal(normalizeTrajectoryPacket({ ...packet, medianPath: [...packet.medianPath].reverse() }, { modelVersion: 'trajectory-v1' }), null);
+  assert.equal(normalizeTrajectoryPacket({ ...packet, lastKnownDate: '2026-02-31' }, { modelVersion: 'trajectory-v1' }), null);
+  assert.equal(normalizeTrajectoryPacket(packet, { expectedProductId: 99, modelVersion: 'trajectory-v1' }), null);
+  assert.equal(normalizeTrajectoryPacket({ ...packet, modelVersion: 'other-model' }, { modelVersion: 'trajectory-v1' }), null);
+  assert.equal(normalizeTrajectoryPacket({ ...packet, categoryId: 3, groupId: 400, asOf: '2026-08-10' }, {
+    expectedCategoryId: 3, expectedGroupId: 401, expectedAsOf: '2026-08-10', modelVersion: 'trajectory-v1'
+  }), null);
+  assert.deepEqual(trajectoryForecastEstimates({ ...packet, horizons: { 30: { q10: 40, q25: 60, q50: 55, q75: 70, q90: 80 } } }), {});
+
+  const coldStart = normalizeTrajectoryPacket({
+    ...packet, confidence: 'cold-start', lastKnownPrice: null, lastKnownDate: null
+  }, { modelVersion: 'trajectory-v1' });
+  assert.equal(coldStart.confidence, 'cold-start');
+  assert.equal(coldStart.lastKnownPrice, null);
+  assert.equal(trajectoryForecastEstimates(coldStart)[30].estimatedChange, null);
 });
 
 test('isTrajectoryStale flags anything more than 8 weeks behind asOf, and never flags a cold-start packet with no dated history', () => {

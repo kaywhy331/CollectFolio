@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
+  accountBoundSyncContext,
+  accountOwnedRows,
   authRedirectPath,
   chunkRecords,
   forEachInBatches,
@@ -15,7 +18,9 @@ import {
   requestWatchlistItems,
   remotePortfolioSnapshot,
   remoteWatchlistItem,
+  sessionUserId,
   upsertInBatches,
+  upsertHoldingRows,
   watchlistRow
 } from '../app/assets/js/services/supabase.js';
 import { PRICING_POLICY_VERSION } from '../app/assets/js/core/pricing-policy.js';
@@ -33,11 +38,76 @@ const snapshot = (overrides = {}) => ({
   ...overrides
 });
 
+function sessionFor(userId, claimedUserId = userId) {
+  const payload = Buffer.from(JSON.stringify({ sub: userId })).toString('base64url');
+  return {
+    access_token: `header.${payload}.signature`,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    user: claimedUserId ? { id: claimedUserId } : undefined
+  };
+}
+
 test('auth email flows return to the current application URL', () => {
   assert.equal(
     authRedirectPath('/auth/v1/otp', { origin: 'https://collectfolio.example', pathname: '/app/' }),
     '/auth/v1/otp?redirect_to=https%3A%2F%2Fcollectfolio.example%2Fapp%2F'
   );
+});
+
+test('sync identity comes from the access token and rejects conflicting session metadata', async () => {
+  const userA = '30000000-0000-4000-8000-000000000001';
+  const userB = '30000000-0000-4000-8000-000000000002';
+  assert.equal(sessionUserId(sessionFor(userA)), userA);
+  assert.throws(() => sessionUserId(sessionFor(userA, userB)), /does not match/i);
+  assert.throws(() => sessionUserId({ access_token: 'not-a-jwt', user: { id: userA } }), /invalid/i);
+
+  const context = await accountBoundSyncContext(sessionFor(userA), {
+    claimOwner: async (candidate) => candidate
+  });
+  assert.equal(context.userId, userA);
+  await assert.rejects(accountBoundSyncContext(sessionFor(userB), {
+    claimOwner: async () => userA
+  }), (error) => error.code === 'SYNC_ACCOUNT_MISMATCH' && /different account/i.test(error.message));
+});
+
+test('remote synchronization rows must repeat the signed-in owner', () => {
+  const userA = '30000000-0000-4000-8000-000000000001';
+  const userB = '30000000-0000-4000-8000-000000000002';
+  const rows = [{ user_id: userA, id: 'one' }];
+  assert.equal(accountOwnedRows(rows, userA, 'holdings'), rows);
+  assert.throws(() => accountOwnedRows([{ user_id: userB, id: 'two' }], userA, 'holdings'), /outside the signed-in account/i);
+  assert.throws(() => accountOwnedRows([{ id: 'missing-owner' }], userA, 'holdings'), /outside the signed-in account/i);
+});
+
+test('holding upserts prefer account-owned keys and only fall back for a pending migration', async () => {
+  const paths = [];
+  await upsertHoldingRows([{ user_id: 'user-a', id: 'holding-a' }], { access_token: 'token' }, {
+    upsert: async (path) => { paths.push(path); }
+  });
+  assert.deepEqual(paths, ['/rest/v1/holdings?on_conflict=user_id,id']);
+
+  paths.length = 0;
+  await upsertHoldingRows([{ user_id: 'user-a', id: 'holding-a' }], { access_token: 'token' }, {
+    upsert: async (path) => {
+      paths.push(path);
+      if (paths.length === 1) throw Object.assign(new Error('missing composite key'), { code: '42P10' });
+    }
+  });
+  assert.deepEqual(paths, [
+    '/rest/v1/holdings?on_conflict=user_id,id',
+    '/rest/v1/holdings?on_conflict=id'
+  ]);
+
+  await assert.rejects(upsertHoldingRows([], {}, {
+    upsert: async () => { throw Object.assign(new Error('forbidden'), { code: '42501' }); }
+  }), /forbidden/);
+});
+
+test('database synchronization keys include account ownership', async () => {
+  const sql = await readFile(new URL('../supabase/migrations/0021_account_owned_sync_keys.sql', import.meta.url), 'utf8');
+  assert.match(sql, /holdings_pkey primary key \(user_id, id\)/i);
+  assert.match(sql, /scan_sessions_pkey primary key \(user_id, id\)/i);
+  assert.doesNotMatch(sql, /delete from public\.(?:holdings|scan_sessions)/i);
 });
 
 test('tombstones merge by holding ID and retain newest ISO deletion', () => {

@@ -9,7 +9,10 @@ on:
       - ".github/workflows/tcgcsv-market-universe.yml"
       - ".github/workflows/cardbase-mtg-history.yml"
       - "supabase/migrations/0020_tcgcsv_market_universe.sql"
+      - "supabase/migrations/0021_account_owned_sync_keys.sql"
       - "tests/tcgcsv-market-universe-migration.test.js"
+      - "tests/supabase.test.js"
+      - "tests/postgres/run_forecast_runtime.py"
       - "tests/postgres/run_tcgcsv_universe_runtime.py"
   push:
     branches: [main]
@@ -20,7 +23,10 @@ on:
       - ".github/workflows/tcgcsv-market-universe.yml"
       - ".github/workflows/cardbase-mtg-history.yml"
       - "supabase/migrations/0020_tcgcsv_market_universe.sql"
+      - "supabase/migrations/0021_account_owned_sync_keys.sql"
       - "tests/tcgcsv-market-universe-migration.test.js"
+      - "tests/supabase.test.js"
+      - "tests/postgres/run_forecast_runtime.py"
       - "tests/postgres/run_tcgcsv_universe_runtime.py"
 
 permissions:

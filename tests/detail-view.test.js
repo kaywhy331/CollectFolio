@@ -211,6 +211,24 @@ test('trajectory-v1 excluded/unknown packet still shows the honest insufficient-
   assert.doesNotMatch(html, /30-day outlook/);
 });
 
+test('trajectory-v1 withholds values whose price baseline is stale at publication time', () => {
+  const tcgcsvItem = { ...item, provider: 'tcgcsv', categoryId: 3, groupId: 42, productId: 777, variant: 'Holofoil' };
+  const catalogRef = catalogReferenceForItem(tcgcsvItem, { canonicalVariantId: variantId });
+  const packet = {
+    modelVersion: 'trajectory-v1', confidence: 'standard', lastKnownDate: '2026-01-01', lastKnownPrice: 90,
+    horizons: { 30: { q10: 70, q25: 80, q50: 95, q75: 105, q90: 120 } }, medianPath: []
+  };
+  const state = baseState({
+    trajectoryForecasts: {
+      byKey: { '3:42:777:Holofoil': { eligibility: 'published', packet, manifest: { asOf: '2026-08-10' } } },
+      loading: false, error: ''
+    }
+  });
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, state);
+  assert.match(html, /A fresher market observation is required/);
+  assert.doesNotMatch(html, /30-day outlook|\$95\.00/);
+});
+
 test('tier-4 publication renders observed, trend, fair value, forecast, and drivers separately', () => {
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const state = baseState({

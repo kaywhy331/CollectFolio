@@ -74,6 +74,8 @@ test('search adapter emits normalized truth-preserving fields', () => {
   assert.equal(result.forecast180d.estimatedValue, 120);
   assert.equal(result.forecast365d.estimatedValue, 135);
   assert.ok(Math.abs(result.forecast30d.estimatedChange - 0.05) < 1e-12);
+  assert.equal(result.forecast30d.baselineValue, 100);
+  assert.equal(result.forecast30d.baselineDate, '2026-08-08');
 });
 
 test('approved observed price fills a rights-suppressed catalog price on forecast results', () => {

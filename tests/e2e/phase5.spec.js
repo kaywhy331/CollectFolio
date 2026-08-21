@@ -20,15 +20,21 @@ async function skipOnboarding(page) {
   await expect(overview).toBeVisible();
 }
 
+function accessTokenFor(userId) {
+  return `header.${Buffer.from(JSON.stringify({ sub: userId })).toString('base64url')}.signature`;
+}
+
 async function configureCloud(page, { failSync = false } = {}) {
-  await page.addInitScript(() => {
+  const userId = '30000000-0000-4000-8000-000000000001';
+  await page.addInitScript(({ accessToken, accountId }) => {
+    if (localStorage.getItem('collectfolio:supabase-session')) return;
     localStorage.setItem('collectfolio:supabase-session', JSON.stringify({
-      access_token: 'synthetic-access-token',
+      access_token: accessToken,
       refresh_token: 'synthetic-refresh-token',
       expires_at: Math.floor(Date.now() / 1000) + 3600,
-      user: { id: '30000000-0000-4000-8000-000000000001', email: 'collector@example.test' }
+      user: { id: accountId, email: 'collector@example.test' }
     }));
-  });
+  }, { accessToken: accessTokenFor(userId), accountId: userId });
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
@@ -40,9 +46,13 @@ async function configureCloud(page, { failSync = false } = {}) {
       ENABLE_CLOUD_DATA_REMOVAL: false
     });`
   }));
+  const requests = [];
+  const writes = [];
   await page.route('**/__phase5-cloud/**', (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    requests.push(`${request.method()} ${url.pathname}${url.search}`);
+    if (request.method() !== 'GET') writes.push(`${request.method()} ${url.pathname}${url.search}`);
     if (failSync && request.method() === 'GET' && url.pathname.endsWith('/holdings')) {
       return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'service unavailable' }) });
     }
@@ -54,6 +64,7 @@ async function configureCloud(page, { failSync = false } = {}) {
     }
     return route.fulfill({ contentType: 'application/json', body: '[]' });
   });
+  return { requests, writes };
 }
 
 test('three-step onboarding survives refresh and completes after the first collection add', async ({ page }) => {
@@ -137,7 +148,7 @@ test('guest settings are responsive, accessible, textual, and modal focus stays 
 });
 
 test('signed-in settings synchronize successfully and recover their offline state', async ({ page, context }) => {
-  await configureCloud(page);
+  const cloud = await configureCloud(page);
   await page.goto('/');
   await skipOnboarding(page);
   await page.getByRole('button', { name: 'Open settings' }).click();
@@ -146,6 +157,13 @@ test('signed-in settings synchronize successfully and recover their offline stat
   await expect(page.getByText(/Unavailable until independently recoverable cloud removal/)).toBeVisible();
   await page.getByRole('button', { name: 'Synchronize now' }).click();
   await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
+  const ownedReads = cloud.requests.filter((entry) => entry.startsWith('GET ')
+    && /\/(?:holdings|holding_deletions|portfolio_snapshots|watchlist_items|watchlist_deletions)\?/.test(entry));
+  expect(ownedReads.length).toBeGreaterThanOrEqual(5);
+  expect(
+    ownedReads.filter((entry) => entry.includes('user_id=eq.30000000-0000-4000-8000-000000000001')),
+    ownedReads.join('\n')
+  ).toHaveLength(ownedReads.length);
   await expect(page.locator('section.settings-section').filter({ hasText: 'Synchronization history' })).toContainText('Completed');
 
   await context.setOffline(true);
@@ -154,6 +172,31 @@ test('signed-in settings synchronize successfully and recover their offline stat
   await context.setOffline(false);
   await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
   await expectAccessible(page);
+});
+
+test('a local collection cannot silently synchronize into a different account', async ({ page }) => {
+  const cloud = await configureCloud(page);
+  await page.goto('/');
+  await skipOnboarding(page);
+  await page.getByRole('button', { name: 'Open settings' }).click();
+  await page.getByRole('button', { name: 'Synchronize now' }).click();
+  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
+  const writesAfterOwnerSync = cloud.writes.length;
+
+  const userB = '30000000-0000-4000-8000-000000000002';
+  await page.evaluate(({ accessToken, accountId }) => {
+    localStorage.setItem('collectfolio:supabase-session', JSON.stringify({
+      access_token: accessToken,
+      refresh_token: 'synthetic-refresh-token-b',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: { id: accountId, email: 'other@example.test' }
+    }));
+  }, { accessToken: accessTokenFor(userB), accountId: userB });
+  await page.reload();
+  await expect(page.locator('[data-account-status="error"]')).toContainText('linked to another cloud account');
+  await page.getByRole('button', { name: 'Synchronize now' }).click();
+  await expect(page.locator('[data-account-status="error"]')).toContainText('linked to another cloud account');
+  expect(cloud.writes.length).toBe(writesAfterOwnerSync);
 });
 
 test('synchronization errors preserve local data and expose a recovery reference', async ({ page }) => {

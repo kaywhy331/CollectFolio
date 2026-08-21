@@ -26,7 +26,7 @@ import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } fro
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
 import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets, loadCatalogGames, loadCatalogSetProductsPage, loadCatalogSets, loadTCGCSVSetCoverImage, mergeCatalogGames } from './services/catalog-browse.js';
-import { cropsFromBoxes, cropToJPEG, fileToImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
+import { cropsFromBoxesAsync, cropToJPEG, fileToScanImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
 import { getTrajectoryForecastForItem, trajectoryKeyForItem } from './services/forecast-trajectory.js';
 import { getPriceHistoryForItem, historyKeyForItem } from './services/history-trajectory.js';
@@ -34,9 +34,9 @@ import { applyEnrichmentToItem, getEnrichmentForItem } from './services/catalog-
 import { requestPriceRefresh } from './services/justtcg-refresh.js';
 import { fetchTcgcsvRefreshStatus } from './services/tcgcsv-refresh-status.js';
 import { mergeDemandOptOut, recordDemandEvent, syncDemandEvents } from './services/demand-events.js';
-import { applyAcquisitionToAll, batchAddApproved, createScanDraft, deleteCrop, identifyCrop, identifyDraftCrops, maintainCompletedScans, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropAcquisition, setCropApproval, setCropCustomItem } from './services/scan-review.js';
+import { applyAcquisitionToAll, batchAddApproved, createScanDraft, deleteCrop, discardScanDraft, identifyCrop, identifyDraftCrops, maintainCompletedScans, recoverInterruptedIdentifications, saveScanDraft, selectCropCandidate, setCropAcquisition, setCropApproval, setCropCustomItem } from './services/scan-review.js';
 import { ScanWorkbench } from './services/scan-workbench.js';
-import { consumeAuthCallback, fetchDemandAnalyticsOptOut, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, pushDemandAnalyticsOptOut, removeCloudData, requestMagicLink, signIn, signOut, signUp, syncAll } from './services/supabase.js';
+import { consumeAuthCallback, fetchDemandAnalyticsOptOut, fetchPublicFeatureFlags, isSupabaseConfigured, loadSession, pushDemandAnalyticsOptOut, removeCloudData, requestMagicLink, sessionUserId, signIn, signOut, signUp, syncAll } from './services/supabase.js';
 import { findWatchedItem, unwatchItem, watchItem } from './services/watchlist.js';
 import { renderAdd } from './views/add.js';
 import { OVERVIEW_RANGES, renderHome } from './views/home.js';
@@ -68,6 +68,15 @@ let browseProductSearchTimer = null;
 let browseProductExpansionPromise = null;
 let routeHydrationId = 0;
 let identificationRun = 0;
+let activeDraftSource = null;
+
+function sourceImageForDraft(draft = activeDraft) {
+  return draft?.id && activeDraftSource?.draftId === draft.id ? activeDraftSource.image : null;
+}
+
+function releaseDraftSource(draftId = '') {
+  if (!draftId || activeDraftSource?.draftId === draftId) activeDraftSource = null;
+}
 
 function startDraftIdentification(draft) {
   if (!draft?.id || !(draft.crops || []).some((crop) => crop.status === 'queued')) return;
@@ -180,7 +189,7 @@ function renderRoot(html) {
 }
 
 function render(state = getState()) {
-  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, insights: renderInsights, profile: renderProfile, scan: () => renderScanReview(activeDraft, state), detail: () => renderPriceIntelligenceDetail(activeDetail, state) };
+  const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, insights: renderInsights, profile: renderProfile, scan: () => renderScanReview(activeDraft, { ...state, scanSourceAvailable: Boolean(sourceImageForDraft()) }), detail: () => renderPriceIntelligenceDetail(activeDetail, state) };
   const inspectorOpen = Boolean(state.ready && state.activeView === 'detail' && history.state?.inspector && activeDetail);
   const onboardingVisible = state.ready
     && !state.settings.onboardingComplete
@@ -274,12 +283,20 @@ async function loadLocal() {
   const scanDrafts = retainedScans.filter((scan) => scan.status !== 'complete')
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   if (activeRoute.key === 'add-review') {
-    activeDraft = scanDrafts[0] || null;
+    activeDraft = scanDrafts.find((scan) => scan.id === activeDraft?.id) || scanDrafts[0] || null;
+    if (!sourceImageForDraft(activeDraft)) releaseDraftSource();
     if (activeDraft && recoverInterruptedIdentifications(activeDraft)) await saveScanDraft(activeDraft);
   }
   document.documentElement.dataset.theme = settings.theme;
   const pendingChanges = pendingSyncChanges(holdings, deletions, watchlistItems, watchlistDeletions, demandEvents);
   const auth = getState().auth;
+  let accountMismatch = false;
+  if (auth.session && settings.syncOwnerId) {
+    try { accountMismatch = sessionUserId(auth.session) !== settings.syncOwnerId; } catch { accountMismatch = true; }
+  }
+  const accountMismatchMessage = accountMismatch
+    ? 'This device is linked to another cloud account. Sign back into that account, or export a backup and clear this device before connecting a different account.'
+    : '';
   const nextState = {
     ...getState(),
     holdings,
@@ -306,11 +323,12 @@ async function loadLocal() {
       ...auth,
       online: navigator.onLine !== false,
       pendingChanges,
+      error: accountMismatchMessage || auth.error,
       status: navigator.onLine === false
         ? 'offline'
         : auth.syncing
           ? 'syncing'
-          : auth.error
+          : accountMismatch || auth.error
             ? 'error'
             : !auth.session
               ? 'local'
@@ -656,7 +674,10 @@ function resolveRouteContext(route, state = getState()) {
   } else {
     activeDetail = null;
   }
-  if (route.key === 'add-review') activeDraft = state.scanDrafts?.[0] || activeDraft;
+  if (route.key === 'add-review') {
+    activeDraft = state.scanDrafts?.find((scan) => scan.id === activeDraft?.id) || state.scanDrafts?.[0] || null;
+    if (!sourceImageForDraft(activeDraft)) releaseDraftSource();
+  }
 }
 
 const COVER_FETCH_CONCURRENCY = 4;
@@ -902,6 +923,7 @@ async function hydrateCatalogGames({ bypassCache = false } = {}) {
 }
 
 function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = true } = {}) {
+  if (activeRoute.key === 'add-review' && route.key !== 'add-review') releaseDraftSource();
   activeRoute = route;
   if (route.key !== 'card-detail') routeHydrationId += 1;
   const state = getState();
@@ -991,7 +1013,7 @@ function holdingForm(holding = null, { title = '', image = '', item: proposedIte
 }
 
 async function fileToPortfolioImage(file) {
-  const source = await fileToImageDataURL(file);
+  const source = await fileToScanImageDataURL(file);
   const image = await loadImage(source);
   return cropToJPEG(image, { x: 0, y: 0, width: image.naturalWidth || image.width, height: image.naturalHeight || image.height });
 }
@@ -1296,6 +1318,7 @@ async function syncNow() {
       const reference = syncDiagnosticReference(at);
       const message = 'Collection purchases were synchronized, but the Watchlist still needs attention. Retry to finish.';
       await persistSettings({
+        syncOwnerId: result.userId,
         lastSyncedAt: at,
         lastSyncError: message,
         syncDiagnostic: reference,
@@ -1307,6 +1330,7 @@ async function syncNow() {
       setState({ auth: { ...getState().auth, error: message, status: 'error' } });
     } else {
       await persistSettings({
+        syncOwnerId: result.userId,
         lastSyncedAt: at,
         lastSyncError: '',
         syncDiagnostic: '',
@@ -1325,6 +1349,10 @@ async function syncNow() {
     const at = new Date().toISOString();
     const message = friendlyCloudError(error, { online: navigator.onLine !== false });
     const reference = syncDiagnosticReference(at);
+    // accountBoundSyncContext claims the local owner before any remote I/O.
+    // Reload it even when the first network attempt fails so account switches
+    // remain visibly fail-closed rather than looking unbound until refresh.
+    await loadLocal();
     await persistSettings({
       lastSyncError: message,
       syncDiagnostic: reference,
@@ -1597,10 +1625,10 @@ function openCompareModal() {
 async function processScanFile(file, { single = false, closeSourceModal = false } = {}) {
   if (!file) return;
   try {
-    const sourceImage = await fileToImageDataURL(file);
+    const sourceImage = await fileToScanImageDataURL(file);
     const image = await loadImage(sourceImage);
     if (closeSourceModal) closeModal();
-    openWorkbench(image, { single, sourceImage });
+    openWorkbench(image, { single });
   } catch (error) {
     showToast(error.message || 'This image could not be opened. Try a JPEG, PNG, or WebP photo.', 'error');
   }
@@ -1610,7 +1638,7 @@ function chooseScanImage({ single = false } = {}) {
   const description = single
     ? 'Use the camera or choose one card image. CollectFolio detects its four corners, straightens it, and starts identification automatically.'
     : 'Use the camera or choose an existing image. CollectFolio detects one or several card boundaries.';
-  openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. The full source photo is held only while you edit boundaries and is never uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
+  openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. A decoder-bounded working copy is held only in memory for the active review; the full source photo is never saved or uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelectorAll('[data-scan-source]').forEach((input) => input.addEventListener('change', async (event) => {
       const file = event.target.files[0];
       if (!file) return;
@@ -1619,12 +1647,13 @@ function chooseScanImage({ single = false } = {}) {
   }});
 }
 
-function openWorkbench(image, { single = false, sourceImage = '' } = {}) {
+function openWorkbench(image, { single = false } = {}) {
   let editor;
+  const processing = new AbortController();
   const tools = single
     ? '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="retry">Retry corner detection</button></div>'
     : '<div class="workbench-tools"><button class="button secondary small" type="button" data-workbench="add">Draw new</button><button class="button secondary small" type="button" data-workbench="delete">Delete selected</button><button class="button secondary small" type="button" data-workbench="retry">Retry detection</button></div><div class="grid-controls"><label>Rows<input id="grid-rows" type="number" min="1" max="12" value="3"></label><label>Columns<input id="grid-columns" type="number" min="1" max="12" value="3"></label><button class="button secondary" type="button" data-workbench="grid">Apply grid</button></div>';
-  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag the four corner handles to the card edges, or drag inside to move the outline. The saved crop is straightened automatically.' : 'Tap a card to select it. Drag its four corner handles to align perspective, or drag inside to move it.'}</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print" role="status"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Straighten and identify</button>', onOpen(layer) {
+  openModal({ title: single ? 'Frame this card' : 'Edit crop boundaries', content: `<div class="workbench"><p class="muted">${single ? 'Drag the four corner handles to the card edges, or drag inside to move the outline. The saved crop is straightened automatically.' : 'Tap a card to select it. Drag its four corner handles to align perspective, or drag inside to move it.'} Keyboard: brackets select an outline, 1–4 select a corner, 0 selects the whole outline, and arrow keys move the selection (Shift moves ten steps).</p><div class="canvas-wrap"><canvas id="scan-canvas" aria-label="Editable crop boundary canvas"></canvas></div>${tools}<p id="boundary-count" class="fine-print" role="status" aria-live="polite"></p></div>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button" type="button" data-workbench="continue">Straighten and identify</button>', onOpen(layer) {
     const count = layer.querySelector('#boundary-count');
     const updateCount = (boxes) => {
       const fallback = boxes.some((box) => box.fallback);
@@ -1642,7 +1671,7 @@ function openWorkbench(image, { single = false, sourceImage = '' } = {}) {
     const detectionButtons = () => [...layer.querySelectorAll('[data-workbench="retry"], [data-workbench="continue"]')];
     const runDetection = async () => {
       detectionButtons().forEach((button) => { button.disabled = true; });
-      count.textContent = 'Detecting item boundaries… You can cancel and keep the original photo.';
+      count.textContent = 'Detecting item boundaries… You can cancel without saving anything.';
       count.classList.remove('negative');
       try {
         await editor.detect();
@@ -1654,7 +1683,11 @@ function openWorkbench(image, { single = false, sourceImage = '' } = {}) {
         detectionButtons().forEach((button) => { button.disabled = false; });
       }
     };
-    editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, { single, onChange: updateCount });
+    editor = new ScanWorkbench(layer.querySelector('#scan-canvas'), image, {
+      single,
+      onChange: updateCount,
+      onAnnounce: (message) => { count.textContent = message; }
+    });
     runDetection();
     layer.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-workbench]');
@@ -1668,8 +1701,15 @@ function openWorkbench(image, { single = false, sourceImage = '' } = {}) {
         if (!editor.boxes.length) { showToast('Add at least one crop boundary', 'warning'); return; }
         button.disabled = true;
         try {
+          const boxes = structuredClone(editor.boxes);
+          const crops = await cropsFromBoxesAsync(image, boxes, {
+            signal: processing.signal,
+            onProgress: ({ completed, total }) => {
+              count.textContent = `Straightening crop ${completed} of ${total}…`;
+            }
+          });
           const draft = createScanDraft(
-            cropsFromBoxes(image, editor.boxes),
+            crops,
             single ? 'single' : 'multi',
             {
               condition: getState().settings.defaultCondition,
@@ -1679,10 +1719,9 @@ function openWorkbench(image, { single = false, sourceImage = '' } = {}) {
               retainPhoto: false
             }
           );
-          draft.sourceImage = sourceImage || safeImageUrl(image.src);
-          draft.sourceImageRetainedAt = new Date().toISOString();
           await saveScanDraft(draft);
           activeDraft = draft;
+          activeDraftSource = { draftId: draft.id, image };
           closeModal();
           await loadLocal();
           navigate('scan');
@@ -1696,14 +1735,16 @@ function openWorkbench(image, { single = false, sourceImage = '' } = {}) {
       }
     });
   }, onClose() {
+    processing.abort();
     editor?.destroy();
   }});
 }
 
-async function resumeScan() {
+async function resumeScan(draftId = '') {
   const scans = (await getAll('scans')).filter((scan) => scan.status !== 'complete').sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   if (!scans.length) { showToast('No saved scan is waiting', 'warning'); return; }
-  activeDraft = scans[0];
+  activeDraft = scans.find((scan) => scan.id === draftId) || scans[0];
+  if (!sourceImageForDraft(activeDraft)) releaseDraftSource();
   const recovered = recoverInterruptedIdentifications(activeDraft);
   if (recovered) await saveScanDraft(activeDraft);
   navigate('scan');
@@ -1711,18 +1752,43 @@ async function resumeScan() {
   if (recovered) showToast('Interrupted identification was reset for retry', 'warning');
 }
 
+function confirmDiscardScan(draftId = '') {
+  const draft = getState().scanDrafts?.find((scan) => scan.id === draftId)
+    || (activeDraft?.id === draftId || !draftId ? activeDraft : null);
+  if (!draft?.id) { showToast('This saved scan is no longer available', 'warning'); return; }
+  const cropCount = draft.crops?.length || 0;
+  openModal({
+    title: 'Discard scan draft?',
+    content: `<p>This permanently removes the local review with <strong>${cropCount} cropped ${cropCount === 1 ? 'item' : 'items'}</strong>, its match decisions, and acquisition details. Portfolio items already added are unchanged.</p>`,
+    actions: '<button class="button ghost" type="button" data-close-modal>Cancel</button><button class="button danger" type="button" data-confirm-discard-scan>Discard draft</button>',
+    onOpen(layer) {
+      layer.querySelector('[data-confirm-discard-scan]').addEventListener('click', async (event) => {
+        event.currentTarget.disabled = true;
+        try {
+          identificationRun += 1;
+          await discardScanDraft(draft.id);
+          releaseDraftSource(draft.id);
+          if (activeDraft?.id === draft.id) activeDraft = null;
+          closeModal();
+          await loadLocal();
+          if (activeRoute.key === 'add-review') navigate('add');
+          else render();
+          showToast('Scan draft discarded');
+        } catch (error) {
+          event.currentTarget.disabled = false;
+          showToast(error?.message || 'The scan draft could not be discarded', 'error');
+        }
+      });
+    }
+  });
+}
+
 async function editCropBoundary(cropId) {
   const draftId = activeDraft?.id;
   const crop = activeDraft?.crops?.find((entry) => entry.id === cropId);
-  if (!crop || !activeDraft?.sourceImage) {
-    showToast('The full source photo is no longer available for boundary editing', 'warning');
-    return;
-  }
-  let image;
-  try {
-    image = await loadImage(activeDraft.sourceImage);
-  } catch (error) {
-    showToast(error?.message || 'The saved source photo could not be opened', 'error');
+  const image = sourceImageForDraft(activeDraft);
+  if (!crop || !image) {
+    showToast('The source photo is not stored. Start a new scan to edit boundaries again.', 'warning');
     return;
   }
   let editor;
@@ -1765,7 +1831,7 @@ async function editCropBoundary(cropId) {
             button.disabled = false;
             return;
           }
-          const [updated] = cropsFromBoxes(image, editor.boxes);
+          const [updated] = await cropsFromBoxesAsync(image, editor.boxes);
           Object.assign(currentCrop, {
             box: updated.box,
             image: updated.image,
@@ -2239,14 +2305,13 @@ root.addEventListener('click', async (event) => {
   if (action.dataset.action === 'upload-scan') root.querySelector('#scan-upload-input')?.click();
   if (action.dataset.action === 'start-multi-scan') chooseScanImage({ single: false });
   if (action.dataset.action === 'start-single-scan') chooseScanImage({ single: true });
-  if (action.dataset.action === 'resume-scan') resumeScan();
+  if (action.dataset.action === 'resume-scan') resumeScan(action.dataset.draftId || '');
+  if (action.dataset.action === 'discard-scan') confirmDiscardScan(action.dataset.draftId || '');
   if (action.dataset.action === 'save-scan' && activeDraft) { await saveScanDraft(activeDraft); await loadLocal(); showToast('Scan saved on this device'); }
-  if (action.dataset.action === 'delete-source-photo' && activeDraft) {
-    activeDraft.sourceImage = '';
-    activeDraft.sourceImageDeletedAt = new Date().toISOString();
-    await saveScanDraft(activeDraft);
+  if (action.dataset.action === 'release-source-photo' && activeDraft) {
+    releaseDraftSource(activeDraft.id);
     render();
-    showToast('Full source photo deleted; reviewed crops remain available');
+    showToast('Source working copy released; saved crops remain available');
   }
   if (action.dataset.action === 'apply-acquisition-all' && activeDraft) {
     const form = root.querySelector('#bulk-acquisition-form');
@@ -2572,14 +2637,14 @@ addEventListener('online', () => {
     ...state.auth,
     online: true,
     status: state.auth.session
-      ? state.auth.pendingChanges || state.auth.error || !state.settings.lastSyncedAt ? 'pending' : 'synced'
+      ? state.auth.error ? 'error' : state.auth.pendingChanges || !state.settings.lastSyncedAt ? 'pending' : 'synced'
       : 'local'
   } });
   if (state.settings.syncIssueNotifications) showToast('Back online. Cloud actions are available again.');
   if (state.auth.session && (state.auth.pendingChanges || state.auth.error)) syncNow();
 });
 
-addEventListener('pagehide', () => { releaseOCRWorker().catch(() => {}); });
+addEventListener('pagehide', () => { releaseDraftSource(); releaseOCRWorker().catch(() => {}); });
 
 initializeAuth();
 applyAppRoute(activeRoute, { historyMode: 'replace', focus: false, scroll: false });

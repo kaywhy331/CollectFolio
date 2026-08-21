@@ -6,7 +6,13 @@ import { csvCell, escapeHTML, formatCurrency, safeImageUrl, textSimilarity } fro
 
 test('batch eligibility excludes selected but unapproved and malformed crops', () => {
   const draft = { crops: [
-    { id: 'approved', approved: true, selectedId: 'candidate', candidates: [{ id: 'candidate' }], customItem: null },
+    {
+      id: 'approved', approved: true, selectedId: 'candidate', customItem: null,
+      candidates: [{
+        id: 'candidate', provider: 'tcgcsv', externalId: '3:1102:5001',
+        categoryId: 3, groupId: 1102, productId: 5001
+      }]
+    },
     { id: 'not-approved', approved: false, selectedId: 'candidate', candidates: [{ id: 'candidate' }], customItem: null },
     { id: 'missing-candidate', approved: true, selectedId: 'unknown', candidates: [], customItem: null },
     { id: 'custom', approved: true, selectedId: '', candidates: [], customItem: { id: 'custom-item' } }

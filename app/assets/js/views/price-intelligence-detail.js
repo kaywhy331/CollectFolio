@@ -367,6 +367,9 @@ function trajectorySection(item, state, sectionId) {
     return `<section class="card trajectory-insufficient" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>Insufficient evidence for a price forecast</h2><p class="muted">This printing does not yet have enough published price history to support a modeled trajectory. This is not a fabricated estimate.</p></section>`;
   }
   const packet = entry.packet;
+  if (isTrajectoryStale(packet, entry.manifest?.asOf || entry.groupAsOf)) {
+    return `<section class="card trajectory-insufficient" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>A fresher market observation is required</h2><p class="muted">The last price behind this forecast is too old relative to its publication. CollectFolio withholds the modeled values instead of presenting a stale baseline as current.</p></section>`;
+  }
   const isColdStart = packet.confidence === 'cold-start';
   // Serve-all-cohorts mode (Kevin 2026-08-18): low-history and
   // insufficient-history packets are served everywhere, labeled as early

@@ -58,6 +58,8 @@ function forecastManifestPayload() {
 
 function forecastGroupPayload() {
   return {
+    categoryId: 3,
+    groupId: 100,
     asOf: '2026-08-10',
     modelVersion: 'trajectory-v1',
     part: 1,

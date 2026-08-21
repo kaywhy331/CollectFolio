@@ -2,12 +2,13 @@ import { clamp } from '../core/utils.js';
 import { detectBoundaries, gridBoxes, mapBox, quadBox } from './image-algorithms.js';
 
 export class ScanWorkbench {
-  constructor(canvas, image, { single = false, onChange = () => {}, onStatus = () => {} } = {}) {
+  constructor(canvas, image, { single = false, onChange = () => {}, onStatus = () => {}, onAnnounce = () => {} } = {}) {
     this.canvas = canvas;
     this.context = canvas.getContext('2d', { willReadFrequently: true });
     this.image = image;
     this.onChange = onChange;
     this.onStatus = onStatus;
+    this.onAnnounce = onAnnounce;
     this.single = single;
     this.detectionWorker = null;
     this.detectionJob = 0;
@@ -18,8 +19,12 @@ export class ScanWorkbench {
     this.selected = 0;
     this.mode = 'select';
     this.drag = null;
+    this.keyboardCorner = null;
     this.canvas.width = image.naturalWidth || image.width;
     this.canvas.height = image.naturalHeight || image.height;
+    this.canvas.tabIndex = 0;
+    this.canvas.setAttribute('role', 'application');
+    this.canvas.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown ArrowLeft ArrowRight 0 1 2 3 4 [ ] Delete');
     this.bind();
     this.render();
   }
@@ -28,10 +33,12 @@ export class ScanWorkbench {
     this.pointerDown = (event) => this.onPointerDown(event);
     this.pointerMove = (event) => this.onPointerMove(event);
     this.pointerUp = (event) => this.onPointerUp(event);
+    this.keyDown = (event) => this.onKeyDown(event);
     this.canvas.addEventListener('pointerdown', this.pointerDown);
     this.canvas.addEventListener('pointermove', this.pointerMove);
     this.canvas.addEventListener('pointerup', this.pointerUp);
     this.canvas.addEventListener('pointercancel', this.pointerUp);
+    this.canvas.addEventListener('keydown', this.keyDown);
   }
 
   destroy() {
@@ -43,6 +50,7 @@ export class ScanWorkbench {
     this.canvas.removeEventListener('pointermove', this.pointerMove);
     this.canvas.removeEventListener('pointerup', this.pointerUp);
     this.canvas.removeEventListener('pointercancel', this.pointerUp);
+    this.canvas.removeEventListener('keydown', this.keyDown);
   }
 
   point(event) {
@@ -86,6 +94,7 @@ export class ScanWorkbench {
 
   onPointerDown(event) {
     event.preventDefault();
+    this.canvas.focus({ preventScroll: true });
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.point(event);
     if (this.mode === 'add') {
@@ -95,6 +104,7 @@ export class ScanWorkbench {
         confidence: 1, method: 'manual-box', fallback: false
       });
       this.selected = this.boxes.length - 1;
+      this.keyboardCorner = null;
       this.drag = { type: 'draw', start: point };
       this.render();
       return;
@@ -106,6 +116,7 @@ export class ScanWorkbench {
       return;
     }
     this.selected = this.hitBox(point);
+    this.keyboardCorner = null;
     if (this.selected >= 0) this.drag = { type: 'move', start: point, box: { ...this.boxes[this.selected] } };
     this.render();
   }
@@ -161,6 +172,72 @@ export class ScanWorkbench {
     this.render();
   }
 
+  onKeyDown(event) {
+    if (!this.boxes.length) return;
+    if (this.selected < 0 || this.selected >= this.boxes.length) this.selected = 0;
+    const key = event.key;
+    if (key === '[' || key === ']') {
+      event.preventDefault();
+      const direction = key === ']' ? 1 : -1;
+      this.selected = (Math.max(0, this.selected) + direction + this.boxes.length) % this.boxes.length;
+      this.keyboardCorner = null;
+      this.onAnnounce(`Selected boundary ${this.selected + 1} of ${this.boxes.length}.`);
+      this.render();
+      return;
+    }
+    if (/^[1-4]$/.test(key)) {
+      event.preventDefault();
+      this.keyboardCorner = Number(key) - 1;
+      this.onAnnounce(`Corner ${key} selected on boundary ${this.selected + 1}. Use arrow keys to adjust it.`);
+      this.render();
+      return;
+    }
+    if (key === '0' || (key === 'Escape' && this.keyboardCorner !== null)) {
+      event.preventDefault();
+      this.keyboardCorner = null;
+      this.onAnnounce(`Whole boundary ${this.selected + 1} selected. Use arrow keys to move it.`);
+      this.render();
+      return;
+    }
+    if ((key === 'Delete' || key === 'Backspace') && !this.single) {
+      event.preventDefault();
+      this.deleteSelected();
+      this.onAnnounce(this.boxes.length ? `${this.boxes.length} boundaries remain.` : 'No boundaries remain.');
+      return;
+    }
+    const directions = {
+      ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]
+    };
+    if (!directions[key] || this.selected < 0) return;
+    event.preventDefault();
+    const unit = Math.max(1, Math.round(Math.min(this.canvas.width, this.canvas.height) / 500));
+    const distance = unit * (event.shiftKey ? 10 : 1);
+    const [directionX, directionY] = directions[key];
+    const dx = directionX * distance;
+    const dy = directionY * distance;
+    const box = this.boxes[this.selected];
+    const corners = box.corners?.map((corner) => ({ ...corner })) || [
+      { x: box.x, y: box.y }, { x: box.x + box.width, y: box.y },
+      { x: box.x + box.width, y: box.y + box.height }, { x: box.x, y: box.y + box.height }
+    ];
+    if (this.keyboardCorner !== null) {
+      const corner = corners[this.keyboardCorner];
+      corners[this.keyboardCorner] = {
+        x: clamp(corner.x + dx, 0, this.canvas.width),
+        y: clamp(corner.y + dy, 0, this.canvas.height)
+      };
+      this.boxes[this.selected] = { ...quadBox(corners), confidence: 1, method: 'keyboard-corners', fallback: false };
+    } else {
+      const movedX = clamp(box.x + dx, 0, this.canvas.width - box.width) - box.x;
+      const movedY = clamp(box.y + dy, 0, this.canvas.height - box.height) - box.y;
+      const movedCorners = corners.map((corner) => ({ x: corner.x + movedX, y: corner.y + movedY }));
+      this.boxes[this.selected] = { ...box, ...quadBox(movedCorners), corners: movedCorners, confidence: 1, method: 'keyboard-move', fallback: false };
+    }
+    this.onChange(this.boxes);
+    this.onAnnounce(`${this.keyboardCorner === null ? 'Boundary' : `Corner ${this.keyboardCorner + 1}`} moved ${event.shiftKey ? 'ten steps' : 'one step'} ${key.replace('Arrow', '').toLowerCase()}.`);
+    this.render();
+  }
+
   setAddMode() {
     if (this.single) return;
     this.mode = 'add';
@@ -172,6 +249,7 @@ export class ScanWorkbench {
     if (this.selected < 0) return;
     this.boxes.splice(this.selected, 1);
     this.selected = Math.min(this.boxes.length - 1, this.selected);
+    this.keyboardCorner = null;
     this.onChange(this.boxes);
     this.render();
   }
@@ -261,6 +339,10 @@ export class ScanWorkbench {
   render() {
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.drawImage(this.image, 0, 0, this.canvas.width, this.canvas.height);
+    const selectedLabel = this.selected >= 0
+      ? `Boundary ${this.selected + 1} of ${this.boxes.length}; ${this.keyboardCorner === null ? 'whole boundary selected' : `corner ${this.keyboardCorner + 1} selected`}.`
+      : 'No boundary selected.';
+    this.canvas.setAttribute('aria-label', `Editable crop boundary canvas. ${selectedLabel} Arrow keys adjust the selection; Shift plus arrow moves ten steps; keys 1 through 4 select a corner; 0 selects the whole boundary; brackets change boundaries.`);
     const line = Math.max(3, Math.min(this.canvas.width, this.canvas.height) * 0.006);
     this.boxes.forEach((box, index) => {
       this.context.fillStyle = index === this.selected ? 'rgba(130,232,173,.12)' : 'rgba(120,185,255,.08)';

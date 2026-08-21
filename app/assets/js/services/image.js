@@ -8,6 +8,11 @@ const OCR_MIN_WIDTH = 1200;
 const OCR_MAX_WIDTH = 1600;
 const OCR_MAX_PIXELS = 3_000_000;
 export const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_SCAN_IMAGE_PIXELS = 8_000_000;
+export const MAX_SCAN_IMAGE_DIMENSION = 3200;
+export const MAX_SCAN_CROP_WIDTH = 900;
+const MAX_IMAGE_HEADER_BYTES = 1024 * 1024;
+const IMAGE_RERANK_CONCURRENCY = 4;
 let tesseractPromise;
 let tesseractWorkerPromise;
 let ocrQueue = Promise.resolve();
@@ -303,8 +308,132 @@ export function fileToImageDataURL(file) {
   });
 }
 
-export function cropToJPEG(image, box, maxWidth = 1200, quality = 0.9) {
-  if (box?.corners?.length === 4) return rectifyCardToJPEG(image, box.corners, maxWidth, quality);
+export function boundedImageDimensions(width, height, {
+  maximumPixels = MAX_SCAN_IMAGE_PIXELS,
+  maximumDimension = MAX_SCAN_IMAGE_DIMENSION
+} = {}) {
+  const sourceWidth = Math.max(1, Math.trunc(Number(width) || 1));
+  const sourceHeight = Math.max(1, Math.trunc(Number(height) || 1));
+  const dimensionScale = Math.min(1, maximumDimension / Math.max(sourceWidth, sourceHeight));
+  const pixelScale = Math.min(1, Math.sqrt(maximumPixels / (sourceWidth * sourceHeight)));
+  const scale = Math.min(dimensionScale, pixelScale);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+    scale
+  };
+}
+
+function byteText(bytes, offset, length) {
+  return String.fromCharCode(...bytes.subarray(offset, offset + length));
+}
+
+// Read dimensions from bounded header bytes so decoder-side resize can be
+// requested before any full-resolution bitmap is allocated by application
+// code. Capture/upload supports the raster formats the UI advertises plus GIF.
+export function imageDimensionsFromBytes(value) {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value || 0);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dimensions = (width, height) => Number.isSafeInteger(width) && width > 0
+    && Number.isSafeInteger(height) && height > 0 ? { width, height } : null;
+
+  if (bytes.length >= 24
+    && bytes[0] === 0x89 && byteText(bytes, 1, 3) === 'PNG'
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
+    && byteText(bytes, 12, 4) === 'IHDR') {
+    return dimensions(view.getUint32(16), view.getUint32(20));
+  }
+  if (bytes.length >= 10 && ['GIF87a', 'GIF89a'].includes(byteText(bytes, 0, 6))) {
+    return dimensions(view.getUint16(6, true), view.getUint16(8, true));
+  }
+  if (bytes.length >= 30 && byteText(bytes, 0, 4) === 'RIFF' && byteText(bytes, 8, 4) === 'WEBP') {
+    const chunk = byteText(bytes, 12, 4);
+    if (chunk === 'VP8X') {
+      const width = 1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16);
+      const height = 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16);
+      return dimensions(width, height);
+    }
+    if (chunk === 'VP8 ' && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+      return dimensions(view.getUint16(26, true) & 0x3fff, view.getUint16(28, true) & 0x3fff);
+    }
+    if (chunk === 'VP8L' && bytes[20] === 0x2f) {
+      const width = 1 + bytes[21] + ((bytes[22] & 0x3f) << 8);
+      const height = 1 + (bytes[22] >> 6) + (bytes[23] << 2) + ((bytes[24] & 0x0f) << 10);
+      return dimensions(width, height);
+    }
+  }
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    const startOfFrame = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+    let offset = 2;
+    while (offset + 3 < bytes.length) {
+      while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+      if (offset >= bytes.length) break;
+      const marker = bytes[offset++];
+      if (marker === 0xd9 || marker === 0xda) break;
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+      if (offset + 1 >= bytes.length) break;
+      const length = view.getUint16(offset);
+      if (length < 2 || offset + length > bytes.length) break;
+      if (startOfFrame.has(marker) && length >= 7) {
+        return dimensions(view.getUint16(offset + 5), view.getUint16(offset + 3));
+      }
+      offset += length;
+    }
+  }
+  return null;
+}
+
+// Decode directly from the File without a base64 copy. Dimensions come from
+// bounded header bytes and the first (and only) bitmap decode requests the
+// bounded output size. Browsers without a decoder-side resize path fail
+// closed instead of allocating an unbounded object-URL image.
+export async function fileToScanImageDataURL(file, options = {}) {
+  validateImageFile(file);
+  if (typeof file.slice !== 'function' || typeof file.arrayBuffer !== 'function') {
+    throw new Error('Choose a valid browser image file.');
+  }
+  const header = await withTimeout(
+    file.slice(0, MAX_IMAGE_HEADER_BYTES).arrayBuffer(),
+    IMAGE_LOAD_TIMEOUT_MS,
+    'The image header could not be read in time.'
+  );
+  const source = imageDimensionsFromBytes(header);
+  if (!source) throw new Error('Use a JPEG, PNG, WebP, or GIF image with readable dimensions.');
+  if (typeof createImageBitmap !== 'function') {
+    throw new Error('This browser cannot safely resize the image before decoding. Update the browser and try again.');
+  }
+  const requested = boundedImageDimensions(source.width, source.height, options);
+  let image;
+  try {
+    image = await withTimeout(createImageBitmap(file, {
+      resizeWidth: requested.width,
+      resizeHeight: requested.height,
+      resizeQuality: 'high'
+    }), IMAGE_LOAD_TIMEOUT_MS, 'The image could not be decoded and resized in time.');
+    const bounded = boundedImageDimensions(image.width || image.naturalWidth, image.height || image.naturalHeight, options);
+    const canvas = document.createElement('canvas');
+    canvas.width = bounded.width;
+    canvas.height = bounded.height;
+    canvas.getContext('2d', { alpha: false }).drawImage(image, 0, 0, bounded.width, bounded.height);
+    return canvas.toDataURL('image/jpeg', 0.9);
+  } finally {
+    image?.close?.();
+  }
+}
+
+export function sourceRaster(image) {
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+  context.drawImage(image, 0, 0, width, height);
+  return { width, height, pixels: context.getImageData(0, 0, width, height).data };
+}
+
+export function cropToJPEG(image, box, maxWidth = 1200, quality = 0.9, raster = null) {
+  if (box?.corners?.length === 4) return rectifyCardToJPEG(image, box.corners, maxWidth, quality, raster);
   const scale = Math.min(1, maxWidth / Math.max(1, box.width));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(box.width * scale));
@@ -344,16 +473,9 @@ export function rectifyCardPixels(sourcePixels, sourceWidth, sourceHeight, corne
   return { width: destination.width, height: destination.height, data: output, corners: destination.corners };
 }
 
-export function rectifyCardToJPEG(image, corners, maximumWidth = 1200, quality = 0.9) {
-  const sourceWidth = image.naturalWidth || image.width;
-  const sourceHeight = image.naturalHeight || image.height;
-  const source = document.createElement('canvas');
-  source.width = sourceWidth;
-  source.height = sourceHeight;
-  const context = source.getContext('2d', { alpha: false, willReadFrequently: true });
-  context.drawImage(image, 0, 0, sourceWidth, sourceHeight);
-  const pixels = context.getImageData(0, 0, sourceWidth, sourceHeight);
-  const rectified = rectifyCardPixels(pixels.data, sourceWidth, sourceHeight, corners, maximumWidth);
+export function rectifyCardToJPEG(image, corners, maximumWidth = 1200, quality = 0.9, raster = null) {
+  const source = raster || sourceRaster(image);
+  const rectified = rectifyCardPixels(source.pixels, source.width, source.height, corners, maximumWidth);
   const output = document.createElement('canvas');
   output.width = rectified.width;
   output.height = rectified.height;
@@ -362,7 +484,24 @@ export function rectifyCardToJPEG(image, corners, maximumWidth = 1200, quality =
 }
 
 export function cropsFromBoxes(image, boxes) {
-  return boxes.map((box) => ({ box: { ...box }, image: cropToJPEG(image, box, 1200, 0.9) }));
+  const raster = boxes.some((box) => box?.corners?.length === 4) ? sourceRaster(image) : null;
+  return boxes.map((box) => ({ box: { ...box }, image: cropToJPEG(image, box, MAX_SCAN_CROP_WIDTH, 0.9, raster) }));
+}
+
+export async function cropsFromBoxesAsync(image, boxes, { onProgress = () => {}, signal } = {}) {
+  const source = Array.isArray(boxes) ? boxes : [];
+  const raster = source.some((box) => box?.corners?.length === 4) ? sourceRaster(image) : null;
+  const crops = [];
+  for (let index = 0; index < source.length; index += 1) {
+    if (signal?.aborted) throw new DOMException('Crop processing was cancelled.', 'AbortError');
+    crops.push({
+      box: { ...source[index] },
+      image: cropToJPEG(image, source[index], MAX_SCAN_CROP_WIDTH, 0.9, raster)
+    });
+    onProgress({ completed: index + 1, total: source.length });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return crops;
 }
 
 function otsuThreshold(values) {
@@ -628,16 +767,27 @@ export function candidateEvidenceScore(candidate = {}, evidence = {}) {
 export async function rerankCandidates(cropSource, candidates, evidence) {
   let cropHash;
   try { cropHash = imageDifferenceHash(await loadImage(cropSource)); } catch { cropHash = ''; }
-  return (await Promise.all(candidates.map(async (candidate) => {
+  const ranked = new Array(candidates.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < candidates.length) {
+      const index = nextIndex++;
+      const candidate = candidates[index];
     const metadata = candidateEvidenceScore(candidate, evidence);
     const candidateImage = candidate.imageSmall || candidate.image;
-    if (!cropHash || !candidateImage) return { ...candidate, matchScore: metadata };
+      if (!cropHash || !candidateImage) {
+        ranked[index] = { ...candidate, matchScore: metadata };
+        continue;
+      }
     try {
       const hash = imageDifferenceHash(await loadImage(candidateImage));
       const visualScore = hashSimilarity(cropHash, hash);
-      return { ...candidate, visualScore, matchScore: Math.min(1, metadata * 0.88 + visualScore * 0.12) };
+        ranked[index] = { ...candidate, visualScore, matchScore: Math.min(1, metadata * 0.88 + visualScore * 0.12) };
     } catch {
-      return { ...candidate, matchScore: metadata };
+        ranked[index] = { ...candidate, matchScore: metadata };
     }
-  }))).sort((a, b) => b.matchScore - a.matchScore);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(IMAGE_RERANK_CONCURRENCY, candidates.length) }, () => worker()));
+  return ranked.sort((a, b) => b.matchScore - a.matchScore);
 }

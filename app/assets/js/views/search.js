@@ -1,12 +1,12 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
 import { priceFreshness } from '../core/data-freshness.js';
-import { catalogPriceOptionsForDisplay } from '../core/pricing-policy.js';
+import { catalogPriceForValuation, catalogPriceOptionsForDisplay } from '../core/pricing-policy.js';
 import { searchResultViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent, safeImageUrl } from '../core/utils.js';
 import { selectPublicationForCatalogItem } from '../core/market-series.js';
 import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames, catalogSetYears } from '../services/catalog-browse.js';
 import { findWatchedItem } from '../services/watchlist.js';
-import { trajectoryForecastEstimates, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
+import { isTrajectoryStale, trajectoryForecastEstimates, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
 
 // Trajectory-v1 (T6): looks up a prefetched forecast packet for a TCGCSV
 // catalog item (see app.js's hydrateTrajectoryForecasts) and shapes it
@@ -20,6 +20,7 @@ function trajectoryEstimatesForItem(item, state) {
   if (!key) return null;
   const entry = state.trajectoryForecasts?.byKey?.[key];
   if (!entry || entry.eligibility !== 'published' || !entry.packet) return null;
+  if (isTrajectoryStale(entry.packet, entry.manifest?.asOf || entry.groupAsOf)) return null;
   return trajectoryForecastEstimates(entry.packet);
 }
 
@@ -114,7 +115,14 @@ function outlookEstimateCell(forecast, label, currency, { compact = false } = {}
     : EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence)
       ? ' · early estimate'
       : ' modeled';
-  return `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, currency))}<small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${qualifier}</small></dd></div>`;
+  const baseline = forecast.estimatedChange === null
+    ? ''
+    : compact
+      ? ' vs model baseline'
+      : forecast.baselineValue > 0
+        ? ` vs ${formatCurrency(forecast.baselineValue, currency)} model baseline${forecast.baselineDate ? ` (${forecast.baselineDate})` : ''}`
+        : ' vs model baseline';
+  return `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, currency))}<small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${escapeHTML(baseline)}${qualifier}</small></dd></div>`;
 }
 
 function marketOutlookMarkup(model, { compact = false, showNotes = true } = {}) {
@@ -474,7 +482,7 @@ function releaseTime(item) {
 }
 
 function searchSortContract(items, requested = 'newest') {
-  const hasPrice = items.some((item) => item.price !== null && item.price !== '' && Number.isFinite(Number(item.price)));
+  const hasPrice = items.some((item) => catalogPriceForValuation(item) !== null);
   const hasRelease = items.some((item) => releaseTime(item) !== null);
   const supported = new Set(['relevance', 'name', 'name-desc']);
   if (hasPrice) supported.add('price-desc').add('price-asc');
@@ -489,7 +497,7 @@ function searchSortContract(items, requested = 'newest') {
 
 function sortSearchResults(items, sort) {
   if (sort === 'relevance') return [...items];
-  const price = (item) => item.price !== null && item.price !== '' && Number.isFinite(Number(item.price)) ? Number(item.price) : null;
+  const price = (item) => catalogPriceForValuation(item);
   return [...items].sort((left, right) => {
     if (sort === 'name' || sort === 'name-desc') {
       const compared = String(left.name || '').localeCompare(String(right.name || ''));

@@ -5,11 +5,15 @@ import {
   compactCompletedScanDraft,
   completedScanRetentionPlan,
   createScanDraft,
+  cropHasApprovableIdentity,
+  eligibleApprovedCrops,
   identifyDraftCrops,
   normalizeAcquisition,
   searchCatalogCandidates,
   scanReviewSummary,
-  scanReviewTotals
+  scanReviewTotals,
+  setCropApproval,
+  stripPersistedSourcePhoto
 } from '../app/assets/js/services/scan-review.js';
 import { catalogReferenceForItem } from '../app/assets/js/core/catalog-identity.js';
 import { renderScanReview } from '../app/assets/js/views/scan.js';
@@ -75,9 +79,8 @@ test('scan acquisition retains explicit currencies and excludes mismatched cost 
 
 test('redesigned review exposes bulk editing, exact identity, cost basis, and explicit confirmation', () => {
   const draft = reviewDraft();
-  draft.sourceImage = 'data:image/jpeg;base64,source';
   const html = renderScanReview(draft, {
-    settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }
+    settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }, scanSourceAvailable: true
   });
   assert.match(html, /Review queue summary/);
   assert.match(html, /Apply purchase details to all/);
@@ -91,8 +94,9 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   assert.match(html, /\$22\.00 USD cost basis/);
   assert.match(html, /Add 1 confirmed/);
   assert.match(html, /Unconfirmed and unmatched items are skipped/);
-  assert.match(html, /Full source photo saved on this device during review/);
-  assert.match(html, /data-action="delete-source-photo"/);
+  assert.match(html, /bounded source working copy is held only in memory/i);
+  assert.match(html, /data-action="release-source-photo"/);
+  assert.match(html, /data-action="discard-scan"/);
   assert.match(html, /data-action="edit-crop"/);
   assert.match(html, /Edit crop boundary/);
   assert.match(html, /only text queries and catalog identifiers may reach enabled catalog sources/i);
@@ -130,6 +134,39 @@ test('review labels candidates as similarity evidence and requires explicit iden
   assert.match(html, /Strong similarity/);
   assert.doesNotMatch(html, /100%/);
   assert.doesNotMatch(html, /Approve this exact item/);
+});
+
+test('similarity-only candidates cannot be approved or added as exact identities', async () => {
+  const draft = reviewDraft();
+  const likely = { ...card, id: 'pokemon:possible', externalId: 'possible', matchBucket: 'likely', matchScore: 0.96 };
+  draft.crops[0].candidates = [likely];
+  draft.crops[0].selectedId = likely.id;
+  draft.crops[0].approved = true;
+  assert.equal(cropHasApprovableIdentity(draft.crops[0]), false);
+  assert.equal(eligibleApprovedCrops(draft).length, 0);
+  assert.deepEqual(scanReviewSummary(draft), { total: 2, exact: 0, needsReview: 1, unmatched: 1, approved: 0 });
+  const html = renderScanReview(draft, { settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true } });
+  assert.match(html, /Exact catalog match required/);
+  assert.match(html, /Similarity alone is never approval/);
+  await assert.rejects(() => setCropApproval(draft, draft.crops[0].id, true), /exact catalog match/i);
+});
+
+test('a collector-selected TCGCSV row is an approvable exact source identity, not a similarity-only guess', () => {
+  const draft = reviewDraft();
+  const catalogRow = {
+    id: 'tcgcsv:3:1102:5001', externalId: '3:1102:5001', provider: 'tcgcsv',
+    categoryId: 3, groupId: 1102, productId: 5001, name: 'Synthetic Dragon ex',
+    matchBucket: 'likely', matchScore: 0.91
+  };
+  draft.crops[0].candidates = [catalogRow];
+  draft.crops[0].selectedId = catalogRow.id;
+  draft.crops[0].approved = true;
+  assert.equal(cropHasApprovableIdentity(draft.crops[0]), true);
+  assert.equal(eligibleApprovedCrops(draft).length, 1);
+  assert.deepEqual(scanReviewSummary(draft), { total: 2, exact: 1, needsReview: 0, unmatched: 1, approved: 1 });
+
+  draft.crops[0].candidates[0] = { ...catalogRow, productId: 9999 };
+  assert.equal(cropHasApprovableIdentity(draft.crops[0]), false);
 });
 
 test('catalog candidate search relaxes in order, recovers, and deduplicates useful matches', async () => {
@@ -232,6 +269,8 @@ test('completed scan receipts discard images and obey count and age retention', 
   const older = { ...completed, id: 'older', completedAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z' };
   const stale = { ...completed, id: 'stale', completedAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
   const active = { id: 'active', status: 'review', crops: [{ image: 'data:image/jpeg;base64,keep' }] };
+  active.sourceImage = 'data:image/jpeg;base64,raw-active-source';
+  active.sourceImageRetainedAt = '2026-08-10T00:00:00.000Z';
   const plan = completedScanRetentionPlan([older, stale, active, completed], Date.parse('2026-08-11T00:00:00.000Z'), {
     maxAgeDays: 30,
     maximumReceipts: 1
@@ -239,4 +278,18 @@ test('completed scan receipts discard images and obey count and age retention', 
   assert.deepEqual(plan.removedIds, ['older', 'stale']);
   assert.deepEqual(plan.records.map((scan) => scan.id), ['active', 'recent']);
   assert.equal(plan.records[0].crops[0].image, 'data:image/jpeg;base64,keep');
+  assert.equal('sourceImage' in plan.records[0], false);
+  assert.equal('sourceImageRetainedAt' in plan.records[0], false);
+});
+
+test('source photo fields are stripped from active drafts without removing compressed crops', () => {
+  const draft = reviewDraft();
+  draft.sourceImage = 'data:image/jpeg;base64,raw-source';
+  draft.sourceImageDeletedAt = '2026-08-10T00:00:00.000Z';
+  assert.equal(stripPersistedSourcePhoto(draft), true);
+  assert.equal(stripPersistedSourcePhoto(draft), false);
+  assert.equal('sourceImage' in draft, false);
+  assert.equal('sourceImageDeletedAt' in draft, false);
+  assert.equal(draft.crops.length, 2);
+  assert.match(draft.crops[0].image, /^data:image\/jpeg/);
 });

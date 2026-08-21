@@ -13,6 +13,18 @@
    - `scan_sessions`
 5. Confirm Row Level Security is enabled on all five tables.
 
+### Existing-project account-key migration
+
+For an existing deployment, back up the database and deploy application `0.8.27`
+before applying `supabase/migrations/0021_account_owned_sync_keys.sql`. The new client
+tries `(user_id,id)` first and recognizes only PostgreSQL `42P10` as the temporary
+pre-migration fallback. Apply 0021 during a short maintenance window because it takes
+an exclusive lock on `holdings` and `scan_sessions`; it retains every row, replaces
+both primary keys with `(user_id, id)`, and adds non-unique ID diagnostic indexes.
+Refresh installed clients after the migration. Older cached clients will fail their
+legacy ID-only upsert after 0021, retain local writes, and must be refreshed; they do
+not receive a permissive compatibility path.
+
 ## 2. Obtain the public browser key
 
 In Supabase, open **Project Settings → API Keys** and copy the publishable key (or legacy anon public key). Do not use the service-role/secret key.
@@ -29,7 +41,7 @@ In Supabase, open **Project Settings → API Keys** and copy the publishable key
 ```text
 SUPABASE_URL=https://agmjgyyvhfcivbwdlvzk.supabase.co
 SUPABASE_ANON_KEY=<your Supabase publishable/anon key>
-APP_VERSION=0.8.26
+APP_VERSION=0.8.27
 ENABLE_TESSERACT=true
 ENABLE_WATCHLISTS=true
 ENABLE_SET_BROWSING=true
@@ -65,6 +77,9 @@ After Netlify assigns a URL:
 - Select **Profile → Sync now**.
 - In Supabase Table Editor, confirm the holding row includes the authenticated user ID.
 - Confirm another account cannot read that row.
+- In the original browser collection, sign out and sign into a different account; confirm sync refuses the account switch and keeps local data intact.
+- In a fresh private browser profile, confirm the second account can sync normally and still cannot read the first account's rows.
+- Confirm `holdings_pkey` and `scan_sessions_pkey` are `(user_id, id)` after applying migration 0021.
 - Delete the holding on one signed-in browser, sync, then sync a second browser and confirm it remains deleted.
 - Install the PWA and launch it from the home screen.
 - On a published deploy, open **Functions → justtcg-catalog** and confirm it has a Scheduled badge with a five-minute UTC schedule.
@@ -76,7 +91,7 @@ After Netlify assigns a URL:
 When any file under `app/` changes, update the cache name in `app/sw.js` before a production release, for example:
 
 ```js
-const CACHE = 'collectfolio-shell-v0.8.26';
+const CACHE = 'collectfolio-shell-v0.8.27';
 ```
 
 This ensures installed PWAs replace the prior shell reliably.

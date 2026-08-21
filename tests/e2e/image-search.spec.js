@@ -1,11 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { deflateSync } from 'node:zlib';
 
-const singlePixelPNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl+X2kAAAAASUVORK5CYII=',
-  'base64'
-);
-
 function pngChunk(type, data) {
   const table = pngChunk.table ||= Array.from({ length: 256 }, (_, value) => {
     let result = value;
@@ -19,6 +14,22 @@ function pngChunk(type, data) {
   const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
   const checksum = Buffer.alloc(4); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
   return Buffer.concat([length, payload, checksum]);
+}
+
+function solidPNG(width = 64, height = 64) {
+  const rows = Array.from({ length: height }, () => {
+    const row = Buffer.alloc(1 + width * 4); row[0] = 0;
+    for (let x = 0; x < width; x++) {
+      const offset = 1 + x * 4;
+      row[offset] = 128; row[offset + 1] = 128; row[offset + 2] = 128; row[offset + 3] = 255;
+    }
+    return row;
+  });
+  const header = Buffer.alloc(13); header.writeUInt32BE(width); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6;
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'), pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(Buffer.concat(rows))), pngChunk('IEND', Buffer.alloc(0))
+  ]);
 }
 
 function rotatedTexturedCardPNG(width = 360, height = 440) {
@@ -50,6 +61,7 @@ function rotatedTexturedCardPNG(width = 360, height = 440) {
 }
 
 const rotatedCardPNG = rotatedTexturedCardPNG();
+const unrecognizablePNG = solidPNG();
 
 async function skipOnboarding(page) {
   await page.goto('/');
@@ -73,6 +85,80 @@ async function openImageReview(page, buffer = rotatedCardPNG) {
   await expect(page).toHaveURL(/\/scan\/review$/);
 }
 
+async function configureNoRecognitionStubs(page) {
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.0-test',
+      ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
+      ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
+    });`
+  }));
+  await page.route('**/assets/data/visual-index/pokemon-v1/manifest.json', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ format: 'collectfolio-visual-candidate-index', version: 1, fingerprintCount: 0, shards: [] })
+  }));
+}
+
+async function configureVisualIdentityStubs(page, { ambiguous = false } = {}) {
+  const TCGCSV_ORIGIN = 'https://tcgcsv-visual-e2e.example.test';
+  await page.addInitScript(() => {
+    // Make the 9x8 dHash canvas deterministic without changing the larger
+    // canvases used by corner detection and rectification.
+    const original = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function (...args) {
+      const result = original.apply(this, args);
+      if (this.canvas.width === 9 && this.canvas.height === 8) result.data.fill(255);
+      return result;
+    };
+  });
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.0-test',
+      TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
+      ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
+      ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
+    });`
+  }));
+  await page.route('**/assets/data/visual-index/pokemon-v1/manifest.json', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      format: 'collectfolio-visual-candidate-index', version: 1,
+      fingerprintCount: 1, shards: [{ name: 'visual-e2e' }]
+    })
+  }));
+  await page.route('**/assets/data/visual-index/pokemon-v1/visual-e2e.json', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify([['visual-1', 'Visual Identity Card', 'Synthetic Set', '007', 'Rare', '', '0000000000000000']])
+  }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/bridge/3`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      provider: 'pokemon',
+      products: [
+        { groupId: 1102, productId: 5001, providerCardId: 'visual-1', matchMethod: 'provider-card-id' },
+        ...(ambiguous ? [{ groupId: 1102, productId: 5002, providerCardId: 'visual-1', matchMethod: 'provider-card-id' }] : [])
+      ]
+    })
+  }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/bridge/85`, (route) => route.fulfill({
+    status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not published' })
+  }));
+  await page.route(`${TCGCSV_ORIGIN}/catalog/products/3/1102/5001`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      product: {
+        productId: 5001, categoryId: 3, groupId: 1102, name: 'Visual Identity Card',
+        cardNumber: '007', rarity: 'Rare', prices: [{ subtypeName: 'Holofoil', marketPrice: 42 }]
+      },
+      category: { categoryId: 3, displayName: 'Pokemon' },
+      group: { categoryId: 3, groupId: 1102, name: 'Synthetic Set' },
+      publicationId: 'visual-e2e', sourceUpdatedAt: '2026-08-20'
+    })
+  }));
+}
+
 test('search by image starts in an invariant one-card crop workflow', async ({ page }) => {
   await skipOnboarding(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
@@ -91,24 +177,54 @@ test('search by image starts in an invariant one-card crop workflow', async ({ p
   await expect(workbench.getByRole('button', { name: 'Apply grid' })).toHaveCount(0);
   await workbench.getByRole('button', { name: 'Retry corner detection' }).click();
   await expect(workbench.getByText(/1 detected item outline/)).toBeVisible();
+  const canvas = workbench.locator('#scan-canvas');
+  await canvas.focus();
+  await page.keyboard.press('1');
+  await expect(workbench.locator('#boundary-count')).toContainText('Corner 1 selected');
+  await page.keyboard.press('ArrowRight');
+  await expect(workbench.locator('#boundary-count')).toContainText('Corner 1 moved one step right');
   await workbench.getByRole('button', { name: 'Straighten and identify' }).click();
 
   await expect(page).toHaveURL(/\/scan\/review$/);
   await expect(page.locator('[data-crop-id]')).toHaveCount(1);
   await expect(page.getByText(/Identifying automatically on this device|Couldn’t read a reliable card name/)).toBeVisible();
+  await expect(page.getByText(/bounded source working copy is held only in memory/i)).toBeVisible();
+  const persisted = await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('collectfolio');
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const records = await new Promise((resolve, reject) => {
+      const request = database.transaction('scans').objectStore('scans').getAll();
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    database.close();
+    return records;
+  });
+  expect(persisted).toHaveLength(1);
+  expect(persisted[0]).not.toHaveProperty('sourceImage');
+  expect(persisted[0]).not.toHaveProperty('sourceImageRetainedAt');
+  await page.reload();
+  await expect(page.getByText(/full source photo is not stored with this draft/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit crop boundary' })).toHaveCount(0);
 });
 
 test('unrecognizable capture shows explicit editable fallback and remains retryable', async ({ page }) => {
+  await configureNoRecognitionStubs(page);
   await skipOnboarding(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
   await page.getByRole('button', { name: 'Search from an image' }).click();
   await page.getByRole('dialog', { name: 'Search by card image' }).locator('input[data-scan-source]').last().setInputFiles({
-    name: 'unrecognizable.png', mimeType: 'image/png', buffer: singlePixelPNG
+    name: 'unrecognizable.png', mimeType: 'image/png', buffer: unrecognizablePNG
   });
   const workbench = page.getByRole('dialog', { name: 'Frame this card' });
   await expect(workbench.getByText('Automatic corners were not reliable')).toBeVisible();
   await workbench.getByRole('button', { name: 'Straighten and identify' }).click();
-  await expect(workbench.getByRole('button', { name: 'Straighten and identify' })).toBeEnabled();
+  await expect(page).toHaveURL(/\/scan\/review$/);
+  await expect(page.getByRole('button', { name: 'Retry text recognition' })).toBeEnabled();
+  await expect(page.locator('.review-card [role="status"]')).toContainText(/Couldn’t read a reliable card name/);
 });
 
 test('low-quality native OCR falls through and never exposes random characters', async ({ page }) => {
@@ -153,6 +269,36 @@ test('low-quality native OCR falls through and never exposes random characters',
   await expect(page.getByText('||| 1lI rrrr ???')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Retry text recognition' })).toBeEnabled();
   await expect.poll(() => page.evaluate(() => window.__tesseractRecognized)).toBe(7);
+});
+
+test('visual recognition becomes approvable only through one published TCGCSV bridge identity', async ({ page }) => {
+  await configureVisualIdentityStubs(page);
+  await skipOnboarding(page);
+  await openImageReview(page, unrecognizablePNG);
+
+  const candidate = page.getByRole('button', { name: /Visual Identity Card/ });
+  await expect(candidate).toContainText('TCGCSV linked');
+  await candidate.click();
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Exact source identity');
+  const confirm = page.getByRole('button', { name: 'Confirm exact item', exact: true });
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await page.getByRole('button', { name: 'Add 1 confirmed', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
+});
+
+test('an ambiguous visual bridge candidate stays similarity-only and cannot be approved', async ({ page }) => {
+  await configureVisualIdentityStubs(page, { ambiguous: true });
+  await skipOnboarding(page);
+  await openImageReview(page, unrecognizablePNG);
+
+  const candidate = page.getByRole('button', { name: /Visual Identity Card/ });
+  await expect(candidate).not.toContainText('TCGCSV linked');
+  await candidate.click();
+  const blocked = page.getByRole('button', { name: 'Exact catalog match required', exact: true });
+  await expect(blocked).toBeDisabled();
+  await expect(page.getByText('Similarity alone is never approval.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add 0 confirmed', exact: true })).toBeDisabled();
 });
 
 test('accepted OCR relaxes an over-specific query and recovers a catalog candidate', async ({ page }) => {
@@ -211,4 +357,13 @@ test('accepted OCR relaxes an over-specific query and recovers a catalog candida
   await expect(page.locator('[data-crop-query]')).toHaveValue('Synthetic Dragon ex 223/197');
   expect(queries.some((query) => /223/.test(query))).toBe(true);
   expect(queries.some((query) => /synthetic dragon ex/i.test(query) && !/223/.test(query))).toBe(true);
+
+  await page.getByRole('button', { name: /Synthetic Dragon ex/ }).click();
+  const confirm = page.getByRole('button', { name: 'Confirm exact item', exact: true });
+  await expect(confirm).toBeEnabled();
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Exact source identity');
+  await confirm.click();
+  await page.getByRole('button', { name: 'Add 1 confirmed', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Items added' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
 });

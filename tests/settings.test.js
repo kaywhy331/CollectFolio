@@ -24,6 +24,9 @@ test('settings normalization resolves invalid values without retaining unknown k
   assert.equal(settings.defaultForecastHorizon, 30);
   assert.deepEqual(settings.recentSearches, ['Charizard', 'Lotus']);
   assert.equal('unknownBackendValue' in settings, false);
+  assert.equal(settings.syncOwnerId, '');
+  assert.equal(normalizeSettings({ syncOwnerId: '30000000-0000-4000-8000-000000000001' }).syncOwnerId, '30000000-0000-4000-8000-000000000001');
+  assert.equal(normalizeSettings({ syncOwnerId: 'not-an-account' }).syncOwnerId, '');
 });
 
 test('settings-record migration is complete, idempotent, and preserves existing collectors', () => {
@@ -72,6 +75,7 @@ test('pending changes count only dirty local records', () => {
 test('cloud errors and storage sizes use collector-facing language', () => {
   assert.match(friendlyCloudError(new Error('Failed to fetch')), /offline/i);
   assert.match(friendlyCloudError(new Error('401 unauthorized')), /sign in again/i);
+  assert.match(friendlyCloudError(Object.assign(new Error('different account'), { code: 'SYNC_ACCOUNT_MISMATCH' })), /linked to another cloud account/i);
   assert.doesNotMatch(friendlyCloudError(new Error('database exploded')), /database|supabase/i);
   assert.equal(formatStorageBytes(0), '0 B');
   assert.equal(formatStorageBytes(1536), '1.5 KB');
