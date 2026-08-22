@@ -284,28 +284,28 @@ export function allocationChart(allocation = {}) {
 }
 
 // Trajectory-v1 (T6, PRD Sec4): a dependency-free inline SVG of a published
-// forecast packet's medianPath, with q10-q90 / q25-q75 whisker bands at the
-// two horizons trajectory-v1 actually publishes (30d, 90d -- there is no
-// continuous quantile surface between them, so the band is drawn only at
-// those two checkpoints rather than interpolated). Cold-start packets and
+// forecast packet's q10-q90 / q25-q75 whisker bands at its independently
+// modeled 30d, 60d, and 90d checkpoints. There is no continuous quantile
+// surface between them. Cold-start packets and
 // stale source data are called out explicitly in the returned markup
 // rather than silently rendered like a standard-confidence forecast.
 export function trajectoryProjectionChart(packet, currency = 'USD', { stale = false } = {}) {
   const lastKnownPrice = finiteNonNegative(packet?.lastKnownPrice);
   const lastKnownDate = String(packet?.lastKnownDate || '');
   const lastKnownTime = Date.parse(lastKnownDate);
-  const path = (Array.isArray(packet?.medianPath) ? packet.medianPath : [])
-    .map((point) => ({ date: String(point?.date || ''), price: finiteNonNegative(point?.price), time: Date.parse(point?.date || '') }))
-    .filter((point) => point.price !== null && Number.isFinite(point.time))
-    .sort((left, right) => left.time - right.time);
-  if (lastKnownPrice === null || !Number.isFinite(lastKnownTime) || !path.length) {
+  if (lastKnownPrice === null || !Number.isFinite(lastKnownTime)) {
     return '<div class="empty-chart">Not enough published data to draw a trajectory.</div>';
   }
-  const isColdStart = packet.confidence === 'cold-start';
-  const dayOf = (time) => Math.round((time - lastKnownTime) / 86_400_000);
-  const checkpoints = [30, 90]
+  const checkpoints = [30, 60, 90]
     .map((horizon) => ({ horizon, band: packet.horizons?.[String(horizon)] }))
-    .filter(({ band }) => band && [band.q10, band.q25, band.q50, band.q75, band.q90].every((value) => finiteNonNegative(value) !== null));
+    .filter(({ band }) => band && [band.q10, band.q25, band.q50, band.q75, band.q90].every((value) => finiteNonNegative(value) !== null))
+    .map(({ horizon, band }) => ({
+      horizon,
+      actualDays: Number(band.horizonDaysActual) || ({ 30: 28, 60: 63, 90: 91 }[horizon]),
+      evidenceTier: String(band.evidenceTier || 'range-only'),
+      band
+    }));
+  if (!checkpoints.length) return '<div class="empty-chart">Not enough published data to draw a trajectory.</div>';
   const width = 760;
   const height = 300;
   const left = 76;
@@ -314,41 +314,53 @@ export function trajectoryProjectionChart(packet, currency = 'USD', { stale = fa
   const bottom = 252;
   const allValues = [
     lastKnownPrice,
-    ...path.map((point) => point.price),
     ...checkpoints.flatMap(({ band }) => [band.q10, band.q90].map(Number))
   ];
   const { lower, upper } = meaningfulScale(allValues);
-  const maximumDay = Math.max(0, ...path.map((point) => dayOf(point.time)), ...checkpoints.map((point) => point.horizon));
+  const maximumDay = Math.max(...checkpoints.map((point) => point.actualDays));
   const span = Math.max(1, maximumDay);
   const x = (day) => left + ((Math.max(0, day) / span) * (right - left));
   const y = (value) => bottom - (((value - lower) / (upper - lower)) * (bottom - chartTop));
-  const pathCoordinates = [`${x(0).toFixed(1)},${y(lastKnownPrice).toFixed(1)}`, ...path.map((point) => `${x(dayOf(point.time)).toFixed(1)},${y(point.price).toFixed(1)}`)].join(' ');
-  const bandMarkup = checkpoints.map(({ horizon, band }) => {
-    const cx = x(horizon).toFixed(1);
+  const directional = checkpoints.filter((point) => ['category-validated', 'relative-validated'].includes(point.evidenceTier));
+  const pathCoordinates = [
+    `${x(0).toFixed(1)},${y(lastKnownPrice).toFixed(1)}`,
+    ...directional.map((point) => `${x(point.actualDays).toFixed(1)},${y(Number(point.band.q50)).toFixed(1)}`)
+  ].join(' ');
+  const bandMarkup = checkpoints.map(({ actualDays, evidenceTier, band }) => {
+    const cx = x(actualDays).toFixed(1);
     const wideTop = y(Number(band.q90)).toFixed(1);
     const wideBottom = y(Number(band.q10)).toFixed(1);
     const narrowTop = y(Number(band.q75)).toFixed(1);
     const narrowBottom = y(Number(band.q25)).toFixed(1);
-    return `<line x1="${cx}" y1="${wideTop}" x2="${cx}" y2="${wideBottom}" class="trajectory-band trajectory-band-80"/><line x1="${cx}" y1="${narrowTop}" x2="${cx}" y2="${narrowBottom}" class="trajectory-band trajectory-band-50"/><circle cx="${cx}" cy="${y(Number(band.q50)).toFixed(1)}" r="4.5" class="chart-point forecast-point"/>`;
+    const median = ['category-validated', 'relative-validated'].includes(evidenceTier)
+      ? `<circle cx="${cx}" cy="${y(Number(band.q50)).toFixed(1)}" r="4.5" class="chart-point forecast-point"/>`
+      : '';
+    return `<line x1="${cx}" y1="${wideTop}" x2="${cx}" y2="${wideBottom}" class="trajectory-band trajectory-band-80"/><line x1="${cx}" y1="${narrowTop}" x2="${cx}" y2="${narrowBottom}" class="trajectory-band trajectory-band-50"/>${median}`;
   }).join('');
-  const labelIndexes = [...new Set([0, Math.floor((path.length - 1) / 2), path.length - 1])].filter((index) => index >= 0);
   const xLabels = [
     { x: x(0), label: shortDate(lastKnownDate) || 'Last known', anchor: 'start' },
-    ...labelIndexes.map((index) => ({ x: x(dayOf(path[index].time)), label: shortDate(path[index].date), anchor: index === path.length - 1 ? 'end' : 'middle' }))
+    ...checkpoints.map((point, index) => ({ x: x(point.actualDays), label: `${point.horizon}D`, anchor: index === checkpoints.length - 1 ? 'end' : 'middle' }))
   ];
-  const ninetyDay = checkpoints.find((point) => point.horizon === 90) || checkpoints.at(-1);
-  const confidenceLabel = isColdStart ? 'Cold start estimate' : `${escapeHTML(packet.confidence || 'standard')} confidence`;
-  const ariaLabel = `${isColdStart ? 'Cold start estimate' : 'Trajectory forecast'} from ${escapeHTML(formatCurrency(lastKnownPrice, currency))}${ninetyDay ? ` to a ${escapeHTML(formatCurrency(Number(ninetyDay.band.q50), currency))} 90-day median` : ''}, with a shaded uncertainty range`;
-  return `<div class="projection-chart trajectory-chart ${isColdStart ? 'trajectory-cold-start' : ''}">
-    <div class="trajectory-chart-labels"><span class="support-badge ${isColdStart ? 'restricted' : 'partial'}">${confidenceLabel}</span>${stale ? '<span class="support-badge unsupported">Price data may be out of date</span>' : ''}</div>
-    <p class="sr-only">${isColdStart ? 'This is a cold-start estimate built without enough observed price history for this printing. Treat the range as wider and less certain than a standard forecast.' : 'Modeled trajectory, not observed history.'}</p>
+  const tiers = new Set(checkpoints.map((point) => point.evidenceTier));
+  const evidenceLabel = tiers.has('attribute-reference')
+    ? 'Attribute-based reference range'
+    : tiers.has('range-only')
+      ? 'Price range · no direction'
+      : tiers.has('relative-validated')
+      ? 'Estimated price · assumes flat market'
+      : 'Validated checkpoint estimate';
+  const horizonList = checkpoints.map((point) => point.horizon).join(', ');
+  const ariaLabel = `Independent ${horizonList} day price checkpoints from ${escapeHTML(formatCurrency(lastKnownPrice, currency))}`;
+  return `<div class="projection-chart trajectory-chart">
+    <div class="trajectory-chart-labels"><span class="support-badge partial">${evidenceLabel}</span>${stale ? '<span class="support-badge unsupported">Price data may be out of date</span>' : ''}</div>
+    <p class="sr-only">Only independently modeled checkpoints are shown; connector segments are visual interpolation.</p>
     <div class="chart-wrap"><svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}">
       <title>${ariaLabel}</title>
       ${axisMarkup({ lower, upper, currency, left, right, y, xLabels })}
-      <polyline points="${pathCoordinates}" class="chart-line forecast-median"/>
+      ${directional.length ? `<polyline points="${pathCoordinates}" class="chart-line forecast-median"/>` : ''}
       ${bandMarkup}
       <circle cx="${x(0).toFixed(1)}" cy="${y(lastKnownPrice).toFixed(1)}" r="5" class="chart-point chart-market-point"/>
     </svg></div>
-    <div class="chart-legend"><span><i class="forecast-median-dot"></i>Median path</span><span><i class="forecast-band-80-dot"></i>80% range</span><span><i class="forecast-band-50-dot"></i>50% range</span></div>
+    <div class="chart-legend">${directional.length ? '<span><i class="forecast-median-dot"></i>Checkpoint connector</span>' : ''}<span><i class="forecast-band-80-dot"></i>80% checkpoint range</span><span><i class="forecast-band-50-dot"></i>50% checkpoint range</span></div>
   </div>`;
 }

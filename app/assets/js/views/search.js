@@ -10,7 +10,7 @@ import { isTrajectoryStale, trajectoryForecastEstimates, trajectoryKeyForItem } 
 
 // Trajectory-v1 (T6): looks up a prefetched forecast packet for a TCGCSV
 // catalog item (see app.js's hydrateTrajectoryForecasts) and shapes it
-// into the {30, 90} estimate map searchResultViewModel already knows how
+// into the {30, 60, 90} estimate map searchResultViewModel already knows how
 // to merge alongside cloud-published intelligence. Only an explicitly
 // "published"-eligibility packet ever produces an estimate here -- a
 // cold-start-confidence packet still counts as published (T6 requires it
@@ -110,11 +110,22 @@ function outlookEstimateCell(forecast, label, currency, { compact = false } = {}
   if (!forecast) {
     return `<div><dt>${escapeHTML(label)}</dt><dd>—<small>Not enough data yet</small></dd></div>`;
   }
-  const qualifier = compact ? '' : forecast.status === 'cold-start'
-    ? ' · cold start estimate'
+  const referenceOnly = forecast.evidenceTier === 'attribute-reference';
+  const rangeOnly = forecast.evidenceTier === 'range-only';
+  if (referenceOnly || rangeOnly) {
+    const rangeLabel = label.replace(/\best\.$/, 'range');
+    const description = referenceOnly
+      ? 'attribute-based reference range · not a forecast'
+      : 'typical movement range · no directional estimate';
+    return `<div><dt>${escapeHTML(rangeLabel)}</dt><dd>${escapeHTML(formatCurrency(forecast.lowerBound, currency))}–${escapeHTML(formatCurrency(forecast.upperBound, currency))}<small>${escapeHTML(description)}</small></dd></div>`;
+  }
+  const qualifier = compact ? '' : forecast.status === 'reference-range'
+    ? ' · reference range'
     : EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence)
       ? ' · early estimate'
-      : ' modeled';
+      : forecast.evidenceTier === 'relative-validated'
+        ? ' · assumes flat market'
+        : ' modeled';
   const baseline = forecast.estimatedChange === null
     ? ''
     : compact
@@ -131,19 +142,20 @@ function marketOutlookMarkup(model, { compact = false, showNotes = true } = {}) 
     [model.forecast90d, '3 mo est.']
   ] : [
     [model.forecast30d, '1 mo est.'],
+    [model.forecast60d, '2 mo est.'],
     [model.forecast90d, '3 mo est.'],
     [model.forecast180d, '6 mo est.'],
     [model.forecast365d, '1 year est.']
   ]).filter(([forecast]) => forecast);
   if ((compact || model.change30d === null) && !horizons.length) return '';
   const trendClass = model.change30d === null ? '' : model.change30d >= 0 ? 'positive' : 'negative';
-  const coldStart = horizons.some(([forecast]) => forecast?.status === 'cold-start');
-  const early = horizons.some(([forecast]) => forecast && forecast.status !== 'cold-start' && EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence));
-  return `<dl class="result-market-outlook${compact ? ' compact' : ''}" aria-label="Published market trend and forecast estimates">
+  const coldStart = horizons.some(([forecast]) => forecast?.evidenceTier === 'attribute-reference');
+  const early = horizons.some(([forecast]) => forecast && forecast.evidenceTier !== 'attribute-reference' && EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence));
+  return `<dl class="result-market-outlook${compact ? ' compact' : ''}" aria-label="Published market trend and outlook checkpoints">
     ${compact || model.change30d === null ? '' : `<div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}<small>${model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></dd></div>`}
     ${horizons.map(([forecast, label]) => outlookEstimateCell(forecast, label, model.currency, { compact })).join('')}
-    ${showNotes && coldStart ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Cold start estimate: built without enough observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
-    ${showNotes && early ? '<div class="result-outlook-note"><dt class="sr-only">Estimate note</dt><dd><small>Early estimate: built from a short observed price history for this printing. Treat as wider and less certain than a standard forecast.</small></dd></div>' : ''}
+    ${showNotes && coldStart ? '<div class="result-outlook-note"><dt class="sr-only">Range note</dt><dd><small>Attribute-based reference range: no observed current-price anchor; this is not a forecast.</small></dd></div>' : ''}
+    ${showNotes && early ? '<div class="result-outlook-note"><dt class="sr-only">Range note</dt><dd><small>Price range only: available for context, with no directional estimate.</small></dd></div>' : ''}
   </dl>`;
 }
 

@@ -7,12 +7,13 @@ across up to ~160K variants), using the shared market/category/group
 indices already built by ``indices.py`` and the release-age lifecycle
 curve built by ``lifecycle.py``:
 
-1. ``m``/``g`` -- damped-trend (Holt, phi grid-searched, capped <= 0.95)
+1. ``m``/``g`` -- damped-trend (Holt, fixed preregistered ``phi=0.85``)
    exponential smoothing directly on the cumulative log-index series.
 2. ``s`` -- the group's own damped trend blended with the lifecycle cohort
    curve, empirical-Bayes weighted by how many weeks of its own history
    the group has (``lifecycle.py``).
-3. ``r_i`` -- a simplified single-line Theta forecast: SES-smoothed level
+3. ``r_i`` -- a simplified single-line Theta forecast: fixed-alpha
+   SES-smoothed level
    of the card's *residual return* series (return net of the expected
    market+game+set return each week) is its drift estimate, empirical-Bayes
    shrunk toward zero by ``n/(n+n0)``. This is a deliberate simplification
@@ -58,14 +59,18 @@ from .lifecycle import (
 )
 from .quantiles import QuantileOrderError, REQUIRED_QUANTILES, rearrange_quantiles, validate_quantiles
 
-MODEL_VERSION = "trajectory-v1"
-HORIZONS_DAYS: tuple[int, ...] = (30, 90)
+MODEL_VERSION = "trajectory-v1.1"
+HORIZONS_DAYS: tuple[int, ...] = (30, 60, 90)
 WEEK_DAYS = 7
 
-SES_ALPHA_GRID: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4, 0.5)
+# Fixed defaults are intentional.  Selecting either value on the complete
+# panel leaks later observations into historical origins even though the
+# state recursion itself is causal.  Callers may still pass a singleton
+# alternative in a research test, but production never searches a grid.
+SES_ALPHA_GRID: tuple[float, ...] = (0.3,)
 DAMPED_ALPHA = 0.3
 DAMPED_BETA = 0.1
-DAMPED_PHI_GRID: tuple[float, ...] = (0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
+DAMPED_PHI_GRID: tuple[float, ...] = (0.85,)
 N0_DRIFT = 8.0
 MIN_HISTORY_FOR_STANDARD = 8
 MAX_PATH_POINTS = 32
@@ -97,18 +102,20 @@ def horizon_steps_for(days: int) -> int:
     return max(1, round(days / WEEK_DAYS))
 
 
+def horizon_actual_days_for(days: int) -> int:
+    """Calendar span represented by a nominal horizon on the weekly panel."""
+
+    return horizon_steps_for(days) * WEEK_DAYS
+
+
 def interpolated_component_weights(
     weights_by_h_steps: Mapping[int, tuple[float, float]],
     step: int,
 ) -> tuple[float, float]:
-    """Blend calibrated horizon weights into one continuous path.
+    """Legacy compatibility helper for old two-component continuous paths.
 
-    Component weights are evaluated only at served horizons (currently 30
-    and 90 days, or 4 and 13 weekly steps).  A nearest-horizon lookup makes
-    the median path jump from one parameter set to the other around day 60.
-    Hold the nearest endpoint outside the calibrated interval and linearly
-    blend between adjacent calibrated horizons inside it, preserving the
-    exact evaluated weights at every served checkpoint.
+    Production ``trajectory-v1.1`` packets independently model only the
+    30/60/90-day checkpoints and do not interpolate model coefficients.
     """
     horizon_steps = sorted(weights_by_h_steps)
     if not horizon_steps:
@@ -149,12 +156,13 @@ def fit_damped_trend(
     beta: float = DAMPED_BETA,
     phi_grid: Sequence[float] = DAMPED_PHI_GRID,
 ) -> DampedTrendFit:
-    """Holt's damped-trend recursion, phi chosen by in-sample SSE grid search.
+    """Holt's damped-trend recursion.
 
     ``l_t = alpha*y_t + (1-alpha)*(l_{t-1} + phi*b_{t-1})``
     ``b_t = beta*(l_t - l_{t-1}) + (1-beta)*phi*b_{t-1}``
 
-    Run once over the whole series: because the recursion is causal,
+    The production default contains one preregistered ``phi``.  Run once
+    over the whole series: because the recursion is causal,
     ``(level[o], trend[o])`` at any index ``o`` uses only ``levels[:o+1]``
     and is safe to reuse as the walk-forward state at that origin.
     """
@@ -228,7 +236,9 @@ def fit_theta_drift(
     step ``t`` (no consecutive known prices). The SES level is treated as
     the card's raw (unshrunk) drift estimate at every step; ``level``/
     ``count`` are recorded at every index so any origin's walk-forward
-    state is available without refitting (the recursion is causal).
+    state is available without refitting (the recursion is causal).  The
+    production default is the singleton ``alpha=0.3`` so a later segment
+    cannot select a smoothing parameter for an earlier origin.
     """
 
     n = len(residual_returns)
@@ -318,6 +328,62 @@ def variant_residual_returns(
             residual[t] = (adjusted[t] - adjusted[prev_t]) / gap
         prev_t = t
     return residual
+
+
+def own_level_reversion_at(
+    prices: Sequence[float],
+    index_set: IndexSet,
+    category_id: int,
+    group_id: int,
+    origin_index: int,
+    *,
+    lookback_weeks: int = 13,
+) -> float:
+    """Causal own-level mean-reversion signal at one weekly origin.
+
+    The signal is the trailing median of the card's index-adjusted log
+    level minus its current adjusted log level.  Positive values therefore
+    pull a temporarily depressed printing upward and negative values pull a
+    temporarily elevated printing downward.  Only observations in
+    ``[origin-lookback+1, origin]`` are visible.
+    """
+
+    if isinstance(origin_index, bool) or not isinstance(origin_index, int) or not 0 <= origin_index < len(prices):
+        raise ValueError("origin_index out of range")
+    if isinstance(lookback_weeks, bool) or not isinstance(lookback_weeks, int) or lookback_weeks <= 0:
+        raise ValueError("lookback_weeks must be a positive integer")
+    current = prices[origin_index]
+    if isnan(current) or current <= 0:
+        return 0.0
+    adjusted_current = log(current) - index_set.combined_level(category_id, group_id, origin_index)
+    start = max(0, origin_index - lookback_weeks + 1)
+    trailing = [
+        log(prices[t]) - index_set.combined_level(category_id, group_id, t)
+        for t in range(start, origin_index + 1)
+        if not isnan(prices[t]) and prices[t] > 0
+    ]
+    if len(trailing) < 2:
+        return 0.0
+    return median(trailing) - adjusted_current
+
+
+def component_coefficients(
+    weights: Sequence[float] | None,
+) -> tuple[float, float, float]:
+    """Normalize component coefficients to ``(common, reversion, drift)``.
+
+    Two-value ``(common, drift)`` receipts from trajectory-v1 remain
+    readable during the rollout and imply a zero mean-reversion term.
+    """
+
+    if weights is None:
+        return (1.0, 0.0, 1.0)
+    values = tuple(float(value) for value in weights)
+    if len(values) == 2:
+        return (values[0], 0.0, values[1])
+    if len(values) == 3:
+        return values
+    raise ValueError("component coefficients must contain two or three values")
 
 
 def mad_volatility(values: array) -> float:
@@ -527,10 +593,18 @@ def _calibrate_conformal(
     pool_sizes: dict[str, int] = {}
     for key, values in pools.items():
         values.sort()
-        conformal_offsets[key] = {q: empirical_quantile(values, q) for q in REQUIRED_QUANTILES}
+        empirical = {q: empirical_quantile(values, q) for q in REQUIRED_QUANTILES}
+        # Calibration describes uncertainty around the preregistered point
+        # model; it must not become a hidden second point forecaster.  Pin
+        # q50 to zero and keep lower/upper offsets on their proper side of
+        # that point while preserving asymmetric tails.
+        conformal_offsets[key] = {
+            q: 0.0 if q == 0.5 else min(empirical[q], 0.0) if q < 0.5 else max(empirical[q], 0.0)
+            for q in REQUIRED_QUANTILES
+        }
         pool_sizes[f"{key[0]}:{key[1]}"] = len(values)
 
-    default_offsets = {q: (q - 0.5) * 2.0 for q in REQUIRED_QUANTILES}  # wide symmetric fallback in MAD units
+    default_offsets = {q: (q - 0.5) * 2.0 for q in REQUIRED_QUANTILES}  # q50 is exactly zero
 
     return low_cut, high_cut, fallback_mad, bucket_mad, conformal_offsets, default_offsets, pool_sizes
 
@@ -697,7 +771,7 @@ def process_category(
     as_of: datetime | None = None,
     hedonic_log_price: Mapping[tuple[int, str], float] | None = None,
     cold_start_variants: Mapping[tuple[int, str], int] | None = None,
-    component_weights: Mapping[int, tuple[float, float]] | None = None,
+    component_weights: Mapping[int, Sequence[float]] | None = None,
 ) -> CategoryRunResult:
     """... (see module docstring for the model). ``hedonic_log_price`` is an
     optional, purely-additive T3 input: ``{(product_id, subTypeName): predicted
@@ -738,24 +812,24 @@ def process_category(
     ``hedonic_features.cold_start_candidates``, which is the intended
     source of both maps together).
 
-    ``component_weights`` (T4 remediation): optional ``{horizon_steps: (a,
-    b)}`` overriding the implicit ``(1.0, 1.0)`` in ``forecast_log =
-    anchor_log + a*index_delta + b*drift*horizon_steps``, applied
+    ``component_weights`` (trajectory-v1.1): optional ``{horizon_steps:
+    (a, c, b)}`` overriding the implicit ``(1.0, 0.0, 1.0)`` in
+    ``forecast_log = anchor_log + a*index_delta + c*own_reversion +
+    b*drift*horizon_steps``, applied
     identically at both walk-forward calibration time (the ``raw_pool``
     loop) and live packet-emission time -- selected per (category,
     horizon) by ``trajectory_eval.select_component_weights`` on
     training-only origins and persisted to
     ``docs/receipts/trajectory-v1/component-weights.json``. When ``None``
-    (the default), every horizon implicitly uses ``(1.0, 1.0)`` and
-    packet output is byte-for-byte identical to the pre-remediation (T2/T3)
-    engine -- this parameter is purely additive.
+    (the default), every horizon uses ``(1.0, 0.0, 1.0)``.  Legacy
+    two-value ``(a, b)`` receipts remain readable and imply ``c=0``.
     """
     dates = index_set.dates
     n = len(dates)
     horizon_steps_list = tuple(sorted({horizon_steps_for(h) for h in horizons_days}))
     steps_by_days = {h: horizon_steps_for(h) for h in horizons_days}
     weights_by_h_steps = {
-        h_steps: (component_weights.get(h_steps, (1.0, 1.0)) if component_weights else (1.0, 1.0))
+        h_steps: component_coefficients(component_weights.get(h_steps) if component_weights else None)
         for h_steps in horizon_steps_list
     }
 
@@ -834,8 +908,16 @@ def process_category(
                     )
                 )
                 drift_o, _weight_o, _n_o = shrunk_drift_at(theta_fit, origin)
-                weight_a, weight_b = weights_by_h_steps[h_steps]
-                forecast_log = log(prices[i][origin]) + weight_a * index_delta + weight_b * drift_o * h_steps
+                weight_a, weight_c, weight_b = weights_by_h_steps[h_steps]
+                reversion_o = own_level_reversion_at(
+                    prices[i], index_set, category_id, gk_group_id, origin
+                )
+                forecast_log = (
+                    log(prices[i][origin])
+                    + weight_a * index_delta
+                    + weight_c * reversion_o
+                    + weight_b * drift_o * h_steps
+                )
                 actual_log = log(prices[i][target])
                 standardized = (actual_log - forecast_log) / denom
                 raw_pool.append((i, h_steps, standardized))
@@ -908,6 +990,7 @@ def process_category(
                 anchor_log = hedonic_pred
                 n_i = 0
                 drift_i = 0.0
+                reversion_i = 0.0
                 bucket = "unknown"
                 band_widen = COLD_START_BAND_WIDEN_FACTOR
                 confidence = "cold-start"
@@ -920,6 +1003,9 @@ def process_category(
                 own_log = log(lp)
                 n_i = final_n[i]
                 drift_i = final_drift[i]
+                reversion_i = own_level_reversion_at(
+                    prices[i], index_set, category_id, group_id, origin_index
+                )
                 if hedonic_pred is not None:
                     # T3 blend (T4-capped): shrink the forecast ANCHOR (not
                     # the drift, which already has its own n/(n+N0_DRIFT)
@@ -944,6 +1030,7 @@ def process_category(
 
             horizons_out: dict[str, dict[str, float]] = {}
             for h_days, h_steps in steps_by_days.items():
+                actual_days = h_steps * WEEK_DAYS
                 index_delta = (
                     damped_forecast_delta(market_fit, origin_index, h_steps)
                     + damped_forecast_delta(category_fit, origin_index, h_steps)
@@ -952,14 +1039,19 @@ def process_category(
                         group_first_index=first,
                         origin_index=origin_index,
                         horizon_steps=h_steps,
-                        horizon_days=h_days,
+                        horizon_days=actual_days,
                         lifecycle_curve=lifecycle_curve,
                         published_on=str(published_on) if published_on else None,
                         origin_date=origin_date,
                     )
                 )
-                weight_a, weight_b = weights_by_h_steps[h_steps]
-                predicted_log = anchor_log + weight_a * index_delta + weight_b * drift_i * h_steps
+                weight_a, weight_c, weight_b = weights_by_h_steps[h_steps]
+                predicted_log = (
+                    anchor_log
+                    + weight_a * index_delta
+                    + weight_c * reversion_i
+                    + weight_b * drift_i * h_steps
+                )
                 if is_cold_start:
                     # The widest EFFECTIVE (bucket, h_steps) pool can differ
                     # per horizon, so both the offsets and their paired MAD
@@ -981,41 +1073,25 @@ def process_category(
                     quantile_values = rearrange_quantiles(quantile_values)
                     ordered = validate_quantiles(quantile_values)
                     rejects["crossed_quantiles_rearranged"] += 1
-                horizons_out[str(h_days)] = {f"q{int(round(p * 100)):02d}": v for p, v in ordered}
+                horizons_out[str(h_days)] = {
+                    **{f"q{int(round(p * 100)):02d}": v for p, v in ordered},
+                    "horizonDaysActual": actual_days,
+                }
 
-            path_points = []
-            max_steps = max(steps_by_days.values())
-            path_len = min(MAX_PATH_POINTS, max_steps + 1)
-            # The path uses the same calibrated endpoint weights as the
-            # horizon quantiles. Intermediate weeks smoothly blend adjacent
-            # endpoints so the visualization cannot switch regimes halfway
-            # between 30d and 90d.
-            for k in range(path_len):
-                if k == 0:
-                    delta = 0.0
-                else:
-                    path_weight_a, path_weight_b = interpolated_component_weights(weights_by_h_steps, k)
-                    delta = (
-                        path_weight_a * (
-                            damped_forecast_delta(market_fit, origin_index, k)
-                            + damped_forecast_delta(category_fit, origin_index, k)
-                            + group_component_delta(
-                                group_fit=gfit,
-                                group_first_index=first,
-                                origin_index=origin_index,
-                                horizon_steps=k,
-                                horizon_days=k * WEEK_DAYS,
-                                lifecycle_curve=lifecycle_curve,
-                                published_on=str(published_on) if published_on else None,
-                                origin_date=origin_date,
-                            )
-                        )
-                        + path_weight_b * drift_i * k
-                    )
-                point_date = origin_date + timedelta(days=WEEK_DAYS * k)
+            # Deliberately publish only independently fitted checkpoints.
+            # A dense weekly path made interpolation look like additional
+            # model evidence and produced the misleading flat-then-moving
+            # chart that prompted v1.1.  The UI may connect these points
+            # with a light dashed segment, but must not invent daily values.
+            path_points = [{
+                "date": origin_date.isoformat(),
+                "price": round(exp(anchor_log), 6),
+            }]
+            for h_days in sorted(steps_by_days):
+                band = horizons_out[str(h_days)]
                 path_points.append({
-                    "date": point_date.isoformat(),
-                    "price": round(exp(anchor_log + delta), 6),
+                    "date": (origin_date + timedelta(days=int(band["horizonDaysActual"]))).isoformat(),
+                    "price": round(float(band["q50"]), 6),
                 })
 
             row = {

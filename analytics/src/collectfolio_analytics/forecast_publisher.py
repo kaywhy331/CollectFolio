@@ -1,10 +1,10 @@
-"""T5: publish eligible per-variant trajectory-v1 packets as per-group,
+"""T5: publish per-variant trajectory-v1.1 evidence packets as per-group,
 size-bounded, gzip-compressed JSON objects for the worker to serve.
 
 Reads analytics/data/trajectory/packets/category-<id>/packets.jsonl.gz
 (T2/T3/T4 output) and docs/receipts/trajectory-v1/evaluation-summary.json
-(T4 output), applies the T4 fail-closed serving-eligibility gate, and slices
-the surviving packets into <=128KiB gzip objects keyed
+(T4 output), applies the horizon evidence policy, and slices packets into
+<=128KiB gzip objects keyed
 forecasts/<categoryId>/<groupId>.json.gz (or deterministic
 ``.partN.json.gz`` siblings when a group's eligible packets don't fit in
 one object -- never silently truncated), plus a forecasts/manifest.json
@@ -23,45 +23,28 @@ from __future__ import annotations
 import gzip
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from math import exp, isfinite, log
 from pathlib import Path
 from typing import Mapping, Sequence
 from uuid import UUID
 
 from .market_pipeline import SourceTerms
 from .tcgcsv import assert_tcgcsv_community_free_access_terms
-from .trajectory import MODEL_VERSION, content_sha256
+from .trajectory import HORIZONS_DAYS, MODEL_VERSION, content_sha256, horizon_actual_days_for
 
 DEFAULT_MAX_OBJECT_BYTES = 128 * 1024
 
-# Cold-start is unevaluable by construction (no walk-forward truth exists
-# for variants with zero observed prices anywhere in the panel) -- per PRD
-# Sec4 hard criterion 3b it serves everywhere, with this explicit label,
-# independent of any category/cohort gate outcome.
+# Cold-start has no observed current-price anchor.  It may publish an
+# attribute-based reference range, but never a directional forecast.
 COLD_START_CONFIDENCE = "cold-start"
-
-# T5 90d-only serving mode. Kevin's 2026-08-17 "forecasts should be for all
-# products" directive activates a near-miss the T4 gate itself had already
-# flagged as informational-only (see trajectory_cli._near_miss_notes /
-# evaluation-summary.md "Near-miss notes"): category 1 (Magic) and category 2
-# (Yu-Gi-Oh) standard-cohort packets pass the holdout gate at 90 days but not
-# at 30. This is a narrowly scoped, explicitly reviewed allowlist -- never an
-# automatic "any near miss ships" policy -- and every (category, cohort) pair
-# on it still has its 90-day pass independently re-checked against the
-# evaluation data at publish time (see eligible_horizons); it is never
-# trusted blindly. 30d for these two stays "not enough evidence" in the app,
-# never a fabricated value.
-NINETY_DAY_ONLY_OVERRIDE: frozenset[tuple[int, str]] = frozenset({
-    (1, "standard"),
-    (2, "standard"),
-})
 
 # T5 serve-all-cohorts mode (Kevin's 2026-08-18 directive: "The estimates are
 # supposed to be provided on all products", extending the 2026-08-17 "forecasts
 # should be for all products" decision from curated near-miss horizons to every
 # cohort the engine itself labels). When enabled, every packet whose cohort
 # string is one the trajectory engine emits (see trajectory.confidence_tier +
-# the cold-start branch) serves BOTH horizons everywhere. The T4 holdout gate
+# the cold-start branch) serves every modeled horizon. The validation gate
 # still runs and its per-cohort verdicts are still recorded in
 # evaluation-summary.* and this publish's receipt -- under this mode the gate
 # is a labeling/reporting input rather than a serving filter: the app renders
@@ -69,11 +52,18 @@ NINETY_DAY_ONLY_OVERRIDE: frozenset[tuple[int, str]] = frozenset({
 # instead of hiding them. Unrecognized cohort strings remain fail-closed
 # excluded (garbage in a packet stream must never reach the app).
 SERVE_ALL_COHORTS = True
+PUBLISH_ALL_EVIDENCE_TIERS = True
 KNOWN_COHORTS: frozenset[str] = frozenset({
     "standard",
     "low-history",
     "insufficient-history",
     COLD_START_CONFIDENCE,
+})
+EVIDENCE_TIERS: frozenset[str] = frozenset({
+    "category-validated",
+    "relative-validated",
+    "range-only",
+    "attribute-reference",
 })
 
 
@@ -156,7 +146,7 @@ def load_source_terms(path: Path) -> SourceTerms:
 
 
 # ---------------------------------------------------------------------------
-# Serving eligibility (T4 fail-closed gate, from evaluation-summary.json).
+# Validation evidence (T4 gate, from evaluation-summary.json).
 # ---------------------------------------------------------------------------
 
 
@@ -210,37 +200,66 @@ def load_serving_eligibility_by_horizon(evaluation_summary_path: Path) -> dict[i
     return by_category
 
 
+def load_evidence_tiers_by_horizon(
+    evaluation_summary_path: Path,
+) -> dict[int, dict[str, dict[int, str]]]:
+    """Load the explicit evidence label for every category/cohort/horizon.
+
+    Older receipts did not use the causal held-out-set protocol, so they are
+    always interpreted as range-only even when their legacy gate passed.
+    """
+
+    payload = json.loads(Path(evaluation_summary_path).read_text(encoding="utf-8"))
+    output: dict[int, dict[str, dict[int, str]]] = {}
+    for row in payload.get("categories", []):
+        category_id = int(row["categoryId"])
+        gate = row.get("gate", {})
+        by_cohort: dict[str, dict[int, str]] = {}
+        for result in gate.get("results", []):
+            cohort = str(result["cohort"])
+            horizon = int(result["horizonDays"])
+            tier = str(result.get("evidenceTier") or "")
+            if tier not in EVIDENCE_TIERS:
+                tier = "range-only"
+            by_cohort.setdefault(cohort, {})[horizon] = tier
+        output[category_id] = by_cohort
+    return output
+
+
 def eligible_horizons(
     category_id: int,
     confidence: str,
     serving_eligibility: Mapping[int, Mapping[str, bool]],
     serving_eligibility_by_horizon: Mapping[int, Mapping[str, Mapping[int, bool]]],
 ) -> tuple[int, ...]:
-    """Which of trajectory-v1's {30, 90} horizons this (category, cohort)
-    may serve. Cold-start serves both, always (PRD Sec4 hard criterion 3b).
-    A cohort that clears the gate at both horizons serves both. Otherwise,
-    only a curated (category, cohort) on NINETY_DAY_ONLY_OVERRIDE -- and
-    only once its 90-day pass is independently re-confirmed here -- serves
-    90d alone. Everything else serves nothing: the app must render "not
-    enough evidence" for that packet rather than a fabricated value.
+    """Horizons this packet may publish.
 
-    SERVE_ALL_COHORTS (Kevin's 2026-08-18 directive) short-circuits the
-    gate-as-filter behavior above: every recognized cohort serves both
-    horizons, with the confidence tier carried in the packet so the app
-    labels reduced-confidence estimates instead of hiding them. Unknown
-    cohort strings still serve nothing."""
+    Publish-all mode means every recognized cohort can receive a packet;
+    the per-horizon evidence tier controls whether it is a validated point
+    estimate, a no-direction price range, or a cold-start reference range.
+    It never upgrades a failed validation result.
+    """
 
     if confidence == COLD_START_CONFIDENCE:
-        return (30, 90)
+        return HORIZONS_DAYS
     if SERVE_ALL_COHORTS:
-        return (30, 90) if confidence in KNOWN_COHORTS else ()
+        return HORIZONS_DAYS if confidence in KNOWN_COHORTS else ()
     if is_packet_eligible(category_id, confidence, serving_eligibility):
-        return (30, 90)
-    if (category_id, confidence) in NINETY_DAY_ONLY_OVERRIDE:
-        by_horizon = serving_eligibility_by_horizon.get(category_id, {}).get(confidence, {})
-        if by_horizon.get(90, False):
-            return (90,)
-    return ()
+        # Older evaluation receipts only contain a cohort-level verdict.
+        # Preserve that fail-closed contract when no per-horizon map was
+        # supplied; the packet intersection in ``publish_category`` still
+        # prevents inventing a horizon that is absent from the packet.
+        cohort_horizons = serving_eligibility_by_horizon.get(category_id, {}).get(confidence)
+        if not cohort_horizons:
+            return HORIZONS_DAYS
+        return tuple(
+            horizon for horizon in HORIZONS_DAYS
+            if cohort_horizons.get(horizon, False)
+        )
+    return tuple(
+        horizon for horizon in HORIZONS_DAYS
+        if serving_eligibility_by_horizon.get(category_id, {}).get(confidence, {}).get(horizon, False)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +279,62 @@ def gzip_bytes(data: bytes) -> bytes:
 
 def _variant_sort_key(variant: Mapping[str, object]) -> tuple[int, str]:
     return (int(variant["productId"]), str(variant["subTypeName"]))
+
+
+def _tiered_band(
+    band: Mapping[str, object],
+    *,
+    horizon_days: int,
+    evidence_tier: str,
+    current_price: float | None,
+) -> dict[str, object]:
+    quantiles = {name: float(band[name]) for name in ("q10", "q25", "q50", "q75", "q90")}
+    ordered = [quantiles[name] for name in ("q10", "q25", "q50", "q75", "q90")]
+    if any(not isfinite(value) or value <= 0 for value in ordered) or ordered != sorted(ordered):
+        raise ValueError("forecast band must contain positive, finite, noncrossing quantiles")
+    if evidence_tier == "range-only":
+        if current_price is None or not isfinite(current_price) or current_price <= 0:
+            raise ValueError("range-only output requires a positive observed current price")
+        # Strip the directional location shift while retaining a conservative
+        # uncertainty magnitude.  Symmetry in log-price space makes the range
+        # genuinely current-price-centered (equal proportional upside and
+        # downside), rather than quietly implying the failed point direction.
+        wide_radius = max(
+            abs(log(quantiles["q10"] / current_price)),
+            abs(log(quantiles["q90"] / current_price)),
+        )
+        narrow_radius = min(wide_radius, max(
+            abs(log(quantiles["q25"] / current_price)),
+            abs(log(quantiles["q75"] / current_price)),
+        ))
+        quantiles = {
+            "q10": current_price * exp(-wide_radius),
+            "q25": current_price * exp(-narrow_radius),
+            "q50": current_price,
+            "q75": current_price * exp(narrow_radius),
+            "q90": current_price * exp(wide_radius),
+        }
+    return {
+        **quantiles,
+        "horizonDaysActual": horizon_actual_days_for(horizon_days),
+        "evidenceTier": evidence_tier,
+    }
+
+
+def _checkpoint_path(packet: Mapping[str, object], horizons: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
+    last_known_date = packet.get("lastKnownDate")
+    last_known_price = packet.get("lastKnownPrice")
+    if not isinstance(last_known_date, str) or not last_known_date or not isinstance(last_known_price, (int, float)):
+        return []
+    origin = datetime.fromisoformat(last_known_date).date()
+    points: list[dict[str, object]] = [{"date": origin.isoformat(), "price": float(last_known_price)}]
+    for horizon_text, band in sorted(horizons.items(), key=lambda item: int(item[0])):
+        actual_days = int(band.get("horizonDaysActual", horizon_actual_days_for(int(horizon_text))))
+        points.append({
+            "date": (origin + timedelta(days=actual_days)).isoformat(),
+            "price": float(band["q50"]),
+        })
+    return points
 
 
 def _group_object_payload(
@@ -442,23 +517,23 @@ def publish_category(
     *,
     max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES,
     serving_eligibility_by_horizon: Mapping[int, Mapping[str, Mapping[int, bool]]] | None = None,
+    evidence_tiers_by_horizon: Mapping[int, Mapping[str, Mapping[int, str]]] | None = None,
 ) -> dict:
-    """Stream one category's packets.jsonl.gz, apply the fail-closed
-    eligibility filter, group survivors by groupId, slice each group into
+    """Stream one category's packets.jsonl.gz, apply the evidence policy,
+    group recognized packets by groupId, slice each group into
     <=max_object_bytes gzip objects under staging_root, and return this
     category's manifest contribution (every group present -- published or
     excluded -- so the app can tell "excluded cohort" from "unknown
     product": a groupId simply absent from the manifest never existed in
     this category's panel at all).
 
-    A packet whose cohort clears the gate at only one horizon (currently
-    only category 1/2 "standard" via NINETY_DAY_ONLY_OVERRIDE) is still
-    included, but with the failing horizon's key stripped from its
-    ``horizons`` object -- never a fabricated value for that horizon, and
-    the app's existing "missing horizon -> not enough evidence" rendering
-    already covers the gap with no display-side change required."""
+    Every recognized packet is retained in publish-all mode, but each
+    horizon is transformed according to its evidence tier. Failed horizons
+    become current-price-centered ranges; they are never upgraded by an
+    allowlist or hidden behind a directional median."""
 
     serving_eligibility_by_horizon = serving_eligibility_by_horizon or {}
+    evidence_tiers_by_horizon = evidence_tiers_by_horizon or {}
     by_group: dict[int, list[Mapping[str, object]]] = {}
     all_group_ids: set[int] = set()
     total_variants = 0
@@ -471,18 +546,42 @@ def publish_category(
         group_id = int(packet["groupId"])
         all_group_ids.add(group_id)
         confidence = str(packet["confidence"])
-        horizons = eligible_horizons(category_id, confidence, serving_eligibility, serving_eligibility_by_horizon)
+        allowed_horizons = eligible_horizons(
+            category_id, confidence, serving_eligibility, serving_eligibility_by_horizon
+        )
+        packet_horizons = packet.get("horizons") or {}
+        horizons = tuple(
+            horizon for horizon in allowed_horizons if str(horizon) in packet_horizons
+        )
         if horizons:
             served_horizons_by_cohort.setdefault(confidence, set()).update(horizons)
-            served_packet = packet
-            packet_horizon_keys = set(packet.get("horizons") or {})
-            if packet_horizon_keys - {str(h) for h in horizons}:
-                served_packet = {
-                    **packet,
-                    "horizons": {
-                        key: band for key, band in packet["horizons"].items() if int(key) in horizons
-                    },
-                }
+            tiered_horizons: dict[str, Mapping[str, object]] = {}
+            for horizon in horizons:
+                if confidence == COLD_START_CONFIDENCE:
+                    tier = "attribute-reference"
+                elif confidence != "standard":
+                    tier = "range-only"
+                else:
+                    tier = evidence_tiers_by_horizon.get(category_id, {}).get(confidence, {}).get(
+                        horizon, "range-only"
+                    )
+                if tier not in EVIDENCE_TIERS:
+                    tier = "range-only"
+                tiered_horizons[str(horizon)] = _tiered_band(
+                    packet_horizons[str(horizon)],
+                    horizon_days=horizon,
+                    evidence_tier=tier,
+                    current_price=(
+                        float(packet["lastKnownPrice"])
+                        if isinstance(packet.get("lastKnownPrice"), (int, float))
+                        else None
+                    ),
+                )
+            served_packet = {
+                **packet,
+                "horizons": tiered_horizons,
+            }
+            served_packet["medianPath"] = _checkpoint_path(served_packet, tiered_horizons)
             by_group.setdefault(group_id, []).append(served_packet)
             last_known_date = packet["lastKnownDate"]
             if last_known_date is not None:
@@ -562,8 +661,8 @@ def publish_forecasts(
     at: datetime | None = None,
 ) -> dict:
     """Full T5 publish run: assert community-free-access publication
-    rights, load the T4 fail-closed serving-eligibility gate, then slice
-    every requested category's eligible packets into staging_root. Returns
+    rights, load T4's per-horizon evidence labels, then slice every requested
+    category's recognized packets into staging_root. Returns
     (and writes to staging_root/forecasts/manifest.json) the combined
     manifest: per-category+group counts, the eligibility policy that drove
     inclusion, asOf/modelVersion, per-object contentHash, and this
@@ -575,6 +674,7 @@ def publish_forecasts(
 
     serving_eligibility = load_serving_eligibility(Path(evaluation_summary_path))
     serving_eligibility_by_horizon = load_serving_eligibility_by_horizon(Path(evaluation_summary_path))
+    evidence_tiers_by_horizon = load_evidence_tiers_by_horizon(Path(evaluation_summary_path))
 
     packets_dir = Path(packets_dir)
     if category_ids is None:
@@ -596,6 +696,7 @@ def publish_forecasts(
                 category_id, packets_path, serving_eligibility, staging_root,
                 max_object_bytes=max_object_bytes,
                 serving_eligibility_by_horizon=serving_eligibility_by_horizon,
+                evidence_tiers_by_horizon=evidence_tiers_by_horizon,
             )
         )
 
@@ -625,23 +726,20 @@ def publish_forecasts(
             }
             for category_id, cohorts in serving_eligibility.items()
         },
-        # Per-(category, cohort) list of horizon days actually served,
-        # straight from what publish_category served (not merely gate
-        # eligibility) -- covers both full-eligibility {30, 90} cohorts and
-        # the curated 90d-only NINETY_DAY_ONLY_OVERRIDE cohorts (cat 1/2
-        # "standard", enabled by Kevin's 2026-08-17 "all products"
-        # directive). A cohort/category pair with no eligible horizon at
-        # all is simply absent.
+        # Per-(category, cohort) list of horizon days actually published.
         "servedHorizonsByCategory": {
             str(row["categoryId"]): row["servedHorizonsByCohort"] for row in category_rows
         },
-        "ninetyDayOnlyCohorts": [
-            f"{category_id}:{cohort}" for category_id, cohort in sorted(NINETY_DAY_ONLY_OVERRIDE)
-        ],
-        # Serve-all-cohorts mode flag (see SERVE_ALL_COHORTS): when true,
-        # every recognized cohort served both horizons regardless of the
-        # per-cohort gate verdicts recorded in evaluation-summary.*.
+        # Compatibility flag for existing clients; evidenceTier is the
+        # authoritative claim contract.
         "serveAllCohorts": SERVE_ALL_COHORTS,
+        "publishAllEvidenceTiers": PUBLISH_ALL_EVIDENCE_TIERS,
+        "evidenceTierPolicy": {
+            "category-validated": "directional point estimate with category/common-market validation",
+            "relative-validated": "directional point estimate assuming a flat common market",
+            "range-only": "current-price-centered movement range with no directional estimate",
+            "attribute-reference": "cold-start attribute-based reference range; not a forecast",
+        },
         "lastKnownDateRange": {
             "earliest": min(all_dates) if all_dates else None,
             "latest": max(all_dates) if all_dates else None,

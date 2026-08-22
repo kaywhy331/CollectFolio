@@ -6,17 +6,23 @@ from pathlib import Path
 from collectfolio_analytics.indices import build_indices
 from collectfolio_analytics.lifecycle import build_lifecycle_curve
 from collectfolio_analytics.trajectory_eval import (
-    COMPONENT_WEIGHT_GRID,
+    COMMON_WEIGHT_GRID,
+    DRIFT_WEIGHT_GRID,
+    REVERSION_WEIGHT_GRID,
     DEFAULT_TRAIN_FRACTION,
     MIN_HOLDOUT_ORIGINS,
     SAMPLING_RULE_DESCRIPTION,
     CohortHorizonResult,
+    EvalCase,
+    _apply_held_out_set_gate,
     _collect_raw_cases,
+    _quantiles_excluding_group,
     _sample_variant_keys,
     evaluate_cohort_horizon,
     gate_holdout_evaluation,
     run_component_weight_remediation,
     select_component_weights,
+    select_non_overlapping_origins,
     split_origins_chronologically,
 )
 
@@ -69,6 +75,77 @@ class SplitOriginsChronologicallyTests(unittest.TestCase):
         # constants the remediation spec named (~60% train, >=6 holdout).
         self.assertEqual(DEFAULT_TRAIN_FRACTION, 0.6)
         self.assertEqual(MIN_HOLDOUT_ORIGINS, 6)
+
+
+class NonOverlappingOriginTests(unittest.TestCase):
+    def test_current_eighty_week_panel_has_expected_independent_blocks(self):
+        self.assertEqual(len(select_non_overlapping_origins(80, 4)), 16)
+        self.assertEqual(len(select_non_overlapping_origins(80, 9)), 7)
+        self.assertEqual(len(select_non_overlapping_origins(80, 13)), 4)
+        self.assertTrue(all(
+            right - left == 9
+            for left, right in zip(
+                select_non_overlapping_origins(80, 9),
+                select_non_overlapping_origins(80, 9)[1:],
+            )
+        ))
+
+
+class ExcludedGroupQuantileTests(unittest.TestCase):
+    def test_matches_filter_then_empirical_quantile(self):
+        from collectfolio_analytics.trajectory import empirical_quantile
+
+        labeled = sorted([
+            (-3.0, 1), (-2.0, 2), (-1.0, 1), (0.0, 3),
+            (0.5, 2), (1.0, 1), (2.0, 3), (5.0, 2),
+        ])
+        values = [value for value, _group in labeled]
+        probabilities = (0.10, 0.25, 0.50, 0.75, 0.90)
+        for excluded_group in (1, 2, 3, 999):
+            positions = [
+                index for index, (_value, group) in enumerate(labeled)
+                if group == excluded_group
+            ]
+            expected_values = sorted(
+                value for value, group in labeled if group != excluded_group
+            )
+            expected = {
+                probability: empirical_quantile(expected_values, probability)
+                for probability in probabilities
+            }
+            self.assertEqual(
+                _quantiles_excluding_group(values, positions, probabilities),
+                expected,
+            )
+
+    def test_empty_after_exclusion_uses_caller_fallback(self):
+        self.assertEqual(_quantiles_excluding_group([1.0, 2.0], [0, 1], (0.5,)), {})
+
+
+class HeldOutSetGateEvidenceCountTests(unittest.TestCase):
+    def test_counts_only_score_blocks_that_contributed_cohort_cases(self):
+        cases = [
+            EvalCase(
+                product_id=index,
+                sub_type_name="Normal",
+                group_id=1,
+                cohort="standard",
+                horizon_days=30,
+                origin_date="2025-01-01",
+                target_date="2025-01-29",
+                current_price=100.0,
+                realized_price=105.0,
+                engine_median_price=104.0,
+                engine_q10_price=90.0,
+                engine_q90_price=120.0,
+                baseline_median_prices={"no_change": 100.0},
+            )
+            for index in range(3)
+        ]
+        base = evaluate_cohort_horizon(3, "standard", 30, cases)
+        gated = _apply_held_out_set_gate(base, cases)
+        self.assertEqual(gated.n_score_blocks, 1)
+        self.assertTrue(any("only 1 non-overlapping scored blocks" in reason for reason in gated.fail_reasons))
 
 
 class ZeroLiftIsAlwaysAFailTests(unittest.TestCase):
@@ -128,21 +205,26 @@ class RemediationPipelineSmokeTests(unittest.TestCase):
         selection = out["selection"]
         self.assertTrue(selection)
         for h_steps, sel in selection.items():
-            self.assertIn(sel["weightA"], COMPONENT_WEIGHT_GRID)
-            self.assertIn(sel["weightB"], COMPONENT_WEIGHT_GRID)
+            self.assertIn(sel["weightA"], COMMON_WEIGHT_GRID)
+            self.assertIn(sel["weightC"], REVERSION_WEIGHT_GRID)
+            self.assertIn(sel["weightB"], DRIFT_WEIGHT_GRID)
             train_set = set(sel["trainOrigins"])
             holdout_set = set(sel["holdoutOrigins"])
             self.assertEqual(train_set & holdout_set, set())
             if train_set or holdout_set:
                 self.assertLess(max(train_set, default=-1), min(holdout_set, default=math.inf))
-            self.assertGreaterEqual(len(sel["gridScores"]), len(COMPONENT_WEIGHT_GRID) ** 2)
+            self.assertEqual(
+                len(sel["gridScores"]),
+                len(COMMON_WEIGHT_GRID) * len(REVERSION_WEIGHT_GRID) * len(DRIFT_WEIGHT_GRID),
+            )
 
         gate = out["gate"]
         self.assertEqual(gate["categoryId"], self.category_id)
         self.assertIn("servingEligibleByCohort", gate)
         self.assertIn("anyCohortServingEligible", gate)
         self.assertIn("coldStart", gate)
-        self.assertEqual(gate["coldStart"]["status"], "unevaluable")
+        self.assertEqual(gate["coldStart"]["status"], "reference-only")
+        self.assertTrue(gate["validationProtocol"]["q50PinnedToPointModel"])
         for result in gate["results"]:
             self.assertIsInstance(result, CohortHorizonResult)
             self.assertEqual(result.category_id, self.category_id)
@@ -163,7 +245,7 @@ class RemediationPipelineSmokeTests(unittest.TestCase):
         for h_steps, sel in selection.items():
             self.assertEqual(
                 gate["componentWeights"][sel["horizonDays"]],
-                (sel["weightA"], sel["weightB"]),
+                (sel["weightA"], sel["weightC"], sel["weightB"]),
             )
 
 

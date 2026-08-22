@@ -70,15 +70,15 @@ export function forecastViewModels(publication = {}, { holdingId = '' } = {}) {
   }));
 }
 
-// `trajectoryEstimates` is the plain {30: estimate|undefined, 90:
+// `trajectoryEstimates` is the plain {30/60/90: estimate|undefined}
 // estimate|undefined} shape produced by
 // services/forecast-trajectory.js's trajectoryForecastEstimates(packet).
 // It is passed in already computed (rather than fetched in here) so this
 // module stays synchronous and doesn't reach up into services/ -- core/
 // is depended on by services/, never the other way around. Cloud-published
 // published intelligence, where present for a horizon, always wins over a
-// trajectory-v1 estimate for the same horizon; trajectory-v1 only fills a
-// horizon the cloud-published forecast doesn't cover, and trajectory-v1 never
+// trajectory-v1.1 estimate for the same horizon; trajectory only fills a
+// horizon the cloud-published forecast doesn't cover, and it never
 // produces 180d/365d, so those horizons are untouched by this fallback.
 export function searchResultViewModel(item = {}, { publication = null, currency = 'USD', trajectoryEstimates = null } = {}) {
   const reference = catalogReferenceForItem(item);
@@ -120,12 +120,19 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
       baselineDate: trajectory.baselineDate,
       probabilityUp: null,
       confidence: trajectory.confidence,
-      status: trajectory.confidence === 'cold-start' ? 'cold-start' : 'trajectory',
+      evidenceTier: trajectory.evidenceTier,
+      horizonDaysActual: trajectory.horizonDaysActual,
+      status: trajectory.evidenceTier === 'attribute-reference'
+        ? 'reference-range'
+        : trajectory.evidenceTier === 'range-only'
+          ? 'range-only'
+          : 'trajectory',
       maturesAt: null,
       modelVersion: trajectory.modelVersion
     };
   };
   const forecast30d = forecastFor(30);
+  const forecast60d = forecastFor(60);
   const forecast90d = forecastFor(90);
   const forecast180d = forecastFor(180);
   const forecast365d = forecastFor(365);
@@ -160,13 +167,15 @@ export function searchResultViewModel(item = {}, { publication = null, currency 
     priceSource: price === null && forecastBasis !== null
       ? intelligence.observed.source
       : reference.priceSource,
-    forecastStatus: (intelligence && Object.keys(intelligence.forecasts).length) || forecast30d || forecast90d ? 'available' : 'unavailable',
+    forecastStatus: (intelligence && Object.keys(intelligence.forecasts).length) || forecast30d || forecast60d || forecast90d ? 'available' : 'unavailable',
     forecast30d,
+    forecast60d,
     forecast90d,
     forecast180d,
     forecast365d,
     forecastEstimates: {
       30: forecast30d,
+      60: forecast60d,
       90: forecast90d,
       180: forecast180d,
       365: forecast365d

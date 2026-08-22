@@ -4,7 +4,7 @@
 // (`GET /catalog/forecasts/<categoryId>/<groupId>[.partN]` and
 // `GET /catalog/forecasts/manifest`) and turns them into the same
 // small set of horizons the published-intelligence display contract
-// already understands: 30-day and 90-day q10/q50/q90 estimates. There is
+// already understands: independently modeled 30/60/90-day q10/q50/q90 checkpoints. There is
 // no 180-day or 365-day trajectory-v1 output -- callers must never invent
 // one; `trajectoryForecastEstimates` only ever returns the horizons the
 // source packet actually carries.
@@ -19,7 +19,8 @@
 import { getRecord, putRecord } from '../core/db.js';
 import { requestTCGCSVCatalog } from './providers/tcgcsv.js';
 
-export const TRAJECTORY_HORIZONS = Object.freeze([30, 90]);
+export const TRAJECTORY_HORIZONS = Object.freeze([30, 60, 90]);
+export const TRAJECTORY_ACTUAL_DAYS = Object.freeze({ 30: 28, 60: 63, 90: 91 });
 const CACHE_PREFIX = 'trajectory:v1:';
 const MANIFEST_CACHE_MS = 6 * 60 * 60 * 1000;
 const GROUP_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -31,6 +32,7 @@ const MAX_PATH_POINTS = 32;
 const QUANTILE_FIELDS = Object.freeze(['q10', 'q25', 'q50', 'q75', 'q90']);
 const HORIZON_KEYS = new Set(TRAJECTORY_HORIZONS.map(String));
 const CONFIDENCE_TIERS = new Set(['standard', 'low-history', 'insufficient-history', 'cold-start']);
+const EVIDENCE_TIERS = new Set(['category-validated', 'relative-validated', 'range-only', 'attribute-reference']);
 const requestsInFlight = new Map();
 
 function manifestCacheKey() {
@@ -132,12 +134,22 @@ function validDateTime(value) {
     && Number.isFinite(Date.parse(value));
 }
 
-export function normalizeTrajectoryBand(band) {
+export function normalizeTrajectoryBand(band, horizon = 0) {
   if (!band || typeof band !== 'object' || Array.isArray(band)) return null;
   const values = QUANTILE_FIELDS.map((field) => finiteNonNegative(band[field]));
   if (values.some((value) => value === null) || values[2] <= 0) return null;
   if (values.some((value, index) => index > 0 && value < values[index - 1])) return null;
-  return Object.fromEntries(QUANTILE_FIELDS.map((field, index) => [field, values[index]]));
+  const evidenceTier = band.evidenceTier === undefined ? '' : String(band.evidenceTier);
+  if (evidenceTier && !EVIDENCE_TIERS.has(evidenceTier)) return null;
+  const expectedActualDays = TRAJECTORY_ACTUAL_DAYS[horizon] || 0;
+  const suppliedActualDays = band.horizonDaysActual === undefined ? 0 : positiveInteger(band.horizonDaysActual);
+  if (band.horizonDaysActual !== undefined && !suppliedActualDays) return null;
+  if (expectedActualDays && suppliedActualDays && suppliedActualDays !== expectedActualDays) return null;
+  return {
+    ...Object.fromEntries(QUANTILE_FIELDS.map((field, index) => [field, values[index]])),
+    ...(expectedActualDays || suppliedActualDays ? { horizonDaysActual: expectedActualDays || suppliedActualDays } : {}),
+    ...(evidenceTier ? { evidenceTier } : {})
+  };
 }
 
 // The worker response is untrusted network input. A packet is eligible for
@@ -177,9 +189,12 @@ export function normalizeTrajectoryPacket(packet, {
   const horizons = {};
   for (const horizon of TRAJECTORY_HORIZONS) {
     if (!Object.prototype.hasOwnProperty.call(packet.horizons, String(horizon))) continue;
-    const band = normalizeTrajectoryBand(packet.horizons[String(horizon)]);
+    const band = normalizeTrajectoryBand(packet.horizons[String(horizon)], horizon);
     if (!band) return null;
-    horizons[horizon] = band;
+    horizons[horizon] = {
+      ...band,
+      evidenceTier: band.evidenceTier || (packet.confidence === 'cold-start' ? 'attribute-reference' : 'range-only')
+    };
   }
 
   if (!Array.isArray(packet.medianPath) || packet.medianPath.length > MAX_PATH_POINTS) return null;
@@ -337,7 +352,7 @@ export function isTrajectoryStale(packet, asOf) {
   return reference - lastKnown > STALENESS_MS;
 }
 
-// Builds the {30, 90} estimate map the existing marketOutlookMarkup/
+// Builds the {30, 60, 90} estimate map the existing marketOutlookMarkup/
 // searchResultViewModel display contract already reads (see
 // core/view-models.js's forecastFor(horizon)). 180d/365d are
 // intentionally absent -- trajectory-v1 does not produce them, and the
@@ -347,19 +362,24 @@ export function trajectoryForecastEstimates(packet) {
   const estimates = {};
   if (!packet?.horizons) return estimates;
   for (const horizon of TRAJECTORY_HORIZONS) {
-    const band = normalizeTrajectoryBand(packet.horizons[String(horizon)]);
+    const band = normalizeTrajectoryBand(packet.horizons[String(horizon)], horizon);
     if (!band) continue;
     const basis = Number(packet.lastKnownPrice);
+    const evidenceTier = band.evidenceTier
+      || (packet.confidence === 'cold-start' ? 'attribute-reference' : 'range-only');
+    const directional = ['category-validated', 'relative-validated'].includes(evidenceTier);
     estimates[horizon] = {
       horizon,
-      estimatedValue: band.q50,
+      horizonDaysActual: band.horizonDaysActual,
+      estimatedValue: directional || !Number.isFinite(basis) || basis <= 0 ? band.q50 : basis,
       lowerBound: band.q10,
       upperBound: band.q90,
-      estimatedChange: Number.isFinite(basis) && basis > 0 ? band.q50 / basis - 1 : null,
+      estimatedChange: directional && Number.isFinite(basis) && basis > 0 ? band.q50 / basis - 1 : null,
       baselineValue: Number.isFinite(basis) && basis > 0 ? basis : null,
       baselineDate: isoDate(packet.lastKnownDate),
       confidence: packet.confidence,
-      modelVersion: packet.modelVersion || 'trajectory-v1'
+      evidenceTier,
+      modelVersion: packet.modelVersion || 'trajectory-v1.1'
     };
   }
   return estimates;

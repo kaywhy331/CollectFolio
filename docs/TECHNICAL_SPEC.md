@@ -479,7 +479,7 @@ This is deterministic last-write-wins at holding granularity with persistent del
 
 The browser requests publications only for deduplicated canonical UUIDs represented in Holdings or Watchlist, in batches of 50. IndexedDB cache entries expire at the earlier of six hours or the publication's own expiry. A hydration generation prevents an older in-flight response from restoring intelligence after its last mapped card is removed.
 
-The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Trajectory-v1 additionally validates bounded exact manifest membership, object keys, group/category/part identity, optional variant counts, product/finish identity, model version, allowed confidence, ordered median paths, and only 30/90-day checkpoints; groups and manifest parts are fetched with bounded concurrency. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid, stale, or above-tier layers are omitted rather than repaired or guessed. Search withholds stale trajectories; detail gives an explicit newer-observation explanation. A Tier-4 product outlook plots an approved history line when one is published, marks the present boundary, and renders future medians as a dotted path inside distinct 50%/80% quantile bands. The browser never reconstructs history from trend percentages or extrapolates a forecast from them; without both an approved observation and approved forecast, the projection graph is absent.
+The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Trajectory-v1.1 additionally validates bounded exact manifest membership, object keys, group/category/part identity, optional variant counts, product/finish identity, model version, allowed confidence, ordered checkpoint paths, and only 30/60/90-day checkpoints (28/63/91 actual days on the weekly panel); groups and manifest parts are fetched with bounded concurrency. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid, stale, or above-tier layers are omitted rather than repaired or guessed. Search withholds stale trajectories; detail gives an explicit newer-observation explanation. The history chart plots independent q10–q90 whiskers at the modeled checkpoints. It draws a light connector through q50 only for `category-validated` or `relative-validated` evidence and never fabricates daily forecast points or a continuous uncertainty surface. `range-only` and `attribute-reference` output has no directional dot or connector. The browser never reconstructs history from trend percentages or extrapolates a forecast from them.
 
 Insights has independent restorable Performance, Forecasts, Alerts, and Track Record routes. Performance consumes only local portfolio snapshots. Local Scenario Outlooks use source-separated saved unit values and qualitative confidence, work from a single deliberately broad anchor, refuse values stale beyond 180 days, and never feed Track Record. Published portfolio forecast aggregation remains separate and excludes manual values, unmapped holdings, missing horizons, missing approved observations, and currencies that would require an unapproved conversion. Confidence scores are preserved item-by-item as a score or range rather than averaged into a new claim. Actual current value and either modeled future product remain separate in markup, copy, and visual treatment.
 
@@ -564,7 +564,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.29` includes the Settings, onboarding, local-scenario, image-identification, complete 48-tile catalog pagination, demand-driven provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
+`collectfolio-shell-v0.8.31` includes the Settings, onboarding, local-scenario, image-identification, complete 48-tile catalog pagination, demand-driven provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth. The
@@ -651,12 +651,33 @@ share folds or coefficients.
 Full packets remain in private object storage, and the public-repository Actions
 artifact exposes sanitized receipts only.
 
-Trajectory-v1 forecasts are fitted on the weekly panel and serve calibrated
-30-day and 90-day quantile checkpoints plus a weekly median path. Component
-weights selected at those two horizons are blended continuously across the
-intermediate weekly path, avoiding the former nearest-horizon switch around
-day 60. The detail chart resamples that single latest path into daily hover
-values; those values are interpolation, not independent daily refits. Its
+Trajectory-v1.1 forecasts are fitted on the weekly panel and emit independent
+30-, 60-, and 90-day quantile checkpoints (28, 63, and 91 actual days). The
+point formula is `log(P_h/P_0) = a_h F_common + c_h F_reversion + b_h F_drift`.
+Each category and horizon selects one shared coefficient triple from a fixed
+grid; sets never receive custom weights. Damped-trend phi (`0.85`) and Theta
+SES alpha (`0.3`) are fixed before evaluation. Historical origins rebuild the
+lifecycle curve, volatility, confidence cohort, set age, and reversion signal
+using only information available at that origin. Conformal calibration pins
+q50 to the point model, so uncertainty calibration cannot silently move the
+directional estimate.
+
+Qualification uses non-overlapping blocks (`15 + k*h`), requires two earlier
+fit blocks and at least three blocks that actually contribute scored cases,
+and leaves every scored set out of coefficient selection and conformal
+calibration. Directional claims additionally require positive aggregate and
+macro held-out-set lift, a positive 90% two-way block/set bootstrap lower
+bound, at least three sets with 20 variants each, an 80% set no-harm rate, and
+80% interval coverage in `[75%, 88%]`. This validates generalization only for
+eligible held-out sets, never literally every card or set. A passing model with
+`a_h = 0` is labeled `relative-validated` and disclosed as assuming a flat
+common market; another pass is `category-validated`. Failed or legacy horizons
+are current-price-centered `range-only` output, while cards without an observed
+anchor are `attribute-reference` and explicitly not forecasts.
+
+The packet path contains only the observed anchor and those three checkpoints.
+The detail chart may connect validated q50 checkpoints as visual interpolation,
+but does not create daily or weekly model values between them. Its
 1M/3M/6M/1Y/All controls change observed-history context only, while the
 forecast overlay remains independently switchable and never extends beyond
 the served horizon. The browser accepts only a bounded, exact manifest/part set
@@ -667,7 +688,8 @@ current observation is withheld instead of being presented against fresher data.
 Search-result hydration now includes canonical variants represented by the
 current search result set in addition to Holdings and Watchlist. The result
 adapter and view display name, type, set, observed price, approved rolling
-30-day return, and approved 1/3/6/12-month median estimates. Exact market-series
+30-day return, and approved 1/2/3/6/12-month estimates or evidence-qualified
+ranges. Exact market-series
 selection, support-tier validation, rights checks, and the public feature flag
 still fail closed; private TCGCSV rows never enter that client path directly.
 

@@ -370,22 +370,37 @@ function trajectorySection(item, state, sectionId) {
   if (isTrajectoryStale(packet, entry.manifest?.asOf || entry.groupAsOf)) {
     return `<section class="card trajectory-insufficient" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>A fresher market observation is required</h2><p class="muted">The last price behind this forecast is too old relative to its publication. CollectFolio withholds the modeled values instead of presenting a stale baseline as current.</p></section>`;
   }
-  const isColdStart = packet.confidence === 'cold-start';
-  // Serve-all-cohorts mode (Kevin 2026-08-18): low-history and
-  // insufficient-history packets are served everywhere, labeled as early
-  // estimates rather than presented as fully modeled trajectories.
-  const isEarly = !isColdStart && ['low-history', 'insufficient-history'].includes(packet.confidence);
-  const ninety = packet.horizons?.['90'];
-  const thirty = packet.horizons?.['30'];
-  const heading = isColdStart ? 'Cold start estimate' : isEarly ? 'Early estimate' : 'Modeled trajectory';
-  const explainer = isColdStart
-    ? 'Built without enough observed price history for this printing; treat the range as wider and less certain than a standard forecast.'
-    : isEarly
-      ? 'Built from a short observed price history for this printing; treat the range as wider and less certain than a standard forecast.'
-      : 'Modeled from published price history for this exact printing.';
-  const pill = isColdStart ? 'Cold start' : isEarly ? 'Early estimate' : 'Modeled';
-  const horizonBlock = (horizon, band) => band ? `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(band.q50, state.settings?.currency || 'USD'))} median</h3></div><span class="pill">${pill}</span></div><div class="forecast-grid"><div><span>Range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div></section>` : '';
-  return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market forecast</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${horizonBlock(30, thirty)}${horizonBlock(90, ninety)}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
+  const bands = [30, 60, 90]
+    .map((horizon) => [horizon, packet.horizons?.[String(horizon)]])
+    .filter(([, band]) => band);
+  const tiers = new Set(bands.map(([, band]) => band.evidenceTier || (packet.confidence === 'cold-start' ? 'attribute-reference' : 'range-only')));
+  const heading = tiers.has('attribute-reference')
+    ? 'Attribute-based reference range'
+    : tiers.has('range-only')
+      ? 'Price ranges'
+      : 'Estimated price checkpoints';
+  const explainer = tiers.has('attribute-reference')
+    ? 'No observed current-price anchor exists for this printing. These attribute-based ranges are reference information, not forecasts.'
+    : tiers.has('range-only')
+      ? 'Typical horizon movement ranges are shown without a directional price estimate.'
+      : 'Each checkpoint is independently modeled from published price history for this exact printing.';
+  const horizonBlock = (horizon, band) => {
+    const tier = band.evidenceTier || 'range-only';
+    const directional = ['category-validated', 'relative-validated'].includes(tier);
+    const title = directional
+      ? `${formatCurrency(band.q50, state.settings?.currency || 'USD')} estimated price`
+      : `${formatCurrency(band.q10, state.settings?.currency || 'USD')}–${formatCurrency(band.q90, state.settings?.currency || 'USD')}`;
+    const label = tier === 'category-validated'
+      ? 'Held-out-set evidence'
+      : tier === 'relative-validated'
+        ? 'Assumes flat market'
+        : tier === 'attribute-reference'
+          ? 'Reference only'
+          : 'No directional estimate';
+    const actualDays = Number(band.horizonDaysActual) || ({ 30: 28, 60: 63, 90: 91 }[horizon] || horizon);
+    return `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day ${directional ? 'checkpoint' : 'price range'}</p><h3>${escapeHTML(title)}</h3></div><span class="pill">${escapeHTML(label)}</span></div><div class="forecast-grid"><div><span>80% range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div><p class="fine-print">Weekly model target: ${escapeHTML(String(actualDays))} actual days.</p></section>`;
+  };
+  return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market outlook</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${bands.map(([horizon, band]) => horizonBlock(horizon, band)).join('')}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
 }
 
 // Observed weekly price history, with the latest published trajectory-v1
@@ -419,7 +434,7 @@ function historySection(item, state) {
     ? `<button type="button" class="history-forecast-toggle" data-history-forecast aria-label="Show forecast" aria-pressed="${showForecast}"><span class="history-forecast-toggle-dot" aria-hidden="true"></span><span>Forecast</span><small aria-hidden="true">${showForecast ? 'On' : 'Off'}</small></button>`
     : '';
   const explainer = packet
-    ? 'Observed weekly prices for this exact printing. Forecast shows one latest as-of path; daily hover values interpolate between weekly model checkpoints, while uncertainty is calibrated at 30 and 90 days.'
+    ? 'Observed weekly prices for this exact printing. Outlook markers are independently modeled at approximately 30, 60, and 90 days; light connector segments are visual interpolation only.'
     : 'Observed weekly market prices for this exact printing, positioned on a calendar-time axis.';
   return `<section class="card history-chart-card" id="detail-history"><div class="section-heading history-chart-heading"><div><p class="eyebrow">Price timeline</p><h2>${packet ? 'Price history &amp; latest forecast' : 'Price history'}</h2><p class="muted">${explainer}</p></div></div><div class="history-chart-toolbar"><div><span class="history-chart-control-label">History range</span><div class="range-control history-range-control" role="group" aria-label="History range">${rangeControls}</div></div>${forecastControl}</div>${chart}</section>`;
 }

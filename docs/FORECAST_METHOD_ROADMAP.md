@@ -100,12 +100,12 @@ idea), with a *pooled gradient-boosted global model* (M5) as the challenger
 once the panel exists. Every layer is testable against the five governance
 baselines we already require.
 
-## 4. Chosen architecture — `trajectory-v1`
+## 4. Chosen architecture — `trajectory-v1.1`
 
-All series are daily log prices per exact variant (card × finish × source).
-For card *i* on day *t*: `y_i,t = m_t + g_t + s_t + r_i,t`
+The production panel is weekly and keyed by exact variant (card × finish ×
+source). For card *i* on week *t*: `y_i,t = m_t + g_t + s_t + r_i,t`
 
-- `m_t` — market index: trimmed-mean daily log-return across all priced
+- `m_t` — market index: trimmed-mean weekly log-return across all priced
   variants, cumulated (repeat-sales logic on the full panel).
 - `g_t` — game/category index relative to market (same construction within
   the TCGCSV category).
@@ -114,28 +114,61 @@ For card *i* on day *t*: `y_i,t = m_t + g_t + s_t + r_i,t`
   rotation, post-reprint regimes).
 - `r_i,t` — the card's residual: what makes this card different from its set.
 
-Horizon-h forecast (h ∈ {30, 90} first; 7/180 later):
+For nominal horizons 30, 60, and 90 days (4, 9, and 13 weekly steps), the
+point forecast is:
+
+`log(P_i,t+h / P_i,t) = a_h F_common + c_h F_reversion + b_h F_drift`
+
+The coefficients are dynamic by category and horizon, not by set: one shared
+triple is selected from the preregistered grid `a ∈ {0,.25,.5,1}`,
+`c ∈ {0,.1,.25,.5}`, `b ∈ {-.25,0,.25}`. This gives each game and horizon
+room to choose its evidence-supported behavior without fitting bespoke set
+weights that cannot generalize.
 
 1. Forecast `m` and `g` with damped-trend exponential smoothing on the log
-   index (φ fitted, capped ≤ 0.95).
+   index. Phi is fixed at `0.85` before evaluation; the Theta SES alpha is
+   fixed at `0.3`, preventing full-panel hyperparameter selection leakage.
 2. Forecast `s` by blending the set's own damped trend with the release-age
    lifecycle curve of matched historical cohorts (existing `lifecycle_cohort`
    logic, now fitted on the full panel instead of one research cohort).
-3. Forecast `r_i` with the Theta method on the card's residual series, with
+3. Build `F_reversion` from the trailing 13-week median of the card's
+   index-adjusted log level minus its current adjusted level. Forecast `r_i`
+   with the Theta method on the card's residual series, with
    empirical-Bayes shrinkage of its drift toward 0 by `n/(n+n₀)` (short or
    flat histories predict little idiosyncratic drift; long trending histories
    keep theirs).
-4. **Point prediction** = `exp(ŷ)` of the recombined median — an actual price
-   number per card per horizon, plus the daily path for the trajectory chart.
+4. **Point prediction** = `exp(ŷ)` of the recombined median at each independent
+   checkpoint. No daily or weekly forecast path is manufactured between them.
 5. **Band**: split-conformal quantiles from walk-forward residuals pooled by
    (game × volatility bucket × horizon), scaled by the card's own MAD
    volatility; adaptive recalibration as each day's archive matures. Output
    keeps the q10/q25/q50/q75/q90 contract.
-6. **Cold start** (no/short history): hedonic log-price regression per game —
+6. **Cold start** (no observed anchor): hedonic log-price regression per game —
    rarity, finish, release age, set family, sealed/single kind, scarcity or
    pull-rate features where curated (`pull_rates.py`), subsuming
    `video_model_v0`'s inputs — provides the prior that shrinkage pulls
-   toward; confidence is labeled accordingly.
+   toward. It is published only as an `attribute-reference` range, not a
+   directional forecast. Low-history or failed horizons become symmetric,
+   current-price-centered `range-only` context.
+
+Validation is rolling and causal. Origins are non-overlapping horizon blocks;
+every origin-sensitive feature is rebuilt as of the origin; coefficients use
+past blocks only; and each scored set is removed from coefficient selection and
+conformal calibration. A directional tier requires positive aggregate and
+macro held-out-set lift, a positive 90% block/set bootstrap lower bound, three
+or more eligible sets with at least 20 variants each, at least 80% of sets above
+the no-harm floor, three actual scored blocks, and 80% coverage in `[75%, 88%]`.
+This supports a claim about eligible held-out sets, not "all sets."
+
+The 2026-08-21 qualification used all 80 available weekly snapshots and a
+deterministic 20,000-variant sample in each of categories 1, 2, 3, and 85.
+All 12 standard-cohort category × horizon cells remained `range-only`:
+30/60-day lifts were absent or too fragile across time blocks and held-out
+sets, and every 90-day cell had only two post-fit score blocks. This is an
+empirical result, not a permanent product rule; future runs promote each cell
+independently when it clears the same preregistered gate. Full coefficients,
+set counts, coverage diagnostics, and failure reasons are in
+[`evaluation-summary.md`](receipts/trajectory-v1/evaluation-summary.md).
 
 Event overrides (reprint announced, ban/rotation, grading-pop shifts) are
 explicit Phase-6 features, surfaced as flags on the packet before they ever
@@ -151,32 +184,34 @@ Ingest the TCGCSV daily archive backlog (Feb 2024 → present) through the
 storage-budget receipts; lineage hashes. **Gate:** row/hash reconciliation
 against source archives; point-in-time audit passes.
 
-### Phase 2 — Index + trajectory engine (`trajectory-v1`)
+### Phase 2 — Index + trajectory engine (`trajectory-v1.1`)
 New pure-Python analytics modules for the index decomposition, lifecycle
 library, per-card Theta/damped-trend residual model, and conformal
-calibrator; emit full-universe research packets at 30/90 days.
+calibrator; emit full-universe research packets at 30/60/90 days.
 **Gate:** deterministic replay (same inputs → same packet hash); synthetic
 regression tests; runtime budget for ~500K series per nightly run.
 
 ### Phase 3 — Hedonic cold-start + cross-sectional features
 Per-game hedonic regressions with out-of-sample validation; shrinkage blend
-into `trajectory-v1`; `video_model_v0` retired to an ablation row in the
+into `trajectory-v1.1`; `video_model_v0` retired to an ablation row in the
 scorecard. **Gate:** cold-start cards get predictions with honest wide bands;
 hedonic R² and residual diagnostics recorded per game.
 
 ### Phase 4 — Mass walk-forward evaluation + promotion
-Run the existing walk-forward machinery across the full archive; scorecards
-vs all five baselines per game/price-tier/age cohort; human promotion review
-per the runbook. **Acceptance criteria (per served cohort):**
-- log-return MAE lift over no-change > 0 with bootstrap significance;
-- direction accuracy > 52% at 30d where the card moved ≥5%;
-- 80% band empirical coverage within 75–85%, q50 pinball beats no-change;
-- no cohort served where criteria fail — those fall back honestly.
+Run causal, non-overlapping rolling blocks across the archive; scorecards vs
+all five baselines and held-out sets; human promotion review per the runbook.
+**Acceptance criteria (per category × standard cohort × horizon):**
+- aggregate and macro held-out-set log-return MAE lift over no-change > 0;
+- 90% block/set cluster-bootstrap lower bound > 0;
+- at least three eligible sets (20 variants each), three scored blocks, and
+  80% of sets above the preregistered no-harm floor;
+- 80% band empirical coverage within 75–88%; q50 remains the point model;
+- failures publish only no-direction ranges, never an upgraded point claim.
 
 ### Phase 5 — Serving per-card predictions
-Nightly worker publishes compact forecast packets (point, path, quantiles,
+Nightly worker publishes compact forecast packets (independent checkpoints, quantiles,
 model version, confidence, coverage stats) to R2 alongside the catalog;
-app renders predicted price + trajectory + band on card detail, browse,
+app renders evidence-qualified points or ranges on card detail, browse,
 insights, and portfolio; `local-scenario-v1` demoted to fallback for
 custom/manual items only, relabeled "manual scenario." Browser stays
 dependency-free — it only renders precomputed JSON.

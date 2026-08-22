@@ -10,7 +10,7 @@
 //   layer already fails closed), but historyLineChart also returns '' as
 //   a defensive fallback.
 // - Forecast projection bars are ONLY ever drawn for horizons the
-//   published packet actually carries (30d and/or 90d) -- never
+//   published packet actually carries (30d, 60d, and/or 90d) -- never
 //   fabricated, never interpolated to another horizon.
 import { escapeAttribute, escapeHTML, formatCurrency } from './utils.js';
 
@@ -99,28 +99,30 @@ export function downsampleHistoryPoints(points, targetBars = 32) {
   return buckets;
 }
 
-// Selects the trajectory-v1 forecast horizons this specific packet
-// actually published (30d and/or 90d, never both assumed) with a valid,
+// Selects the independently modeled horizons this specific packet
+// actually published (30/60/90, never assumed) with a valid,
 // ordered q10<=q50<=q90 band. Mirrors trajectoryProjectionChart's
 // checkpoint filter in ui.js so the two charts never disagree about
 // what counts as "served".
 export function selectServedForecastBars(packet) {
   if (!packet?.horizons) return [];
-  return [30, 90]
+  return [30, 60, 90]
     .map((horizon) => ({ horizon, band: packet.horizons[String(horizon)] }))
     .filter(({ band }) => band
       && [band.q10, band.q50, band.q90].every((value) => finiteNonNegative(value) !== null)
       && Number(band.q10) <= Number(band.q50) && Number(band.q50) <= Number(band.q90))
     .map(({ horizon, band }) => ({
       horizon,
+      actualDays: Number(band.horizonDaysActual) || ({ 30: 28, 60: 63, 90: 91 }[horizon]),
+      evidenceTier: String(band.evidenceTier || (packet.confidence === 'cold-start' ? 'attribute-reference' : 'range-only')),
       q10: Number(band.q10),
       q50: Number(band.q50),
       q90: Number(band.q90)
     }));
 }
 
-// The published rolling forecast path: trajectory-v1 packets carry a
-// weekly `medianPath` (lastKnownDate through the furthest horizon). Points
+// Compatibility reader for a published `medianPath`. trajectory-v1.1 emits
+// only the anchor and independently modeled checkpoints. Points
 // are cleaned, sorted, and returned with a parsed UTC timestamp; anything
 // malformed is dropped rather than repaired. Never fabricated -- packets
 // without a medianPath return [].
@@ -139,9 +141,9 @@ function isoDate(time) {
   return new Date(time).toISOString().slice(0, 10);
 }
 
-// Linear day-by-day interpolation between published weekly path checkpoints.
-// This is presentation-level resampling of one latest forecast path, not a
-// separately refitted forecast vintage for every future calendar date.
+// Retained as a pure compatibility utility for callers that explicitly need
+// resampling. The production forecast chart does not call it: daily points
+// would imply model evidence that exists only at independent checkpoints.
 export function interpolateDailyPath(checkpoints) {
   const clean = (Array.isArray(checkpoints) ? checkpoints : [])
     .filter((point) => Number.isFinite(point?.time) && finiteNonNegative(point?.price) !== null)
@@ -166,11 +168,9 @@ export function interpolateDailyPath(checkpoints) {
 // A dependency-free inline-SVG LINE chart on a REAL-TIME x-axis: a blue
 // polyline through every published weekly price point (no downsampling
 // below 240 points), positioned proportionally by date. When a forecast
-// packet with served horizons is supplied, the published latest median path
-// continues past the "today" divider as a dashed daily projection --
-// 30 days of forecast occupy 30 days of axis (Kevin 2026-08-18) -- colored
-// green when the projected trend is up and red when it is down, with
-// q10-q90 whiskers at each served horizon checkpoint.
+// packet with validated horizons is supplied, a light dashed connector joins
+// only its independent point checkpoints. Range-only/reference horizons have
+// whiskers but no directional point or connector.
 //
 // The y-domain is ZOOMED to the observed range (min..max, padded) rather
 // than anchored at $0 -- a $50 card moving by a few dollars must render as
@@ -192,35 +192,46 @@ export function historyLineChart(
     .map((point) => ({ ...point, time: Date.parse(`${point.date}T00:00:00.000Z`) }));
   if (!history.length) return '';
   const visiblePacket = showForecast ? packet : null;
-  const forecastMarks = selectServedForecastBars(visiblePacket);
   const isColdStart = visiblePacket?.confidence === 'cold-start';
   const latestHistory = history.at(-1);
 
-  // "Today" anchor: the packet's own lastKnownDate when it is at or past
-  // the last observed history point, else the last observed point itself.
+  // A packet's checkpoint dates and prices are inseparable from its own
+  // observed anchor. Never slide an older packet forward to newer history:
+  // that would silently change the forecast's maturity dates. The service
+  // normally withholds this mismatch; the chart also fails closed.
   const packetAnchor = Date.parse(`${String(visiblePacket?.lastKnownDate || '')}T00:00:00.000Z`);
-  const anchorTime = forecastMarks.length && Number.isFinite(packetAnchor)
-    ? Math.max(packetAnchor, latestHistory.time)
-    : latestHistory.time;
+  const packetAnchorPrice = finiteNonNegative(visiblePacket?.lastKnownPrice);
+  const publishedForecastMarks = selectServedForecastBars(visiblePacket);
+  const packetCanAnchor = publishedForecastMarks.length
+    && Number.isFinite(packetAnchor)
+    && packetAnchor >= latestHistory.time
+    && packetAnchorPrice !== null
+    && packetAnchorPrice > 0;
+  const forecastMarks = packetCanAnchor ? publishedForecastMarks : [];
+  const anchorTime = packetCanAnchor ? packetAnchor : latestHistory.time;
+  const anchorPrice = packetCanAnchor ? packetAnchorPrice : latestHistory.price;
 
-  // Latest projection: the published weekly median path after the anchor,
-  // resampled to daily display steps. Packets without a medianPath fall back
-  // to the served horizon q50 checkpoints.
-  const publishedPath = forecastMarks.length
-    ? selectForecastMedianPath(visiblePacket).filter((point) => point.time > anchorTime)
-    : [];
-  const pathCheckpoints = forecastMarks.length
+  // Only independent model checkpoints are plotted.  The light connector
+  // is presentation interpolation; no daily or weekly forecast values are
+  // manufactured between them.
+  const projection = forecastMarks.length
     ? [
-        { time: anchorTime, price: latestHistory.price },
-        ...(publishedPath.length
-          ? publishedPath
-          : forecastMarks.map((mark) => ({ time: anchorTime + (mark.horizon * DAY), price: mark.q50 })))
+        { time: anchorTime, price: anchorPrice, horizon: 0 },
+        ...forecastMarks.map((mark) => ({
+          time: anchorTime + (mark.actualDays * DAY),
+          price: mark.q50,
+          horizon: mark.horizon,
+          evidenceTier: mark.evidenceTier
+        }))
       ]
     : [];
-  const projection = interpolateDailyPath(pathCheckpoints);
-  const projectionEnd = projection.at(-1) || null;
+  const directionalProjection = [
+    ...(projection.length ? [projection[0]] : []),
+    ...projection.slice(1).filter((point) => ['category-validated', 'relative-validated'].includes(point.evidenceTier))
+  ];
+  const projectionEnd = directionalProjection.length > 1 ? directionalProjection.at(-1) : null;
   const trendClass = projectionEnd
-    ? (projectionEnd.price >= latestHistory.price ? ' history-forecast-up' : ' history-forecast-down')
+    ? (projectionEnd.price >= anchorPrice ? ' history-forecast-up' : ' history-forecast-down')
     : '';
 
   const width = 760;
@@ -250,7 +261,7 @@ export function historyLineChart(
   const timeStart = history[0].time;
   const timeEnd = Math.max(
     anchorTime,
-    ...forecastMarks.map((mark) => anchorTime + (mark.horizon * DAY)),
+    ...forecastMarks.map((mark) => anchorTime + (mark.actualDays * DAY)),
     ...(projectionEnd ? [projectionEnd.time] : [])
   );
   const timeSpan = Math.max(timeEnd - timeStart, DAY);
@@ -269,44 +280,18 @@ export function historyLineChart(
     : '';
   const latestMarker = `<circle cx="${x(latestHistory.time).toFixed(1)}" cy="${y(latestHistory.price).toFixed(1)}" r="4.5" class="chart-point history-latest-point" />`;
 
-  const projectionCoords = projection.map((point) => `${x(point.time).toFixed(1)},${y(point.price).toFixed(1)}`).join(' ');
-  const projectionLine = projection.length > 1
+  const projectionCoords = directionalProjection.map((point) => `${x(point.time).toFixed(1)},${y(point.price).toFixed(1)}`).join(' ');
+  const projectionLine = directionalProjection.length > 1
     ? `<polyline points="${projectionCoords}" class="history-forecast-line${trendClass}${isColdStart ? ' history-forecast-line-cold-start' : ''}"/>`
-    : '';
-  // Markers on the PUBLISHED weekly path points (not every interpolated
-  // day), plus a larger marker at the projection's end.
-  const projectionMarkers = publishedPath
-    .map((point) => `<circle cx="${x(point.time).toFixed(1)}" cy="${y(point.price).toFixed(1)}" r="2.5" class="history-forecast-point${trendClass}${isColdStart ? ' history-forecast-point-cold-start' : ''}" />`)
-    .join('')
-    + (projectionEnd && projectionEnd.time > anchorTime
-      ? `<circle cx="${x(projectionEnd.time).toFixed(1)}" cy="${y(projectionEnd.price).toFixed(1)}" r="4" class="history-forecast-point${trendClass}${isColdStart ? ' history-forecast-point-cold-start' : ''}" />`
-      : '');
-
-  // The shaded fan joins only the uncertainty checkpoints the model serves.
-  // Intermediate fill is a visual connection between calibrated q10/q90
-  // endpoints; the whiskers remain the authoritative 30d/90d readings.
-  const forecastBandPoints = forecastMarks.length
-    ? [
-        { time: anchorTime, q10: latestHistory.price, q90: latestHistory.price },
-        ...forecastMarks.map((mark) => ({
-          time: anchorTime + (mark.horizon * DAY),
-          q10: mark.q10,
-          q90: mark.q90
-        }))
-      ]
-    : [];
-  const forecastBand = forecastBandPoints.length > 1
-    ? `<polygon points="${[
-        ...forecastBandPoints.map((point) => `${x(point.time).toFixed(1)},${y(point.q90).toFixed(1)}`),
-        ...[...forecastBandPoints].reverse().map((point) => `${x(point.time).toFixed(1)},${y(point.q10).toFixed(1)}`)
-      ].join(' ')}" class="history-forecast-band" />`
     : '';
 
   const whiskerMarkup = forecastMarks.map((mark) => {
-    const cx = x(anchorTime + (mark.horizon * DAY));
+    const cx = x(anchorTime + (mark.actualDays * DAY));
+    const directional = ['category-validated', 'relative-validated'].includes(mark.evidenceTier);
+    const label = directional ? `+${mark.horizon}d est.` : `+${mark.horizon}d range`;
     return `<line x1="${cx.toFixed(1)}" y1="${y(mark.q90).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${y(mark.q10).toFixed(1)}" class="history-bar-whisker" />`
-      + `<circle cx="${cx.toFixed(1)}" cy="${y(mark.q50).toFixed(1)}" r="4" class="history-forecast-point${trendClass}${isColdStart ? ' history-forecast-point-cold-start' : ''}" />`
-      + `<text x="${cx.toFixed(1)}" y="${(bottom + 14).toFixed(1)}" text-anchor="middle" class="chart-axis-label chart-date-label">${escapeHTML(`+${mark.horizon}d est.`)}</text>`;
+      + (directional ? `<circle cx="${cx.toFixed(1)}" cy="${y(mark.q50).toFixed(1)}" r="4" class="history-forecast-point${trendClass}" />` : '')
+      + `<text x="${cx.toFixed(1)}" y="${(bottom + 14).toFixed(1)}" text-anchor="middle" class="chart-axis-label chart-date-label">${escapeHTML(label)}</text>`;
   }).join('');
 
   const gridTicks = [0, 0.5, 1].map((fraction) => {
@@ -329,16 +314,17 @@ export function historyLineChart(
     ? `<line x1="${x(anchorTime).toFixed(1)}" y1="${chartTop}" x2="${x(anchorTime).toFixed(1)}" y2="${bottom}" class="forecast-present"/><text x="${(x(anchorTime) - 6).toFixed(1)}" y="${(chartTop + 13).toFixed(1)}" text-anchor="end" class="chart-axis-label forecast-anchor-label">Last observed</text>`
     : '';
 
-  const confidenceBadge = isColdStart
-    ? '<span class="support-badge restricted">Cold start estimate</span>'
-    : ['low-history', 'insufficient-history'].includes(visiblePacket?.confidence)
-      ? '<span class="support-badge partial">Early estimate</span>'
-      : '';
+  const evidenceTiers = new Set(forecastMarks.map((mark) => mark.evidenceTier));
+  const confidenceBadge = evidenceTiers.has('attribute-reference')
+    ? '<span class="support-badge restricted">Attribute-based reference range</span>'
+    : evidenceTiers.has('range-only')
+      ? '<span class="support-badge partial">Price range · no direction</span>'
+      : evidenceTiers.has('relative-validated')
+        ? '<span class="support-badge partial">Estimated price · assumes flat market</span>'
+        : '';
   const ariaLabel = `Historic weekly prices for the ${selectedRange} range${forecastMarks.length ? ` with the latest forecast to ${forecastMarks.map((mark) => `${mark.horizon} days`).join(' and ')}` : ''}`;
 
-  // Hover payload (Kevin 2026-08-18): every plotted x-position -- observed
-  // weekly points and every projected day -- carries its date + price so a
-  // pointer over the line surfaces "date -- price" as a tooltip
+  // Hover payload: observed dates and independent forecast checkpoints only.
   // (core/chart-hover.js reads this attribute; no framework, no listeners
   // in the markup itself).
   const hoverLabel = (date, price, projected) => `${datedLabel(date, true)} — ${formatCurrency(price, currency)}${projected ? ' (projected)' : ''}`;
@@ -346,7 +332,11 @@ export function historyLineChart(
     ...history.map((point) => ({ x: Number(x(point.time).toFixed(1)), y: Number(y(point.price).toFixed(1)), l: hoverLabel(point.date, point.price, false) })),
     ...projection
       .filter((point) => point.time > anchorTime)
-      .map((point) => ({ x: Number(x(point.time).toFixed(1)), y: Number(y(point.price).toFixed(1)), l: hoverLabel(point.date || isoDate(point.time), point.price, true) }))
+      .map((point) => ({
+        x: Number(x(point.time).toFixed(1)),
+        y: Number(y(point.price).toFixed(1)),
+        l: `${datedLabel(isoDate(point.time), true)} — ${point.evidenceTier === 'range-only' || point.evidenceTier === 'attribute-reference' ? 'price range checkpoint' : formatCurrency(point.price, currency) + ' (estimated)'}`
+      }))
   ];
 
   return `<div class="chart-wrap history-line-chart${isColdStart ? ' trajectory-cold-start' : ''}" data-history-range="${escapeAttribute(selectedRange)}" data-forecast-visible="${forecastMarks.length ? 'true' : 'false'}">
@@ -354,15 +344,13 @@ export function historyLineChart(
     <svg class="trend-chart history-bars" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHTML(ariaLabel)}" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
       <title>${escapeHTML(ariaLabel)}; latest observed ${escapeHTML(formatCurrency(latestHistory.price, currency))}</title>
       ${gridTicks}
-      ${forecastBand}
       ${dateLabels}
       <polyline points="${lineCoords}" class="chart-line chart-market history-line"/>
       ${pointMarkup}
       ${latestMarker}
       ${todayDivider}
       ${projectionLine}
-      ${projectionMarkers}
       ${whiskerMarkup}
     </svg>
-  </div><div class="chart-legend"><span><i class="history-line-dot"></i>Observed price</span>${forecastMarks.length ? `<span><i class="history-forecast-dot${trendClass}"></i>Latest forecast</span><span><i class="forecast-band-80-dot"></i>Calibrated q10–q90 checkpoints</span>` : ''}</div>`;
+  </div><div class="chart-legend"><span><i class="history-line-dot"></i>Observed price</span>${forecastMarks.length ? `${directionalProjection.length > 1 ? `<span><i class="history-forecast-dot${trendClass}"></i>Interpolated checkpoint connector</span>` : ''}<span><i class="forecast-band-80-dot"></i>Independent q10–q90 checkpoints</span>` : ''}</div>`;
 }

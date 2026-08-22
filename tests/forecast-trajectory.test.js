@@ -318,20 +318,22 @@ test('getTrajectoryForecastForItem is a no-op for non-tcgcsv items and never iss
   assert.equal(calls, 0);
 });
 
-test('trajectoryForecastEstimates only ever returns the 30/90-day horizons the packet actually carries, never 180d/365d', () => {
+test('trajectoryForecastEstimates returns independent 30/60/90 checkpoints and never invents 180d/365d', () => {
   const packet = {
     lastKnownPrice: 100,
     confidence: 'standard',
     modelVersion: 'trajectory-v1',
     horizons: {
-      30: { q10: 90, q25: 95, q50: 110, q75: 120, q90: 130 },
-      90: { q10: 80, q25: 95, q50: 130, q75: 150, q90: 170 }
+      30: { q10: 90, q25: 95, q50: 110, q75: 120, q90: 130, horizonDaysActual: 28, evidenceTier: 'category-validated' },
+      60: { q10: 85, q25: 95, q50: 120, q75: 135, q90: 150, horizonDaysActual: 63, evidenceTier: 'category-validated' },
+      90: { q10: 80, q25: 95, q50: 130, q75: 150, q90: 170, horizonDaysActual: 91, evidenceTier: 'category-validated' }
     }
   };
   const estimates = trajectoryForecastEstimates(packet);
-  assert.deepEqual(Object.keys(estimates).sort(), ['30', '90']);
+  assert.deepEqual(Object.keys(estimates).sort(), ['30', '60', '90']);
   assert.equal(estimates[30].estimatedValue, 110);
   assert.ok(Math.abs(estimates[30].estimatedChange - 0.1) < 1e-9);
+  assert.equal(estimates[60].horizonDaysActual, 63);
   assert.equal(estimates[90].lowerBound, 80);
   assert.equal(estimates[90].upperBound, 170);
   assert.equal(trajectoryForecastEstimates(null).constructor, Object);

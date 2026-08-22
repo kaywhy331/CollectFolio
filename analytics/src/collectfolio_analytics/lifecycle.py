@@ -247,8 +247,22 @@ def build_lifecycle_curve(
     groups_metadata: Mapping[tuple[int, int], Mapping[str, object]],
     *,
     trim_fraction: float = 0.1,
+    up_to_index: int | None = None,
 ) -> LifecycleCurve:
-    """Pool every group's category-relative weekly return by release age."""
+    """Pool group-relative weekly returns by release age.
+
+    ``up_to_index`` is an inclusive information cutoff.  It exists for the
+    walk-forward validator: a curve used at historical origin ``o`` must not
+    contain returns from ``o + 1`` onward.  Live packet generation leaves it
+    unset and therefore uses every observation available at publication
+    time.
+    """
+
+    last_index = len(index_set.dates) - 1 if up_to_index is None else up_to_index
+    if isinstance(last_index, bool) or not isinstance(last_index, int):
+        raise ValueError("up_to_index must be an integer or None")
+    if not 0 <= last_index < len(index_set.dates):
+        raise ValueError("up_to_index is outside the index date range")
 
     buckets: dict[int, list[float]] = {}
     for (category_id, group_id), arr in index_set.group.items():
@@ -256,7 +270,7 @@ def build_lifecycle_curve(
         published_on = meta.get("published_on") if meta else None
         if not published_on:
             continue
-        for t in range(1, len(index_set.dates)):
+        for t in range(1, last_index + 1):
             age_week = release_age_weeks(str(published_on), index_set.dates[t])
             if age_week is None or age_week > MAX_CURVE_AGE_WEEKS:
                 continue
