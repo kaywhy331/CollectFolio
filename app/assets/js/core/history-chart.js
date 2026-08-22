@@ -46,6 +46,77 @@ function compactCurrency(value, currency) {
   }).format(value);
 }
 
+// SVG text has no layout pass while this string is assembled, so price
+// labels use a small deterministic collision solver. Exact currency values
+// remain beside their points while nearby labels can move to another side of
+// the same point instead of overlapping or clipping outside the viewBox.
+function placePriceLabels(labels, bounds) {
+  const occupied = [];
+  const variants = [
+    { dx: 8, dy: 4, anchor: 'start' },
+    { dx: -8, dy: 4, anchor: 'end' },
+    { dx: 0, dy: -9, anchor: 'middle' },
+    { dx: 0, dy: 16, anchor: 'middle' },
+    { dx: 8, dy: -10, anchor: 'start' },
+    { dx: -8, dy: -10, anchor: 'end' },
+    { dx: 8, dy: 18, anchor: 'start' },
+    { dx: -8, dy: 18, anchor: 'end' },
+    { dx: 0, dy: -23, anchor: 'middle' },
+    { dx: 8, dy: -24, anchor: 'start' },
+    { dx: -8, dy: -24, anchor: 'end' },
+    { dx: 0, dy: 30, anchor: 'middle' },
+    { dx: 8, dy: 32, anchor: 'start' },
+    { dx: -8, dy: 32, anchor: 'end' }
+  ];
+  const boxFor = (candidate, labelWidth) => {
+    const x1 = candidate.anchor === 'end'
+      ? candidate.x - labelWidth
+      : candidate.anchor === 'middle'
+        ? candidate.x - (labelWidth / 2)
+        : candidate.x;
+    return { x1, x2: x1 + labelWidth, y1: candidate.y - 12, y2: candidate.y + 4 };
+  };
+  const overlaps = (leftBox, rightBox) => !(
+    leftBox.x2 + 3 <= rightBox.x1
+    || leftBox.x1 >= rightBox.x2 + 3
+    || leftBox.y2 + 2 <= rightBox.y1
+    || leftBox.y1 >= rightBox.y2 + 2
+  );
+  const overlapArea = (leftBox, rightBox) => Math.max(0, Math.min(leftBox.x2, rightBox.x2) - Math.max(leftBox.x1, rightBox.x1))
+    * Math.max(0, Math.min(leftBox.y2, rightBox.y2) - Math.max(leftBox.y1, rightBox.y1));
+
+  return labels.map((label) => {
+    const labelWidth = Math.min(bounds.maxX - bounds.minX, Math.max(30, [...label.text].length * 6.25));
+    const preferredVariants = label.role === 'high'
+      ? [variants[2], variants[0], variants[1], variants[4], variants[5], variants[8], variants[9], variants[10], variants[3], variants[6], variants[7], variants[11], variants[12], variants[13]]
+      : label.role === 'low'
+        ? [variants[3], variants[0], variants[1], variants[6], variants[7], variants[11], variants[12], variants[13], variants[2], variants[4], variants[5], variants[8], variants[9], variants[10]]
+        : variants;
+    const candidates = preferredVariants
+      .map((variant) => ({
+        x: label.targetX + variant.dx,
+        y: label.targetY + variant.dy,
+        anchor: variant.anchor
+      }))
+      .map((candidate) => ({ ...candidate, box: boxFor(candidate, labelWidth) }))
+      .filter(({ box }) => box.x1 >= bounds.minX && box.x2 <= bounds.maxX && box.y1 >= bounds.minY && box.y2 <= bounds.maxY);
+    const clearCandidate = candidates.find(({ box }) => occupied.every((used) => !overlaps(box, used)));
+    const chosen = clearCandidate || candidates
+      .map((candidate) => ({
+        ...candidate,
+        collisionScore: occupied.reduce((score, used) => score + overlapArea(candidate.box, used), 0)
+      }))
+      .sort((left, right) => left.collisionScore - right.collisionScore)[0] || {
+        x: Math.min(Math.max(label.targetX + 8, bounds.minX), bounds.maxX - labelWidth),
+        y: Math.min(Math.max(label.targetY + 4, bounds.minY + 10), bounds.maxY - 3),
+        anchor: 'start'
+      };
+    const box = chosen.box || boxFor(chosen, labelWidth);
+    occupied.push(box);
+    return { ...label, x: chosen.x, y: chosen.y, anchor: chosen.anchor };
+  });
+}
+
 function shortDate(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
   if (!match) return '';
@@ -289,10 +360,62 @@ export function historyLineChart(
     const cx = x(anchorTime + (mark.actualDays * DAY));
     const directional = ['category-validated', 'relative-validated'].includes(mark.evidenceTier);
     const label = directional ? `+${mark.horizon}d est.` : `+${mark.horizon}d range`;
+    const horizonLabelAtRightEdge = cx >= right - 1;
     return `<line x1="${cx.toFixed(1)}" y1="${y(mark.q90).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${y(mark.q10).toFixed(1)}" class="history-bar-whisker" />`
       + (directional ? `<circle cx="${cx.toFixed(1)}" cy="${y(mark.q50).toFixed(1)}" r="4" class="history-forecast-point${trendClass}" />` : '')
-      + `<text x="${cx.toFixed(1)}" y="${(bottom + 14).toFixed(1)}" text-anchor="middle" class="chart-axis-label chart-date-label">${escapeHTML(label)}</text>`;
+      + `<text x="${(horizonLabelAtRightEdge ? cx - 2 : cx).toFixed(1)}" y="${(bottom + 14).toFixed(1)}" text-anchor="${horizonLabelAtRightEdge ? 'end' : 'middle'}" class="chart-axis-label chart-date-label history-forecast-horizon-label">${escapeHTML(label)}</text>`;
   }).join('');
+
+  const forecastMidpointLabels = forecastMarks.map((mark) => {
+    const directional = ['category-validated', 'relative-validated'].includes(mark.evidenceTier);
+    const text = formatCurrency(mark.q50, currency);
+    return {
+      targetX: x(anchorTime + (mark.actualDays * DAY)),
+      targetY: y(mark.q50),
+      text,
+      className: `history-price-label history-forecast-midpoint-label${directional ? ` history-forecast-estimate-label${trendClass}` : ''}`,
+      role: 'midpoint',
+      horizon: mark.horizon,
+      ariaLabel: directional
+        ? `${mark.horizon}-day estimated price ${text}`
+        : `${mark.horizon}-day range midpoint ${text}; no directional forecast`
+    };
+  });
+  const forecastBoundLabels = forecastMarks.flatMap((mark) => ([
+    {
+      targetX: x(anchorTime + (mark.actualDays * DAY)),
+      targetY: y(mark.q90),
+      text: formatCurrency(mark.q90, currency),
+      className: 'history-price-label history-forecast-bound-label history-forecast-high-label',
+      role: 'high',
+      horizon: mark.horizon,
+      ariaLabel: `${mark.horizon}-day upper forecast range ${formatCurrency(mark.q90, currency)}`
+    },
+    {
+      targetX: x(anchorTime + (mark.actualDays * DAY)),
+      targetY: y(mark.q10),
+      text: formatCurrency(mark.q10, currency),
+      className: 'history-price-label history-forecast-bound-label history-forecast-low-label',
+      role: 'low',
+      horizon: mark.horizon,
+      ariaLabel: `${mark.horizon}-day lower forecast range ${formatCurrency(mark.q10, currency)}`
+    }
+  ]));
+  const latestPriceText = formatCurrency(latestHistory.price, currency);
+  const priceLabels = placePriceLabels([
+    {
+      targetX: x(latestHistory.time),
+      targetY: y(latestHistory.price),
+      text: latestPriceText,
+      className: 'history-price-label history-latest-price-label',
+      role: 'observed',
+      horizon: null,
+      ariaLabel: `Last observed price ${latestPriceText} on ${datedLabel(latestHistory.date, true)}`
+    },
+    ...forecastMidpointLabels,
+    ...forecastBoundLabels
+  ], { minX: left + 3, maxX: width - 5, minY: chartTop + 1, maxY: bottom - 1 });
+  const priceLabelMarkup = priceLabels.map((label) => `<text x="${label.x.toFixed(1)}" y="${label.y.toFixed(1)}" text-anchor="${label.anchor}" class="${label.className}" data-price-role="${label.role}"${label.horizon ? ` data-forecast-horizon="${label.horizon}"` : ''} aria-label="${escapeAttribute(label.ariaLabel)}">${escapeHTML(label.text)}</text>`).join('');
 
   const gridTicks = [0, 0.5, 1].map((fraction) => {
     const value = lo + ((hi - lo) * fraction);
@@ -322,7 +445,11 @@ export function historyLineChart(
       : evidenceTiers.has('relative-validated')
         ? '<span class="support-badge partial">Estimated price · assumes flat market</span>'
         : '';
-  const ariaLabel = `Historic weekly prices for the ${selectedRange} range${forecastMarks.length ? ` with the latest forecast to ${forecastMarks.map((mark) => `${mark.horizon} days`).join(' and ')}` : ''}`;
+  const forecastPriceSummary = forecastMarks.map((mark) => {
+    const directional = ['category-validated', 'relative-validated'].includes(mark.evidenceTier);
+    return `${mark.horizon}-day ${directional ? 'estimated price' : 'range midpoint'} ${formatCurrency(mark.q50, currency)}, low ${formatCurrency(mark.q10, currency)}, high ${formatCurrency(mark.q90, currency)}`;
+  }).join('; ');
+  const ariaLabel = `Historic weekly prices for the ${selectedRange} range; last observed ${latestPriceText}${forecastPriceSummary ? `; ${forecastPriceSummary}` : ''}`;
 
   // Hover payload: observed dates and independent forecast checkpoints only.
   // (core/chart-hover.js reads this attribute; no framework, no listeners
@@ -341,8 +468,8 @@ export function historyLineChart(
 
   return `<div class="chart-wrap history-line-chart${isColdStart ? ' trajectory-cold-start' : ''}" data-history-range="${escapeAttribute(selectedRange)}" data-forecast-visible="${forecastMarks.length ? 'true' : 'false'}">
     ${(confidenceBadge || stale) && forecastMarks.length ? `<div class="trajectory-chart-labels">${confidenceBadge}${stale ? '<span class="support-badge unsupported">Price data may be out of date</span>' : ''}</div>` : ''}
-    <svg class="trend-chart history-bars" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHTML(ariaLabel)}" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
-      <title>${escapeHTML(ariaLabel)}; latest observed ${escapeHTML(formatCurrency(latestHistory.price, currency))}</title>
+    <svg class="trend-chart history-bars" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttribute(ariaLabel)}" data-chart-points="${escapeAttribute(JSON.stringify(hoverPoints))}">
+      <title>${escapeHTML(ariaLabel)}</title>
       ${gridTicks}
       ${dateLabels}
       <polyline points="${lineCoords}" class="chart-line chart-market history-line"/>
@@ -351,6 +478,7 @@ export function historyLineChart(
       ${todayDivider}
       ${projectionLine}
       ${whiskerMarkup}
+      ${priceLabelMarkup}
     </svg>
   </div><div class="chart-legend"><span><i class="history-line-dot"></i>Observed price</span>${forecastMarks.length ? `${directionalProjection.length > 1 ? `<span><i class="history-forecast-dot${trendClass}"></i>Interpolated checkpoint connector</span>` : ''}<span><i class="forecast-band-80-dot"></i>Independent q10–q90 checkpoints</span>` : ''}</div>`;
 }

@@ -493,6 +493,10 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .history-line { fill: none; stroke: var(--blue); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 .history-point { fill: var(--blue); opacity: 0.85; }
 .history-latest-point { fill: var(--blue); }
+.history-price-label { fill: var(--text); stroke: var(--surface); stroke-width: 3px; paint-order: stroke fill; font-size: 11px; font-weight: 800; letter-spacing: -.01em; pointer-events: none; }
+.history-forecast-bound-label { fill: var(--muted); font-size: 10px; font-weight: 750; }
+.history-forecast-estimate-label.history-forecast-up { fill: var(--positive); }
+.history-forecast-estimate-label.history-forecast-down { fill: var(--danger); }
 .history-line-dot { background: var(--blue); }
 .history-forecast-line { fill: none; stroke: var(--blue); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .history-forecast-band { fill: color-mix(in srgb, var(--blue) 12%, transparent); stroke: none; }

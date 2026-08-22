@@ -98,6 +98,7 @@ test('historyLineChart fails closed on an empty/invalid points array', () => {
 test('historyLineChart renders a history line only when no forecast packet is supplied', () => {
   const html = historyLineChart(weeklyPoints(6), null, 'USD');
   assert.match(html, /class="chart-line chart-market history-line"/);
+  assert.match(html, /data-price-role="observed"[^>]*>\$15\.00<\/text>/);
   assert.doesNotMatch(html, /history-forecast-line/);
   assert.doesNotMatch(html, /est\.<\/text>/);
 });
@@ -123,6 +124,33 @@ test('historyLineChart appends projection marks with whiskers only for served ho
   assert.match(html, /forecast-present/);
   assert.doesNotMatch(html, /class="history-forecast-band"/);
   assert.match(html, /Independent q10–q90 checkpoints/);
+  assert.match(html, /data-price-role="observed"[^>]*>\$19\.00<\/text>/);
+  assert.equal((html.match(/data-price-role="midpoint"/g) || []).length, 3);
+  assert.equal((html.match(/data-price-role="high"/g) || []).length, 3);
+  assert.equal((html.match(/data-price-role="low"/g) || []).length, 3);
+  assert.match(html, /data-price-role="midpoint" data-forecast-horizon="30"[^>]*>\$100\.00<\/text>/);
+  assert.match(html, /data-price-role="high" data-forecast-horizon="60"[^>]*>\$140\.00<\/text>/);
+  assert.match(html, /data-price-role="low" data-forecast-horizon="90"[^>]*>\$80\.00<\/text>/);
+  assert.match(html, /30-day estimated price \$100\.00, low \$90\.00, high \$110\.00/);
+});
+
+test('historyLineChart labels range-only values without implying a directional point', () => {
+  const packet = {
+    confidence: 'standard',
+    lastKnownDate: '2026-01-06',
+    lastKnownPrice: 15,
+    horizons: {
+      30: { q10: 12, q50: 15, q90: 19, evidenceTier: 'range-only' }
+    }
+  };
+  const html = historyLineChart(weeklyPoints(6), packet, 'USD');
+  assert.match(html, /history-bar-whisker/);
+  assert.match(html, /data-price-role="midpoint" data-forecast-horizon="30"[^>]*>\$15\.00<\/text>/);
+  assert.match(html, /30-day range midpoint \$15\.00, low \$12\.00, high \$19\.00/);
+  assert.match(html, /30-day range midpoint \$15\.00; no directional forecast/);
+  assert.doesNotMatch(html, /history-forecast-estimate-label/);
+  assert.doesNotMatch(html, /history-forecast-point/);
+  assert.doesNotMatch(html, /history-forecast-line/);
 });
 
 test('historyLineChart can hide the forecast without removing its observed history', () => {

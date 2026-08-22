@@ -46,7 +46,7 @@ test('Discover follows TCGCSV cursors to the search cap and renders fixed 48-til
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
       SUPABASE_URL: window.location.origin + '/__pagination-cloud',
       SUPABASE_ANON_KEY: 'synthetic-browser-key',
-      APP_VERSION: '0.8.31-test',
+      APP_VERSION: '0.8.32-test',
       TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
       ENABLE_TESSERACT: false,
       ENABLE_PRICE_INTELLIGENCE: false,
