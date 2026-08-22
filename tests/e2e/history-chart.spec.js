@@ -175,6 +175,51 @@ test('history line chart renders on the full detail page with forecast projectio
   await expect(page.getByText('+30d est.')).toBeVisible();
   await expect(page.getByText('+60d est.')).toBeVisible();
   await expect(page.getByText('+90d est.')).toBeVisible();
+  await expect(chart.locator('text[data-price-role="observed"]')).toHaveText('$119.00');
+  const expectedForecastPrices = {
+    30: { low: '$108.00', midpoint: '$128.00', high: '$148.00' },
+    60: { low: '$104.00', midpoint: '$134.00', high: '$166.00' },
+    90: { low: '$100.00', midpoint: '$140.00', high: '$180.00' }
+  };
+  for (const [horizon, prices] of Object.entries(expectedForecastPrices)) {
+    for (const [role, price] of Object.entries(prices)) {
+      const priceLabel = chart.locator(`text[data-forecast-horizon="${horizon}"][data-price-role="${role}"]`);
+      await expect(priceLabel).toBeVisible();
+      await expect(priceLabel).toHaveText(price);
+    }
+  }
+  const priceLabelBoxes = await chart.locator('text.history-price-label').evaluateAll((labels) => labels.map((label) => {
+    const box = label.getBBox();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }));
+  expect(priceLabelBoxes).toHaveLength(10);
+  for (const box of priceLabelBoxes) {
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(760);
+    expect(box.y + box.height).toBeLessThanOrEqual(340);
+  }
+  const horizonLabelBoxes = await chart.locator('text.history-forecast-horizon-label').evaluateAll((labels) => labels.map((label) => {
+    const box = label.getBBox();
+    return { x: box.x, width: box.width };
+  }));
+  expect(horizonLabelBoxes).toHaveLength(3);
+  for (const box of horizonLabelBoxes) {
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(760);
+  }
+  for (let leftIndex = 0; leftIndex < priceLabelBoxes.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < priceLabelBoxes.length; rightIndex += 1) {
+      const leftBox = priceLabelBoxes[leftIndex];
+      const rightBox = priceLabelBoxes[rightIndex];
+      const overlapWidth = Math.min(leftBox.x + leftBox.width, rightBox.x + rightBox.width) - Math.max(leftBox.x, rightBox.x);
+      const overlapHeight = Math.min(leftBox.y + leftBox.height, rightBox.y + rightBox.height) - Math.max(leftBox.y, rightBox.y);
+      expect(
+        overlapWidth > 0 && overlapHeight > 0,
+        `price labels ${leftIndex} and ${rightIndex} overlap: ${JSON.stringify({ leftBox, rightBox })}`
+      ).toBe(false);
+    }
+  }
   await expect(chart.locator('polygon.history-forecast-band')).toHaveCount(0);
 
   // Forecast is an independent overlay, while range controls affect only

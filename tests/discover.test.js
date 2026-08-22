@@ -484,7 +484,7 @@ test('Scan separates camera and upload, previews the workflow, and keeps export 
   assert.match(html, /Import collection/);
   assert.doesNotMatch(html, /data-action="export-json"/);
   assert.doesNotMatch(html, /data-action="start-multi-scan"/);
-  assert.match(html, /full source photo is never saved/i);
+  assert.match(html, /full source photo never leaves this browser and is never saved/i);
 });
 
 test('Scan exposes each saved draft with independent resume and discard controls', () => {

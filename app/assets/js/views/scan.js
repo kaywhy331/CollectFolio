@@ -5,6 +5,7 @@ import { CURRENCIES, DEFAULT_LANGUAGES } from '../core/settings.js';
 import { RAW_MARKET_CONDITIONS } from '../core/market-series.js';
 import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from '../core/utils.js';
 import { cropHasApprovableIdentity, normalizeAcquisition, scanReviewSummary, scanReviewTotals, selectedCropItem } from '../services/scan-review.js';
+import { cardRecognitionMode } from '../services/collectcapture.js';
 import { findWatchedItem } from '../services/watchlist.js';
 
 const CONDITIONS = ['Mint', 'Near Mint', 'Excellent', 'Good', 'Played', 'Poor', 'Graded'];
@@ -40,7 +41,7 @@ function acquisitionFields(acquisition, { bulk = false } = {}) {
 function queueSummary(summary) {
   return `<section class="review-summary" aria-label="Review queue summary">
     <div><span>Total detected</span><strong>${summary.total}</strong></div>
-    <div><span>Exact matches</span><strong>${summary.exact}</strong></div>
+    <div><span>Catalog selections</span><strong>${summary.exact}</strong></div>
     <div><span>Needs review</span><strong>${summary.needsReview}</strong></div>
     <div><span>Unmatched</span><strong>${summary.unmatched}</strong></div>
   </section>`;
@@ -60,9 +61,9 @@ function matchStatus(crop, selected) {
   if (!selected && ['queued', 'identifying'].includes(crop.status)) return ['possible', crop.status === 'queued' ? 'Queued' : 'Identifying'];
   if (!selected) return ['unmatched', 'Unmatched'];
   if (crop.customItem) return ['possible', 'Custom identity'];
-  if (cropHasApprovableIdentity(crop)) return ['exact', 'Exact source identity'];
+  if (cropHasApprovableIdentity(crop)) return ['exact', crop.approved ? 'Confirmed printing' : 'Catalog printing selected'];
   const bucket = matchBucketFor(selected);
-  return [bucket, bucket === 'exact' ? 'Exact source identity' : bucket === 'likely' ? 'Likely match' : 'Possible match'];
+  return [bucket, bucket === 'exact' ? 'Catalog printing selected' : bucket === 'likely' ? 'Likely match' : 'Possible match'];
 }
 
 function selectedMatch(crop, selected, state) {
@@ -72,35 +73,46 @@ function selectedMatch(crop, selected, state) {
   const approvable = cropHasApprovableIdentity(crop);
   const approved = crop.approved && approvable;
   const helpId = `exact-match-help-${crop.id}`;
-  const confirmationLabel = crop.customItem ? 'Confirm custom item' : approvable ? 'Confirm exact item' : 'Exact catalog match required';
+  const confirmationLabel = crop.customItem ? 'Confirm custom item' : approvable ? 'Confirm this printing' : 'Catalog printing required';
   return `<section class="selected-match">
     <div><p class="eyebrow">Proposed match</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>
     <div class="button-row"><button class="button ${approved ? 'secondary' : ''}" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="${approved}" ${approvable ? '' : `disabled aria-describedby="${escapeAttribute(helpId)}"`}>${approved ? 'Confirmed · remove confirmation' : confirmationLabel}</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
-    ${approvable ? '' : `<p id="${escapeAttribute(helpId)}" class="fine-print">Choose a catalog-linked exact identity or create a custom item. Similarity alone is never approval.</p>`}
+    ${approvable ? '' : `<p id="${escapeAttribute(helpId)}" class="fine-print">Choose a catalog printing or create a custom item. A lookup suggestion is never approved automatically.</p>`}
   </section>`;
 }
 
-function candidateList(crop) {
+function candidateList(crop, recognitionMode) {
   if (!crop.candidates.length) return '';
   return `<details class="candidate-disclosure" ${crop.selectedId ? '' : 'open'}><summary>Choose or replace match <span>${crop.candidates.length} candidates</span></summary><div class="candidate-list">${crop.candidates.slice(0, 9).map((candidate) => {
     const price = catalogPriceForValuation(candidate);
-    const similarity = candidate.matchScore >= 0.72 ? 'Strong similarity' : candidate.matchScore >= 0.45 ? 'Moderate similarity' : 'Possible candidate';
-    return `<button class="candidate ${candidate.id === crop.selectedId ? 'selected' : ''}" type="button" data-action="select-candidate" data-id="${escapeAttribute(crop.id)}" data-candidate="${escapeAttribute(candidate.id)}">${externalImage(candidate, 'candidate-image', { loading: 'lazy' })}<strong>${escapeHTML(candidate.name)}</strong><span>${escapeHTML([candidate.setName, candidate.number, candidate.variant].filter(Boolean).join(' · '))}</span><span>${price === null ? 'Current value unavailable' : escapeHTML(formatCurrency(price, candidate.currency || 'USD'))} · ${similarity}${candidate.tcgcsvMappingStatus === 'mapped' ? ' · TCGCSV linked' : ''}</span></button>`;
+    const relevance = recognitionMode === 'local'
+      ? candidate.matchScore >= 0.72 ? 'Strong similarity' : candidate.matchScore >= 0.45 ? 'Moderate similarity' : 'Possible candidate'
+      : candidate.matchScore >= 0.72 ? 'Strong lookup match' : candidate.matchScore >= 0.45 ? 'Moderate lookup match' : 'Possible candidate';
+    const mapped = candidate.tcgcsvMappingStatus === 'mapped' ? ' · TCGCSV linked' : '';
+    return `<button class="candidate ${candidate.id === crop.selectedId ? 'selected' : ''}" type="button" data-action="select-candidate" data-id="${escapeAttribute(crop.id)}" data-candidate="${escapeAttribute(candidate.id)}">${externalImage(candidate, 'candidate-image', { loading: 'lazy' })}<strong>${escapeHTML(candidate.name)}</strong><span>${escapeHTML([candidate.setName, candidate.number, candidate.variant].filter(Boolean).join(' · '))}</span><span>${price === null ? 'Current value unavailable' : escapeHTML(formatCurrency(price, candidate.currency || 'USD'))} · ${relevance}${mapped}</span></button>`;
   }).join('')}</div></details>`;
 }
 
-function cropCard(crop, index, state, canEditBoundary = false) {
+function cropCard(crop, index, state, canEditBoundary = false, recognitionMode = 'unavailable') {
   const selected = selectedCropItem(crop);
   const [bucket, label] = matchStatus(crop, selected);
+  const collectCapture = recognitionMode === 'collectcapture';
+  const localRollback = recognitionMode === 'local';
+  const pendingCopy = collectCapture
+    ? 'Sending this bounded crop to CollectCapture for recognition and catalog suggestions.'
+    : localRollback
+      ? 'Reading this bounded crop with the explicit local scanner rollback.'
+      : 'Automatic identification is unavailable until CollectCapture is configured.';
+  const retryCopy = collectCapture ? 'Retry card lookup' : localRollback ? 'Retry text recognition' : 'Retry unavailable';
   return `<article class="review-card ${crop.approved ? 'approved' : ''}" data-crop-id="${escapeAttribute(crop.id)}">
-    <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Straightened item ${index + 1}" width="350" height="490" loading="lazy" decoding="async" referrerpolicy="no-referrer"><div><div class="review-item-kicker"><span>Item ${index + 1}</span><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span>${crop.approved ? '<span class="approval-state">Approved</span>' : ''}</div><h2>${escapeHTML(selected?.name || (['queued', 'identifying'].includes(crop.status) ? 'Identifying this item' : 'Identify this item'))}</h2><p class="muted">${crop.approved ? 'This item will be included with the purchase details below.' : selected ? 'Confirm the identity, fill purchase details, then approve it.' : ['queued', 'identifying'].includes(crop.status) ? 'Reading the straightened item and searching catalog printings automatically.' : 'Retry text recognition, enter a query, or create a custom identity.'}</p></div></div>
+    <div class="review-head"><img src="${escapeAttribute(safeImageUrl(crop.image))}" alt="Straightened item ${index + 1}" width="350" height="490" loading="lazy" decoding="async" referrerpolicy="no-referrer"><div><div class="review-item-kicker"><span>Item ${index + 1}</span><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span>${crop.approved ? '<span class="approval-state">Approved</span>' : ''}</div><h2>${escapeHTML(selected?.name || (['queued', 'identifying'].includes(crop.status) ? 'Identifying this item' : 'Identify this item'))}</h2><p class="muted">${crop.approved ? 'This item will be included with the purchase details below.' : selected ? 'Confirm the identity, fill purchase details, then approve it.' : ['queued', 'identifying'].includes(crop.status) ? pendingCopy : collectCapture ? 'Retry card lookup, enter a query, or create a custom identity.' : localRollback ? 'Retry text recognition, enter a query, or create a custom identity.' : 'Create a custom identity now, or retry after CollectCapture is configured.'}</p></div></div>
     <div class="match-workspace"><label>Item name, set, or number<input data-crop-query value="${escapeAttribute(crop.query)}" placeholder="Type a name, set, or number"></label>
-      ${crop.ocrEngine ? `<details class="recognition-details"><summary>Recognition details</summary><p class="fine-print">${escapeHTML(crop.ocrEngine)}${crop.query ? ' · reliable item text selected locally' : ''}</p></details>` : ''}
-      ${['queued', 'identifying'].includes(crop.status) ? '<p class="fine-print" role="status">Identifying automatically on this device. First-use text recognition may take a few seconds.</p>' : ''}
+      ${crop.ocrEngine ? `<details class="recognition-details"><summary>Recognition details</summary><p class="fine-print">${escapeHTML(crop.ocrEngine)}${crop.query ? (collectCapture ? ' · based on the crop or query you sent' : ' · reliable item text selected locally') : ''}</p></details>` : ''}
+      ${['queued', 'identifying'].includes(crop.status) ? `<p class="fine-print" role="status">${collectCapture ? 'CollectCapture is checking this crop. You will choose and confirm any suggested printing.' : localRollback ? 'Local rollback recognition is checking this crop.' : 'Automatic identification is unavailable in this build.'}</p>` : ''}
       ${crop.error ? `<p class="fine-print negative" role="status">${escapeHTML(crop.error)}</p>` : ''}
-      <div class="button-row"><button class="button secondary small" type="button" data-action="identify-crop" data-id="${escapeAttribute(crop.id)}" ${['queued', 'identifying'].includes(crop.status) ? 'disabled' : ''}>${['queued', 'identifying'].includes(crop.status) ? 'Identifying…' : crop.query ? 'Search manually / retry' : 'Retry text recognition'}</button>${canEditBoundary ? `<button class="button secondary small" type="button" data-action="edit-crop" data-id="${escapeAttribute(crop.id)}">Edit crop boundary</button>` : ''}<button class="button ghost small" type="button" data-action="custom-crop" data-id="${escapeAttribute(crop.id)}">Create custom item</button><button class="button ghost small" type="button" data-action="delete-crop" data-id="${escapeAttribute(crop.id)}">Delete crop</button></div>
+      <div class="button-row"><button class="button secondary small" type="button" data-action="identify-crop" data-id="${escapeAttribute(crop.id)}" ${['queued', 'identifying'].includes(crop.status) || recognitionMode === 'unavailable' ? 'disabled' : ''}>${['queued', 'identifying'].includes(crop.status) ? 'Identifying…' : crop.query ? (collectCapture ? 'Search CollectCapture' : 'Search locally') : retryCopy}</button>${canEditBoundary ? `<button class="button secondary small" type="button" data-action="edit-crop" data-id="${escapeAttribute(crop.id)}">Edit crop boundary</button>` : ''}<button class="button ghost small" type="button" data-action="custom-crop" data-id="${escapeAttribute(crop.id)}">Create custom item</button><button class="button ghost small" type="button" data-action="delete-crop" data-id="${escapeAttribute(crop.id)}">Delete crop</button></div>
     </div>
-    ${candidateList(crop)}
+    ${candidateList(crop, recognitionMode)}
     ${selectedMatch(crop, selected, state)}
     ${selected ? `<details class="crop-acquisition" ${crop.approved ? 'open' : ''}><summary><span><strong>Purchase details</strong><small>Quantity, cost, grading, and storage for this item.</small></span><span aria-hidden="true">+</span></summary><div>${acquisitionFields(crop.acquisition)}</div></details>` : ''}
   </article>`;
@@ -133,13 +145,19 @@ export function renderScanReview(draft, state = {}) {
   const currency = state.settings?.currency || 'USD';
   const totals = scanReviewTotals(draft, currency);
   const sourceAvailable = Boolean(state.scanSourceAvailable);
+  const recognitionMode = state.cardRecognitionMode || cardRecognitionMode();
+  const recognitionPrivacy = recognitionMode === 'collectcapture'
+    ? 'For each lookup, one bounded, metadata-free card crop is sent transiently to CollectCapture over an authenticated connection. CollectCapture verifies the crop but does not retain it; its recognition provider processes it under the configured provider controls. Saved crops and review decisions remain in local browser storage.'
+    : recognitionMode === 'local'
+      ? 'Saved crops and review decisions remain in local browser storage. Recognition runs locally because the explicit scanner rollback is active; photos are not uploaded.'
+      : 'Saved crops and review decisions remain in local browser storage. Automatic identification is unavailable until CollectCapture is configured; there is no silent local fallback.';
   const headerActions = `<div class="button-row"><button class="button secondary small" type="button" data-action="save-scan">Save draft</button><button class="button danger small" type="button" data-action="discard-scan" data-draft-id="${escapeAttribute(draft.id)}">Discard draft</button></div>`;
   return `${pageHeader('Collection intake', `Review ${draft.crops.length} detected item${draft.crops.length === 1 ? '' : 's'}`, 'Resolve each identity, add shared purchase details, then explicitly approve only the items you want.', headerActions)}
     <nav class="intake-steps" aria-label="Intake progress"><span class="complete">1 · Scan or upload</span><span aria-current="step">2 · Review detected items</span><span>3 · Confirm and add</span></nav>
     ${queueSummary(summary)}
     ${draft.submissionError ? `<p class="inline-warning" role="status">${escapeHTML(draft.submissionError)}</p>` : ''}
-    <section class="scan-source-privacy"><div><span aria-hidden="true">◇</span><p><strong>${sourceAvailable ? 'A bounded source working copy is held only in memory for this open review.' : 'The full source photo is not stored with this draft.'}</strong> Crops and decisions stay in local browser storage. Text recognition and image comparison run locally; only text queries and catalog identifiers may reach enabled catalog sources. No photo is uploaded.</p></div>${sourceAvailable ? '<button class="button ghost small" type="button" data-action="release-source-photo">Release source copy now</button>' : ''}</section>
+    <section class="scan-source-privacy"><div><span aria-hidden="true">◇</span><p><strong>${sourceAvailable ? 'The full source photo stays only in browser memory for this open review.' : 'The full source photo is not stored with this draft.'}</strong> ${escapeHTML(recognitionPrivacy)}</p></div>${sourceAvailable ? '<button class="button ghost small" type="button" data-action="release-source-photo">Release source copy now</button>' : ''}</section>
     ${bulkAcquisition(draft)}
-    <div class="review-list">${draft.crops.map((crop, index) => cropCard(crop, index, state, sourceAvailable)).join('')}</div>
+    <div class="review-list">${draft.crops.map((crop, index) => cropCard(crop, index, state, sourceAvailable, recognitionMode)).join('')}</div>
     ${confirmationBar(draft, summary, totals, currency)}`;
 }

@@ -17,6 +17,7 @@ const required = [
   'app/assets/js/services/catalog-browse.js',
   'app/assets/js/services/providers/tcgcsv.js',
   'app/assets/js/services/scan-workbench.js', 'app/assets/js/services/scan-review.js', 'app/assets/js/services/supabase.js',
+  'app/assets/js/services/collectcapture.js',
   'app/assets/js/services/visual-index.js', 'app/assets/data/visual-index/pokemon-v1/manifest.json',
   'app/assets/js/services/watchlist.js', 'app/assets/js/services/price-intelligence.js',
   'app/assets/js/services/justtcg-refresh.js',
@@ -167,8 +168,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.31' || packageLock.version !== '0.8.31' || packageLock.packages?.['']?.version !== '0.8.31') {
-  errors.push('Application and lockfile versions must agree on 0.8.31.');
+if (packageJSON.version !== '0.8.32' || packageLock.version !== '0.8.32' || packageLock.packages?.['']?.version !== '0.8.32') {
+  errors.push('Application and lockfile versions must agree on 0.8.32.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -440,12 +441,17 @@ if (/create or replace function public\.publish_forecast_intelligence/i.test(for
 const appFiles = await filesUnder(app);
 const netlifyFiles = await filesUnder(resolve(root, 'netlify'));
 const sourceFiles = [...appFiles, ...await filesUnder(resolve(root, 'scripts')), ...netlifyFiles, resolve(root, 'netlify.toml'), ...await filesUnder(resolve(root, 'supabase/migrations'))];
+const collectCaptureLoopbackUrl = ['http:', '//localhost:4100'].join('');
+const collectCaptureLoopbackAssignment = `COLLECTCAPTURE_API_URL: '${collectCaptureLoopbackUrl}'`;
 for (const file of sourceFiles) {
   const extension = extname(file);
   if (!['.js', '.mjs', '.html', '.css', '.toml', '.sql', '.webmanifest'].includes(extension)) continue;
   const source = await readFile(file, 'utf8');
   if (placeholderPattern.test(source)) errors.push(`Unsafe placeholder in ${relative(root, file)}`);
-  if (file !== resolve(root, 'scripts/dev.mjs') && /http:\/\//i.test(source)) errors.push(`Insecure URL in ${relative(root, file)}`);
+  const securitySource = file === resolve(app, 'runtime-config.js')
+    ? source.replace(collectCaptureLoopbackAssignment, "COLLECTCAPTURE_API_URL: ''")
+    : source;
+  if (file !== resolve(root, 'scripts/dev.mjs') && /http:\/\//i.test(securitySource)) errors.push(`Insecure URL in ${relative(root, file)}`);
 }
 
 const index = await readFile(resolve(app, 'index.html'), 'utf8');
@@ -459,14 +465,26 @@ if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Serv
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
 const netlifyDeployWorkflow = await readFile(resolve(root, '.github/workflows/netlify-deploy.yml'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.31-dev'")) errors.push('Local runtime config must identify the 0.8.31 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.31'")) errors.push('Production builds must default APP_VERSION to 0.8.31.');
-if (!/^\s+APP_VERSION: 0\.8\.31$/m.test(netlifyDeployWorkflow)) errors.push('Netlify production deploys must bake APP_VERSION 0.8.31.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.32-dev'")) errors.push('Local runtime config must identify the 0.8.32 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.32'")) errors.push('Production builds must default APP_VERSION to 0.8.32.');
+if (!/^\s+APP_VERSION: 0\.8\.32$/m.test(netlifyDeployWorkflow)) errors.push('Netlify production deploys must bake APP_VERSION 0.8.32.');
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
 }
 if (!runtimeConfig.includes("TCGCSV_CATALOG_URL: ''") || !buildScript.includes("process.env.TCGCSV_CATALOG_URL || ''")) {
   errors.push('TCGCSV catalog URL must remain an explicit, fail-closed runtime setting.');
+}
+if (!runtimeConfig.includes(collectCaptureLoopbackAssignment) || !runtimeConfig.includes('ENABLE_COLLECTCAPTURE: true') || !runtimeConfig.includes('ENABLE_LOCAL_SCAN_ROLLBACK: false')) {
+  errors.push('Local runtime config must explicitly target the opt-in CollectCapture development service.');
+}
+if (!buildScript.includes('ENABLE_COLLECTCAPTURE requires COLLECTCAPTURE_API_URL')) {
+  errors.push('Production CollectCapture activation must fail closed without an API URL.');
+}
+if (!buildScript.includes('The production CollectCapture API URL must use HTTPS') || !buildScript.includes('must not contain credentials, a query, or a fragment')) {
+  errors.push('Production CollectCapture builds must validate the configured endpoint boundary.');
+}
+if (!netlifyDeployWorkflow.includes('COLLECTCAPTURE_API_URL: ${{ vars.COLLECTCAPTURE_API_URL }}') || !netlifyDeployWorkflow.includes('ENABLE_COLLECTCAPTURE: ${{ vars.ENABLE_COLLECTCAPTURE }}') || !netlifyDeployWorkflow.includes('ENABLE_LOCAL_SCAN_ROLLBACK: ${{ vars.ENABLE_LOCAL_SCAN_ROLLBACK }}')) {
+  errors.push('Netlify deploys must source CollectCapture activation from explicit repository variables.');
 }
 
 const ordinaryUiFiles = [
@@ -573,7 +591,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.31'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.31.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.32'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.32.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;

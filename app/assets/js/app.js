@@ -25,6 +25,7 @@ import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
 import { catalogRouteId, clearCatalogProviderCaches, getCatalogRouteItem, refreshCatalogItem, searchCatalog } from './services/catalog.js';
+import { cardRecognitionMode } from './services/collectcapture.js';
 import { catalogGameRequiresSession, clearBrowseCatalogCache, filterCatalogSets, loadCatalogGames, loadCatalogSetProductsPage, loadCatalogSets, loadTCGCSVSetCoverImage, mergeCatalogGames } from './services/catalog-browse.js';
 import { cropsFromBoxesAsync, cropToJPEG, fileToScanImageDataURL, loadImage, releaseOCRWorker } from './services/image.js';
 import { intelligenceVariantIds, loadCachedIntelligence, loadIntelligenceHistory, mergePublicationHistory, refreshPublishedIntelligence } from './services/price-intelligence.js';
@@ -1637,10 +1638,16 @@ async function processScanFile(file, { single = false, closeSourceModal = false 
 }
 
 function chooseScanImage({ single = false } = {}) {
+  const recognitionMode = cardRecognitionMode();
   const description = single
-    ? 'Use the camera or choose one card image. CollectFolio detects its four corners, straightens it, and starts identification automatically.'
+    ? `Use the camera or choose one card image. CollectFolio detects its four corners, straightens it, and ${recognitionMode === 'unavailable' ? 'prepares it for manual review.' : 'starts identification automatically.'}`
     : 'Use the camera or choose an existing image. CollectFolio detects one or several card boundaries.';
-  openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. A decoder-bounded working copy is held only in memory for the active review; the full source photo is never saved or uploaded.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
+  const recognitionDisclosure = recognitionMode === 'collectcapture'
+    ? 'After framing, each bounded, metadata-free card crop is sent transiently to CollectCapture over an authenticated connection. CollectCapture verifies the crop but does not retain it; its recognition provider processes it under the configured provider controls.'
+    : recognitionMode === 'local'
+      ? 'The explicit scanner rollback is active, so recognition stays in this browser and no crop is uploaded.'
+      : 'Automatic identification is unavailable until CollectCapture is configured. No crop is uploaded and there is no silent local fallback.';
+  openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. A decoder-bounded working copy is held only in memory for the active review, and the full source photo is never saved or sent. ${recognitionDisclosure}</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelectorAll('[data-scan-source]').forEach((input) => input.addEventListener('change', async (event) => {
       const file = event.target.files[0];
       if (!file) return;
@@ -1728,7 +1735,12 @@ function openWorkbench(image, { single = false } = {}) {
           await loadLocal();
           navigate('scan');
           render();
-          showToast('Cards straightened; identification started locally');
+          const recognitionMode = cardRecognitionMode();
+          showToast(recognitionMode === 'collectcapture'
+            ? 'Cards straightened; CollectCapture lookup started'
+            : recognitionMode === 'local'
+              ? 'Cards straightened; local rollback identification started'
+              : 'Cards straightened; configure CollectCapture to identify them');
           startDraftIdentification(draft);
         } catch (error) {
           button.disabled = false;

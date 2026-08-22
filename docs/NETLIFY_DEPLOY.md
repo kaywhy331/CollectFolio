@@ -41,12 +41,15 @@ In Supabase, open **Project Settings → API Keys** and copy the publishable key
 ```text
 SUPABASE_URL=https://agmjgyyvhfcivbwdlvzk.supabase.co
 SUPABASE_ANON_KEY=<your Supabase publishable/anon key>
-APP_VERSION=0.8.31
+APP_VERSION=0.8.32
 ENABLE_TESSERACT=true
 ENABLE_WATCHLISTS=true
 ENABLE_SET_BROWSING=true
 TCGCSV_REFRESH_STATUS_URL=https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev/status
 TCGCSV_CATALOG_URL=https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev
+COLLECTCAPTURE_API_URL=
+ENABLE_COLLECTCAPTURE=false
+ENABLE_LOCAL_SCAN_ROLLBACK=false
 JUSTTCG_API_KEY=<server-only JustTCG key>
 ```
 
@@ -56,6 +59,17 @@ JUSTTCG_API_KEY=<server-only JustTCG key>
 The Worker must hold `SUPABASE_ANON_KEY` as a secret and validate each bearer
 session; never configure a public R2 domain or place the coordinator token in
 Netlify's browser runtime.
+
+### CollectCapture recognition activation
+
+Card recognition is deliberately disabled in the example above until a reviewed CollectCapture API has a stable HTTPS origin. To activate it:
+
+1. Configure and deploy the CollectCapture `/v1/card-lookups` endpoint for this exact CollectFolio origin and Supabase issuer.
+2. Add the exact CollectCapture origin to the `connect-src` directive in `netlify.toml`; do not use a wildcard or a broad `https:` allowance.
+3. Set GitHub Actions repository variables `COLLECTCAPTURE_API_URL`, `ENABLE_COLLECTCAPTURE=true`, and `ENABLE_LOCAL_SCAN_ROLLBACK=false`. The production workflow reads these variables while building `runtime-config.js`.
+4. Deploy and complete the signed-in crop-only, invalid-token, non-retention, selection, confirmation, failure, and log/persistence checks in [COLLECTCAPTURE_CARD_LOOKUP.md](COLLECTCAPTURE_CARD_LOOKUP.md).
+
+If the service is unavailable, set `ENABLE_COLLECTCAPTURE=false` and redeploy. Keep `ENABLE_LOCAL_SCAN_ROLLBACK=false` for fail-closed operation; turn it on only as a separately approved, visibly disclosed emergency rollback. CollectCapture and CollectFolio keep separate Supabase schemas, so no CollectCapture database migration is applied here.
 
 5. Deploy the site.
 
@@ -80,6 +94,7 @@ After Netlify assigns a URL:
 - In the original browser collection, sign out and sign into a different account; confirm sync refuses the account switch and keeps local data intact.
 - In a fresh private browser profile, confirm the second account can sync normally and still cannot read the first account's rows.
 - Confirm `holdings_pkey` and `scan_sessions_pkey` are `(user_id, id)` after applying migration 0021.
+- When CollectCapture is enabled, confirm the generated runtime URL matches the CSP's exact `connect-src` origin, an expired CollectFolio token is rejected, and one selected crop can be suggested but not added before explicit printing confirmation.
 - Delete the holding on one signed-in browser, sync, then sync a second browser and confirm it remains deleted.
 - Install the PWA and launch it from the home screen.
 - On a published deploy, open **Functions → justtcg-catalog** and confirm it has a Scheduled badge with a five-minute UTC schedule.
@@ -91,7 +106,7 @@ After Netlify assigns a URL:
 When any file under `app/` changes, update the cache name in `app/sw.js` before a production release, for example:
 
 ```js
-const CACHE = 'collectfolio-shell-v0.8.31';
+const CACHE = 'collectfolio-shell-v0.8.32';
 ```
 
 This ensures installed PWAs replace the prior shell reliably.

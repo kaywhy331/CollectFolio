@@ -111,7 +111,10 @@ docs/
 | `SUPABASE_URL` | No | Supabase project URL; supplied project is the default |
 | `SUPABASE_ANON_KEY` | No | Browser-safe public/publishable key; enables auth and sync |
 | `APP_VERSION` | No | Displayed and embedded version |
-| `ENABLE_TESSERACT` | No | Disables external OCR loading when set to `false` |
+| `COLLECTCAPTURE_API_URL` | No | Exact CollectCapture HTTPS base URL; required when remote lookup is enabled |
+| `ENABLE_COLLECTCAPTURE` | No | Fail-closed switch for authenticated server recognition; a configured URL enables it unless explicitly disabled |
+| `ENABLE_LOCAL_SCAN_ROLLBACK` | No | Explicit emergency switch for the dormant browser recognizer; defaults to `false` |
+| `ENABLE_TESSERACT` | No | Controls Tesseract loading inside the local rollback path |
 | `ENABLE_WATCHLISTS` | No | Independent rollback switch for the local Watchlist UI; defaults to `true` |
 | `ENABLE_PRICE_INTELLIGENCE` | No | Fail-closed gate for approved public intelligence; defaults to `false` and still requires the hosted publication flag |
 | `ENABLE_CLOUD_DATA_REMOVAL` | No | Fail-closed gate for the migration-0015 erasure RPC; defaults to `false` until hosted recovery, rollback, and isolation qualification pass |
@@ -328,9 +331,17 @@ updates the live status announcement.
 
 Each four-corner outline is mapped through a projective homography and bilinearly resampled into an upright JPEG with a maximum width of 900 px and 0.90 quality. One shared bounded raster serves sequential crop jobs, which yield between crops to keep the interface responsive. The straightened crop becomes the user-owned portfolio image and remains in IndexedDB; one decoder-bounded source working image may remain only in memory for immediate boundary edits during the active review, is never part of the persisted draft, and is released on navigation, explicit release, discard, completion, or page exit.
 
-### 7.4 OCR
+### 7.4 CollectCapture recognition and catalog lookup
 
-The sequence is:
+Remote recognition is the normal configured path. `services/collectcapture.js` obtains a current CollectFolio Supabase session, sends only the straightened crop to `POST /v1/card-lookups`, and strictly validates the response. The request omits cookies and referrer data, disables caching, permits HTTPS only outside loopback development, limits the encoded request and decoded response, and aborts after 30 seconds.
+
+CollectCapture uses a dedicated verifier for the CollectFolio Supabase issuer, validates actual image bytes and a 2 MiB limit, requests structured vision evidence with provider-side response storage disabled, and performs authenticated lookup against the private TCGCSV catalog. It neither writes the crop to CollectCapture persistence nor returns price data. Its `imageRetained: false` assertion and exact content digest are mandatory response fields; the browser independently hashes its crop and rejects a mismatched response. Recognition-provider data controls remain a distinct external boundary disclosed to the collector.
+
+Every returned candidate is forced into the `likely` suggestion bucket. A response that claims an automatic exact match, lacks the non-retention assertion, changes an identity tuple, coerces numeric fields, or exceeds a bound is rejected. No network or provider failure invokes local recognition implicitly. See [COLLECTCAPTURE_CARD_LOOKUP.md](COLLECTCAPTURE_CARD_LOOKUP.md) for the complete contract and deployment sequence.
+
+### 7.5 Legacy browser-recognition rollback
+
+When `ENABLE_COLLECTCAPTURE` is unavailable or disabled and `ENABLE_LOCAL_SCAN_ROLLBACK` is explicitly true, the legacy sequence is:
 
 1. attempt a browser-native `TextDetector` when available;
 2. quality-gate native text and otherwise lazy-load one reusable Tesseract.js worker from jsDelivr;
@@ -339,9 +350,9 @@ The sequence is:
 5. generate ordered title + collector-number, collector-number-only, title, and cautious OCR-noise-relaxed queries;
 6. search variants automatically and preserve provider outages as retryable errors instead of false no-matches.
 
-OCR begins when a straightened crop enters review. OCR exceptions, unavailable browser detection, and disabled/unavailable Tesseract all fall through to the independent visual candidate index before returning control to manual query entry; no approved price source is required for identification.
+Rollback OCR begins when a straightened crop enters review. OCR exceptions, unavailable browser detection, and disabled/unavailable Tesseract fall through to the independent visual candidate index before returning control to manual query entry. This path is retained for operational recovery and is visibly disclosed in the review UI; it is not a production fallback for CollectCapture errors.
 
-### 7.5 Visual candidate recovery and reranking
+### 7.6 Visual candidate recovery and reranking
 
 The app computes a 64-bit difference hash from a 9×8 grayscale rendering of the straightened crop. A versioned, sharded Pokémon index contains compact catalog metadata and the same fingerprint for 20,392 of 20,444 indexed cards, pinned to an immutable `PokemonTCG/pokemon-tcg-data` commit. When OCR produces no useful catalog result, the nearest index records become real catalog candidates without downloading every provider image.
 
@@ -479,7 +490,7 @@ This is deterministic last-write-wins at holding granularity with persistent del
 
 The browser requests publications only for deduplicated canonical UUIDs represented in Holdings or Watchlist, in batches of 50. IndexedDB cache entries expire at the earlier of six hours or the publication's own expiry. A hydration generation prevents an older in-flight response from restoring intelligence after its last mapped card is removed.
 
-The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Trajectory-v1.1 additionally validates bounded exact manifest membership, object keys, group/category/part identity, optional variant counts, product/finish identity, model version, allowed confidence, ordered checkpoint paths, and only 30/60/90-day checkpoints (28/63/91 actual days on the weekly panel); groups and manifest parts are fetched with bounded concurrency. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid, stale, or above-tier layers are omitted rather than repaired or guessed. Search withholds stale trajectories; detail gives an explicit newer-observation explanation. The history chart plots independent q10–q90 whiskers at the modeled checkpoints. It draws a light connector through q50 only for `category-validated` or `relative-validated` evidence and never fabricates daily forecast points or a continuous uncertainty surface. `range-only` and `attribute-reference` output has no directional dot or connector. The browser never reconstructs history from trend percentages or extrapolates a forecast from them.
+The display contract validates finite values, quality metadata, known trend states, fixed forecast horizons, explicit available/limited status, probabilities, confidence, and noncrossing q10/q25/q50/q75/q90. Trajectory-v1.1 additionally validates bounded exact manifest membership, object keys, group/category/part identity, optional variant counts, product/finish identity, model version, allowed confidence, ordered checkpoint paths, and only 30/60/90-day checkpoints (28/63/91 actual days on the weekly panel); groups and manifest parts are fetched with bounded concurrency. Support tiers are layered: Tier 1 observed market, Tier 2 trends and approved observation history, Tier 3 fair value, Tier 4 forecasts, and Tier 5 complete public scorecards. Invalid, stale, or above-tier layers are omitted rather than repaired or guessed. Search withholds stale trajectories; detail gives an explicit newer-observation explanation. The history chart plots independent q10–q90 whiskers at the modeled checkpoints and labels the exact last-observed price plus each served checkpoint's q10 low, q50 midpoint, and q90 high with collision-aware SVG placement. It draws a light connector through q50 only for `category-validated` or `relative-validated` evidence and never fabricates daily forecast points or a continuous uncertainty surface. `range-only` and `attribute-reference` output has labeled interval values but no directional dot or connector. The browser never reconstructs history from trend percentages or extrapolates a forecast from them.
 
 Insights has independent restorable Performance, Forecasts, Alerts, and Track Record routes. Performance consumes only local portfolio snapshots. Local Scenario Outlooks use source-separated saved unit values and qualitative confidence, work from a single deliberately broad anchor, refuse values stale beyond 180 days, and never feed Track Record. Published portfolio forecast aggregation remains separate and excludes manual values, unmapped holdings, missing horizons, missing approved observations, and currencies that would require an unapproved conversion. Confidence scores are preserved item-by-item as a score or range rather than averaged into a new claim. Actual current value and either modeled future product remain separate in markup, copy, and visual treatment.
 
@@ -547,7 +558,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 10. Privacy and security
 
 - Full source photos are neither uploaded nor persisted by the app; the bounded working image exists only in memory for the active review and is released when that review closes.
-- User crops remain local by default.
+- Scan-draft copies of user crops remain local. When CollectCapture is enabled, one Canvas-reencoded crop is sent transiently for each disclosed lookup; a crop is copied into optional holding sync only after the collector explicitly retains it on a confirmed holding.
 - Cloud sync includes an inline user image only when under 180 KB; the database enforces a 220 KB ceiling.
 - Netlify receives only static deploy artifacts.
 - Supabase public keys are safe to expose only because RLS is mandatory.
@@ -564,7 +575,7 @@ The TCGCSV adapter is bounded to a fixed HTTPS origin, response-size limits, one
 ## 11. PWA and offline behavior
 
 The service worker caches the application shell and all local modules. Shell
-`collectfolio-shell-v0.8.31` includes the Settings, onboarding, local-scenario, image-identification, complete 48-tile catalog pagination, demand-driven provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
+`collectfolio-shell-v0.8.32` includes the Settings, onboarding, local-scenario, CollectCapture image-identification client, complete 48-tile catalog pagination, demand-driven provider-neutral set-browse, searchable 90-category TCGCSV directory, authenticated category-scoped TCGCSV provider, legacy TCGCSV identity-to-image reconstruction, interactive history/forecast chart controls, and local Collection Sets modules plus the visual-index manifest. Navigation
 uses network-first with cached `index.html` fallback. Same-origin scripts, styles, and
 images use cache-first after first fetch. Approved provider images use a dedicated,
 160-entry cache-first store to reduce repeat downloads without unbounded growth. The

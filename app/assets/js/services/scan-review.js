@@ -4,6 +4,7 @@ import { deleteRecord, deleteRecords, getAll, putRecord, saveHolding } from '../
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { matchBucketFor } from '../core/view-models.js';
 import { searchCatalog } from './catalog.js';
+import { cardRecognitionMode, lookupCardWithCollectCapture } from './collectcapture.js';
 import { candidateEvidenceScore, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
 import { recordDemandEvent } from './demand-events.js';
 import { discoverVisualCandidates } from './visual-index.js';
@@ -54,7 +55,7 @@ export async function identifyDraftCrops(draft, { concurrency = 1, identify = id
         await identify(draft, crop.id, '');
       } catch (error) {
         crop.status = 'error';
-        crop.error = error?.message || 'Identification failed. Enter a query or retry text recognition.';
+        crop.error = error?.message || 'Identification failed. Enter a query or retry.';
         await saveScanDraft(draft).catch(() => {});
       }
     }
@@ -282,71 +283,101 @@ export async function applyAcquisitionToAll(draft, patch = {}) {
   return count;
 }
 
-export async function identifyCrop(draft, cropId, editedQuery = '', {
-  visualSearch = discoverVisualCandidates,
-  mapVisualCandidates = mapProviderCandidatesToTCGCSV
-} = {}) {
+export async function identifyCrop(draft, cropId, editedQuery = '', options = {}) {
+  const lookup = options.lookup || lookupCardWithCollectCapture;
+  const mode = options.mode || (options.lookup ? 'collectcapture' : cardRecognitionMode());
+  const visualSearch = options.visualSearch || discoverVisualCandidates;
+  const mapVisualCandidates = options.mapVisualCandidates || mapProviderCandidatesToTCGCSV;
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
   crop.status = 'identifying'; crop.error = ''; crop.approved = false;
   crop.candidates = []; crop.selectedId = ''; crop.customItem = null;
   await saveScanDraft(draft);
   try {
-    let evidence;
-    let recognitionWarning = '';
-    if (!editedQuery.trim()) {
-      try {
-        const ocr = await recognizeText(crop.image);
-        crop.ocrEngine = ocr.engine;
-        crop.ocrText = ocr.accepted ? ocr.text : '';
-        crop.query = ocr.accepted ? ocr.query : '';
-        evidence = ocr;
-      } catch (error) {
-        // Visual recovery is an independent local recognizer. A disabled or
-        // unavailable OCR engine must not prevent it from resolving an exact
-        // catalog identity through the reviewed bridge.
-        crop.ocrEngine = '';
-        crop.ocrText = '';
-        crop.query = '';
-        evidence = { queries: [] };
-        recognitionWarning = error?.message || 'Text recognition was unavailable.';
-      }
-    } else {
-      crop.query = editedQuery.trim();
-      crop.ocrText = '';
-      crop.ocrEngine = '';
-      evidence = queryEvidenceFromText(crop.query);
-    }
-    const queries = evidence?.queries?.length ? evidence.queries : crop.query ? [crop.query] : [];
-    if (!queries.length) {
-      try {
-        crop.candidates = await mapVisualCandidates(await visualSearch(crop.image));
-      } catch { crop.candidates = []; }
+    if (mode === 'collectcapture') {
+      const result = await lookup({
+        imageDataUrl: crop.image,
+        query: editedQuery.trim(),
+        category: 'all',
+        limit: 24
+      });
+      crop.ocrEngine = result.recognition.source === 'user_query'
+        ? 'CollectCapture manual search'
+        : 'CollectCapture image recognition';
+      crop.ocrText = result.recognition.visibleText.join('\n');
+      crop.query = editedQuery.trim() || result.recognition.queries[0] || '';
+      crop.candidates = result.candidates;
       crop.status = crop.candidates.length ? 'matched' : 'unmatched';
       crop.error = crop.candidates.length
-        ? `${recognitionWarning ? `${recognitionWarning} ` : ''}These Pokémon candidates were recovered by image similarity. Confirm the exact printing.`
-        : `${recognitionWarning ? `${recognitionWarning} ` : ''}Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.`;
-      await saveScanDraft(draft);
-      return crop;
+        ? result.warnings.join(' ')
+        : ['CollectCapture found no catalog match. Try the card name or collector number, or create a custom item.', ...result.warnings].join(' ');
+    } else if (mode === 'local') {
+      await identifyCropLocally(crop, editedQuery, { visualSearch, mapVisualCandidates });
+    } else {
+      throw new Error('Card identification is unavailable until CollectCapture is configured. You can still create a custom item.');
     }
-    const recovered = await searchCatalogCandidates(queries, evidence);
-    if (recovered.allAttemptsFailed && recovered.warnings.length) throw new Error('Card catalogs are temporarily unavailable. Check your connection and retry.');
-    crop.candidates = await rerankCandidates(crop.image, recovered.candidates.slice(0, 24), evidence);
-    if (!crop.candidates.length) {
-      try { crop.candidates = await mapVisualCandidates(await visualSearch(crop.image)); } catch { /* Manual query remains available. */ }
-    }
-    crop.status = crop.candidates.length ? 'matched' : 'unmatched';
-    crop.error = crop.candidates.length
-      ? (recovered.candidates.length
-        ? recovered.warnings.join(' ')
-        : 'No reliable text match was found, so these Pokémon candidates were recovered by image similarity. Confirm the exact printing.')
-      : ['No catalog match found. Try the card name or collector number, or create a custom item.', ...recovered.warnings].join(' ');
   } catch (error) {
     crop.status = 'error';
     crop.error = error.message || 'Identification failed. Enter a query or create a custom item.';
   }
   await saveScanDraft(draft);
   return crop;
+}
+
+async function identifyCropLocally(crop, editedQuery, { visualSearch, mapVisualCandidates }) {
+  let evidence;
+  let recognitionWarning = '';
+  if (!editedQuery.trim()) {
+    try {
+      const ocr = await recognizeText(crop.image);
+      crop.ocrEngine = ocr.engine;
+      crop.ocrText = ocr.accepted ? ocr.text : '';
+      crop.query = ocr.accepted ? ocr.query : '';
+      evidence = ocr;
+    } catch (error) {
+      crop.ocrEngine = '';
+      crop.ocrText = '';
+      crop.query = '';
+      evidence = { queries: [] };
+      recognitionWarning = error?.message || 'Text recognition was unavailable.';
+    }
+  } else {
+    crop.query = editedQuery.trim();
+    crop.ocrText = '';
+    crop.ocrEngine = '';
+    evidence = queryEvidenceFromText(crop.query);
+  }
+  const queries = evidence?.queries?.length ? evidence.queries : crop.query ? [crop.query] : [];
+  if (!queries.length) {
+    try {
+      crop.candidates = await mapVisualCandidates(await visualSearch(crop.image));
+    } catch {
+      crop.candidates = [];
+    }
+    crop.status = crop.candidates.length ? 'matched' : 'unmatched';
+    crop.error = crop.candidates.length
+      ? `${recognitionWarning ? `${recognitionWarning} ` : ''}These Pokémon candidates were recovered by image similarity. Confirm the exact printing.`
+      : `${recognitionWarning ? `${recognitionWarning} ` : ''}Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.`;
+    return;
+  }
+  const recovered = await searchCatalogCandidates(queries, evidence);
+  if (recovered.allAttemptsFailed && recovered.warnings.length) {
+    throw new Error('Card catalogs are temporarily unavailable. Check your connection and retry.');
+  }
+  crop.candidates = await rerankCandidates(crop.image, recovered.candidates.slice(0, 24), evidence);
+  if (!crop.candidates.length) {
+    try {
+      crop.candidates = await mapVisualCandidates(await visualSearch(crop.image));
+    } catch {
+      // Manual query remains available.
+    }
+  }
+  crop.status = crop.candidates.length ? 'matched' : 'unmatched';
+  crop.error = crop.candidates.length
+    ? (recovered.candidates.length
+      ? recovered.warnings.join(' ')
+      : 'No reliable text match was found, so these Pokémon candidates were recovered by image similarity. Confirm the exact printing.')
+    : ['No catalog match found. Try the card name or collector number, or create a custom item.', ...recovered.warnings].join(' ');
 }
 
 export async function selectCropCandidate(draft, cropId, candidateId, { hydrate = hydrateMappedVisualCandidate } = {}) {
@@ -372,7 +403,7 @@ export async function setCropCustomItem(draft, cropId, item) {
 export async function setCropApproval(draft, cropId, approved) {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
-  if (approved && !cropHasApprovableIdentity(crop)) throw new Error('Select an exact catalog match or create a custom item first.');
+  if (approved && !cropHasApprovableIdentity(crop)) throw new Error('Select a catalog printing or create a custom item first.');
   crop.approved = Boolean(approved);
   await saveScanDraft(draft);
   return crop;
