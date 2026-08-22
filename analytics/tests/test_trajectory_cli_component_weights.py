@@ -27,14 +27,19 @@ class LoadComponentWeightsTests(unittest.TestCase):
             path = Path(tmp) / "component-weights.json"
             path.write_text(json.dumps({
                 "85": {
-                    "30": {"weightA": 0.25, "weightB": 0.5},
+                    "30": {"weightA": 0.25, "weightC": 0.1, "weightB": 0.5},
+                    "60": {"weightA": 0.0, "weightC": 0.25, "weightB": -0.25},
                     "90": {"weightA": 1.0, "weightB": 0.0},
                 },
             }))
             weights = _load_component_weights(path, 85)
         # horizon_steps_for(30) == 4, horizon_steps_for(90) == 13 (pinned
         # in test_trajectory.py's HorizonStepsForTests too).
-        self.assertEqual(weights, {4: (0.25, 0.5), 13: (1.0, 0.0)})
+        self.assertEqual(weights, {
+            4: (0.25, 0.1, 0.5),
+            9: (0.0, 0.25, -0.25),
+            13: (1.0, 0.0, 0.0),
+        })
 
     def test_empty_category_entry_returns_none(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -96,7 +101,7 @@ def _make_component_weights_receipt(
 
     def selection(h_steps, horizon_days):
         return {
-            "weightA": 1.0, "weightB": 1.0, "horizonDays": horizon_days,
+            "weightA": 1.0, "weightC": 0.0, "weightB": 1.0, "horizonDays": horizon_days,
             "trainMaeLiftOverNoChange": 0.01, "trainNCases": 50,
             "trainOrigins": [1, 2, 3], "holdoutOrigins": [4, 5, 6],
         }
@@ -224,27 +229,20 @@ class MergedEvaluationSummaryTests(unittest.TestCase):
             _render_component_weights_summary_markdown,
         )
 
-        # Category 4 is not in forecast_publisher.NINETY_DAY_ONLY_OVERRIDE,
-        # so this near-miss stays informational-only.
         receipt = _make_component_weights_receipt(4, horizon30_passes=False, horizon90_passes=True)
         rows = [_category_row_from_receipt(receipt)]
         md = _render_component_weights_summary_markdown(rows)
         self.assertIn(
-            "## Near-miss notes (informational; ENABLED entries are explicitly reviewed serving decisions)",
+            "## Near-miss notes (informational; failed horizons remain range-only)",
             md,
         )
         self.assertIn(
-            "Category 4, standard cohort: passes 90d only (30d fails) -- flagged for Kevin "
-            "as a possible future 90d-only serving mode; NOT enabled.",
+            "Category 4, standard cohort: passes 90d only (30d fails). Failed horizons remain "
+            "range-only; no override upgrades them.",
             md,
         )
 
-    def test_near_miss_note_marks_enabled_for_the_reviewed_ninety_day_only_override(self):
-        # forecast-display-everywhere: category 1 standard cohort is in
-        # forecast_publisher.NINETY_DAY_ONLY_OVERRIDE (Kevin's 2026-08-17
-        # "all products" directive) -- the generated near-miss note must
-        # say ENABLED, not the stale "NOT enabled" wording, once a category
-        # is actually being served this way.
+    def test_near_miss_never_upgrades_a_failed_horizon(self):
         from collectfolio_analytics.trajectory_cli import (
             _category_row_from_receipt,
             _render_component_weights_summary_markdown,
@@ -254,11 +252,11 @@ class MergedEvaluationSummaryTests(unittest.TestCase):
         rows = [_category_row_from_receipt(receipt)]
         md = _render_component_weights_summary_markdown(rows)
         self.assertIn(
-            "Category 1, standard cohort: passes 90d only (30d fails) -- ENABLED 2026-08-17 as "
-            "90d-only serving mode per Kevin's 'forecasts should be for all products' directive.",
+            "Category 1, standard cohort: passes 90d only (30d fails). Failed horizons remain "
+            "range-only; no override upgrades them.",
             md,
         )
-        self.assertNotIn("Category 1, standard cohort: passes 90d only (30d fails) -- flagged", md)
+        self.assertNotIn("ENABLED", md)
 
     def test_no_near_miss_note_when_all_horizons_agree(self):
         from collectfolio_analytics.trajectory_cli import (

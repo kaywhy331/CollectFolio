@@ -72,6 +72,8 @@ test('history ranges are explicit and filter relative to the latest observation'
 test('selectServedForecastBars only returns horizons the packet actually carries, never fabricated', () => {
   const packet = {
     confidence: 'standard',
+    lastKnownDate: '2026-01-10',
+    lastKnownPrice: 19,
     horizons: {
       30: { q10: 90, q50: 100, q90: 110 }
       // 90d intentionally absent.
@@ -103,9 +105,12 @@ test('historyLineChart renders a history line only when no forecast packet is su
 test('historyLineChart appends projection marks with whiskers only for served horizons', () => {
   const packet = {
     confidence: 'standard',
+    lastKnownDate: '2026-01-10',
+    lastKnownPrice: 19,
     horizons: {
-      30: { q10: 90, q50: 100, q90: 110 },
-      90: { q10: 80, q50: 120, q90: 160 }
+      30: { q10: 90, q50: 100, q90: 110, evidenceTier: 'category-validated' },
+      60: { q10: 85, q50: 110, q90: 140, evidenceTier: 'category-validated' },
+      90: { q10: 80, q50: 120, q90: 160, evidenceTier: 'category-validated' }
     }
   };
   const html = historyLineChart(weeklyPoints(10), packet, 'USD');
@@ -113,10 +118,11 @@ test('historyLineChart appends projection marks with whiskers only for served ho
   assert.match(html, /history-forecast-point/);
   assert.match(html, /history-bar-whisker/);
   assert.match(html, /\+30d est\./);
+  assert.match(html, /\+60d est\./);
   assert.match(html, /\+90d est\./);
   assert.match(html, /forecast-present/);
-  assert.match(html, /class="history-forecast-band"/);
-  assert.match(html, /Latest forecast/);
+  assert.doesNotMatch(html, /class="history-forecast-band"/);
+  assert.match(html, /Independent q10–q90 checkpoints/);
 });
 
 test('historyLineChart can hide the forecast without removing its observed history', () => {
@@ -150,13 +156,30 @@ test('historyLineChart applies the selected history range before plotting', () =
   assert.match(html, /data-history-range="1M"/);
 });
 
-test('historyLineChart applies cold-start warning-tone styling consistent with the trajectory chart', () => {
+test('historyLineChart does not attach an unanchored cold-start reference to observed history', () => {
   const packet = { confidence: 'cold-start', horizons: { 30: { q10: 5, q50: 10, q90: 20 } } };
   const html = historyLineChart(weeklyPoints(5), packet, 'USD');
   assert.match(html, /trajectory-cold-start/);
-  assert.match(html, /Cold start estimate/);
-  assert.match(html, /history-forecast-line-cold-start/);
-  assert.match(html, /history-forecast-point-cold-start/);
+  assert.match(html, /data-forecast-visible="false"/);
+  assert.doesNotMatch(html, /history-bar-whisker/);
+  assert.doesNotMatch(html, /history-forecast-line/);
+  assert.doesNotMatch(html, /history-forecast-point/);
+});
+
+test('historyLineChart suppresses a forecast whose anchor predates newer history', () => {
+  const points = [['2026-08-01', 10], ['2026-08-08', 11]];
+  const packet = {
+    confidence: 'standard',
+    lastKnownDate: '2026-08-01',
+    lastKnownPrice: 10,
+    horizons: {
+      30: { q10: 8, q50: 12, q90: 16, evidenceTier: 'category-validated' }
+    }
+  };
+  const html = historyLineChart(points, packet, 'USD');
+  assert.match(html, /data-forecast-visible="false"/);
+  assert.doesNotMatch(html, /history-bar-whisker/);
+  assert.doesNotMatch(html, /history-forecast-line/);
 });
 
 test('historyLineChart compact variant renders fewer bars and a shorter viewBox', () => {
@@ -218,7 +241,7 @@ test('interpolateDailyPath fills every calendar day between weekly checkpoints',
   assert.equal(daily[3].price, 103); // straight-line resampling, no invented levels
 });
 
-test('historyLineChart draws the latest daily-interpolated projection from the published median path', () => {
+test('historyLineChart connects only independently validated checkpoints', () => {
   const packet = {
     confidence: 'standard',
     lastKnownDate: '2026-02-24',
@@ -228,7 +251,7 @@ test('historyLineChart draws the latest daily-interpolated projection from the p
       { date: '2026-03-03', price: 21 },
       { date: '2026-03-26', price: 24 }
     ],
-    horizons: { 30: { q10: 18, q50: 22, q90: 26 } }
+    horizons: { 30: { q10: 18, q50: 22, q90: 26, horizonDaysActual: 28, evidenceTier: 'category-validated' } }
   };
   const html = historyLineChart(weeklyPoints(8), packet, 'USD');
   assert.match(html, /polyline points="[^"]+" class="history-forecast-line/);
@@ -241,8 +264,9 @@ test('historyLineChart marks a declining projection as a downward trend', () => 
   const packet = {
     confidence: 'standard',
     lastKnownDate: '2026-02-24',
+    lastKnownPrice: 17,
     medianPath: [{ date: '2026-03-26', price: 5 }],
-    horizons: { 30: { q10: 3, q50: 5, q90: 8 } }
+    horizons: { 30: { q10: 3, q50: 5, q90: 8, evidenceTier: 'category-validated' } }
   };
   const html = historyLineChart(weeklyPoints(8), packet, 'USD'); // last observed 17
   assert.match(html, /history-forecast-down/);
@@ -250,34 +274,39 @@ test('historyLineChart marks a declining projection as a downward trend', () => 
 });
 
 test('historyLineChart x-axis is proportional to calendar days across history and forecast', () => {
-  // Two observed points 7 days apart, then a 30d horizon: the axis spans 37
-  // days, so the divider (day 7) must sit at 7/37 of the plot width.
+  // Two observed points 7 days apart, then the 30d model's actual 28-day
+  // weekly target: the axis spans 35 days, so the divider sits at 7/35.
   const points = [['2026-02-17', 10], ['2026-02-24', 12]];
-  const packet = { confidence: 'standard', lastKnownDate: '2026-02-24', horizons: { 30: { q10: 9, q50: 12, q90: 15 } } };
+  const packet = { confidence: 'standard', lastKnownDate: '2026-02-24', lastKnownPrice: 12, horizons: { 30: { q10: 9, q50: 12, q90: 15 } } };
   const html = historyLineChart(points, packet, 'USD');
   const divider = /class="forecast-present"/.exec(html) && /x1="([\d.]+)" y1="18" x2="[\d.]+" y2="\d+" class="forecast-present"/.exec(html);
   assert.ok(divider, 'today divider rendered');
   const left = 76;
   const right = 742;
-  const expected = left + ((7 / 37) * (right - left));
+  const expected = left + ((7 / 35) * (right - left));
   assert.ok(Math.abs(Number(divider[1]) - expected) < 1.5, `divider at ${divider[1]}, expected ~${expected.toFixed(1)}`);
 });
 
-test('historyLineChart embeds a hover payload with a labeled point for every plotted day', () => {
+test('historyLineChart hover payload contains history plus modeled checkpoints, never interpolated days', () => {
   const packet = {
     confidence: 'standard',
     lastKnownDate: '2026-02-24',
+    lastKnownPrice: 19,
     medianPath: [{ date: '2026-03-03', price: 20 }],
-    horizons: { 30: { q10: 15, q50: 20, q90: 25 } }
+    horizons: {
+      30: { q10: 15, q50: 20, q90: 25, evidenceTier: 'category-validated' },
+      60: { q10: 14, q50: 22, q90: 29, evidenceTier: 'category-validated' },
+      90: { q10: 13, q50: 24, q90: 34, evidenceTier: 'category-validated' }
+    }
   };
   const html = historyLineChart(weeklyPoints(4), packet, 'USD');
   const attr = /data-chart-points="([^"]+)"/.exec(html);
   assert.ok(attr, 'hover payload attribute present');
   const points = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
-  // 4 observed points + 7 projected days (Feb 24 -> Mar 3 daily).
-  assert.equal(points.length, 11);
+  // Four observations plus exactly three independent forecast checkpoints.
+  assert.equal(points.length, 7);
   assert.ok(points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && point.l.includes('$')));
-  assert.ok(points.some((point) => point.l.includes('(projected)')));
+  assert.equal(points.filter((point) => point.l.includes('(estimated)')).length, 3);
   assert.ok(points.some((point) => point.l.startsWith('Jan 1')));
 });
 

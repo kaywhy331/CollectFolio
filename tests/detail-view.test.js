@@ -170,13 +170,10 @@ test('owned manual/custom card detail still renders a manual scenario when publi
   assert.doesNotMatch(html, /Approved forecast projection/);
 });
 
-test('trajectory-v1 90d-only serving mode (cat 1/2 standard) renders only the horizons the T5 gate actually served', () => {
-  // forecast-display-everywhere: publish_category now strips a packet's
-  // horizons object down to only the (category, cohort) horizons the T4
-  // holdout gate served (see forecast_publisher.eligible_horizons /
-  // NINETY_DAY_ONLY_OVERRIDE) -- here the packet legitimately carries only
-  // "90". The app must render only the 90-day outlook, never fabricate a
-  // 30-day block that was never published.
+test('a legacy packet with only a 90d band renders one conservative range and fabricates no horizons', () => {
+  // Packets without trajectory-v1.1 evidence metadata are interpreted
+  // conservatively as range-only during rollout. The app still renders
+  // exactly the horizon carried by the packet.
   const tcgcsvItem = { ...item, provider: 'tcgcsv', categoryId: 1, groupId: 42, productId: 777, variant: 'Holofoil' };
   const catalogRef = catalogReferenceForItem(tcgcsvItem, { canonicalVariantId: variantId });
   const packet = {
@@ -191,9 +188,10 @@ test('trajectory-v1 90d-only serving mode (cat 1/2 standard) renders only the ho
     }
   });
   const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, state);
-  assert.match(html, /90-day outlook/);
-  assert.doesNotMatch(html, /30-day outlook/);
-  assert.match(html, /Modeled trajectory/);
+  assert.match(html, /90-day price range/);
+  assert.doesNotMatch(html, /30-day (?:checkpoint|price range)/);
+  assert.doesNotMatch(html, /60-day (?:checkpoint|price range)/);
+  assert.match(html, /Price ranges/);
 });
 
 test('trajectory-v1 excluded/unknown packet still shows the honest insufficient-evidence state, not a fabricated horizon', () => {

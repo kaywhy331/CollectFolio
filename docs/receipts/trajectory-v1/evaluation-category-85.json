@@ -4,15 +4,22 @@
     "anyCohortServingEligible": false,
     "categoryId": 85,
     "coldStart": {
-      "reason": "cold-start variants (cold_start_variants keys with no observed price anywhere in the panel) structurally cannot produce a later-truth walk-forward case from this dataset; serve only with explicit cold-start labeling per PRD Sec4 hard criterion 3b.",
-      "status": "unevaluable"
+      "reason": "No observed current price exists; hedonic output is an attribute-based reference range, never a directional forecast.",
+      "status": "reference-only"
     },
     "componentWeights": {
       "30": [
         0.0,
+        0.0,
+        0.0
+      ],
+      "60": [
+        0.25,
+        0.0,
         0.0
       ],
       "90": [
+        0.5,
         0.0,
         0.0
       ]
@@ -20,434 +27,1936 @@
     "results": [
       {
         "baselineMae": {},
+        "bootstrapLiftLower90": null,
         "categoryId": 85,
         "cohort": "insufficient-history",
         "coverage80": NaN,
+        "coverageCells": [],
         "directionAccuracyMovers": null,
+        "eligibleSetCount": 0,
+        "evidenceTier": "range-only",
         "failReasons": [
-          "no walk-forward cases available"
+          "no walk-forward cases available",
+          "only 0 non-overlapping scored blocks; at least 3 required",
+          "only 0 eligible held-out sets; at least 3 with 20+ variants required",
+          "macro-average held-out-set relative MAE lift is not positive",
+          "fewer than 80% of eligible sets meet the -0.005 no-harm floor",
+          "cluster-bootstrap 90% lower bound for held-out-set lift is not positive",
+          "directional validation is restricted to the standard-history cohort"
         ],
         "horizonDays": 30,
+        "macroSetLift": null,
         "maeEngine": NaN,
         "maeLiftOverNoChange": NaN,
         "maeNoChange": NaN,
         "nCases": 0,
         "nMovers": 0,
+        "nScoreBlocks": 0,
         "passes": false,
         "pinballBeatsNoChange": false,
         "pinballQ50Engine": NaN,
         "pinballQ50NoChange": NaN,
-        "servingEligible": false
+        "servingEligible": false,
+        "setsNoHarmFraction": null,
+        "validationScope": "held-out-set-and-time"
       },
       {
         "baselineMae": {},
+        "bootstrapLiftLower90": null,
         "categoryId": 85,
         "cohort": "insufficient-history",
         "coverage80": NaN,
+        "coverageCells": [],
         "directionAccuracyMovers": null,
+        "eligibleSetCount": 0,
+        "evidenceTier": "range-only",
         "failReasons": [
-          "no walk-forward cases available"
+          "no walk-forward cases available",
+          "only 0 non-overlapping scored blocks; at least 3 required",
+          "only 0 eligible held-out sets; at least 3 with 20+ variants required",
+          "macro-average held-out-set relative MAE lift is not positive",
+          "fewer than 80% of eligible sets meet the -0.005 no-harm floor",
+          "cluster-bootstrap 90% lower bound for held-out-set lift is not positive",
+          "directional validation is restricted to the standard-history cohort"
         ],
-        "horizonDays": 90,
+        "horizonDays": 60,
+        "macroSetLift": null,
         "maeEngine": NaN,
         "maeLiftOverNoChange": NaN,
         "maeNoChange": NaN,
         "nCases": 0,
         "nMovers": 0,
+        "nScoreBlocks": 0,
         "passes": false,
         "pinballBeatsNoChange": false,
         "pinballQ50Engine": NaN,
         "pinballQ50NoChange": NaN,
-        "servingEligible": false
+        "servingEligible": false,
+        "setsNoHarmFraction": null,
+        "validationScope": "held-out-set-and-time"
       },
       {
-        "baselineMae": {
-          "damped_momentum": 0.11457779603416361,
-          "lifecycle_cohort": 0.10916009154254624,
-          "market_index": 0.10817734740612403,
-          "structural_convergence": 0.3510887806126039
-        },
+        "baselineMae": {},
+        "bootstrapLiftLower90": null,
         "categoryId": 85,
-        "cohort": "low-history",
-        "coverage80": 0.9355932203389831,
-        "directionAccuracyMovers": 0.5601851851851852,
+        "cohort": "insufficient-history",
+        "coverage80": NaN,
+        "coverageCells": [],
+        "directionAccuracyMovers": null,
+        "eligibleSetCount": 0,
+        "evidenceTier": "range-only",
         "failReasons": [
-          "MAE lift over no-change not positive (0.000000)",
-          "80% band coverage 0.9356 outside (0.75, 0.88)",
-          "pinball(q50) 0.053321 does not beat no-change 0.053321"
-        ],
-        "horizonDays": 30,
-        "maeEngine": 0.10664216342021246,
-        "maeLiftOverNoChange": 0.0,
-        "maeNoChange": 0.10664216342021246,
-        "nCases": 1180,
-        "nMovers": 216,
-        "passes": false,
-        "pinballBeatsNoChange": false,
-        "pinballQ50Engine": 0.05332108171010623,
-        "pinballQ50NoChange": 0.05332108171010623,
-        "servingEligible": false
-      },
-      {
-        "baselineMae": {
-          "damped_momentum": 0.3179562378020533,
-          "lifecycle_cohort": 0.30251201268797456,
-          "market_index": 0.3005472781441238,
-          "structural_convergence": 0.4971476967399744
-        },
-        "categoryId": 85,
-        "cohort": "low-history",
-        "coverage80": 0.9276094276094277,
-        "directionAccuracyMovers": 0.6197718631178707,
-        "failReasons": [
-          "MAE lift over no-change not positive (-0.001819)",
-          "80% band coverage 0.9276 outside (0.75, 0.88)",
-          "pinball(q50) 0.150876 does not beat no-change 0.149966"
+          "no walk-forward cases available",
+          "only 0 non-overlapping scored blocks; at least 3 required",
+          "only 0 eligible held-out sets; at least 3 with 20+ variants required",
+          "macro-average held-out-set relative MAE lift is not positive",
+          "fewer than 80% of eligible sets meet the -0.005 no-harm floor",
+          "cluster-bootstrap 90% lower bound for held-out-set lift is not positive",
+          "directional validation is restricted to the standard-history cohort"
         ],
         "horizonDays": 90,
-        "maeEngine": 0.3017512015345026,
-        "maeLiftOverNoChange": -0.0018194152640776395,
-        "maeNoChange": 0.29993178627042494,
-        "nCases": 594,
-        "nMovers": 263,
+        "macroSetLift": null,
+        "maeEngine": NaN,
+        "maeLiftOverNoChange": NaN,
+        "maeNoChange": NaN,
+        "nCases": 0,
+        "nMovers": 0,
+        "nScoreBlocks": 0,
         "passes": false,
         "pinballBeatsNoChange": false,
-        "pinballQ50Engine": 0.1508756007672513,
-        "pinballQ50NoChange": 0.14996589313521247,
-        "servingEligible": false
+        "pinballQ50Engine": NaN,
+        "pinballQ50NoChange": NaN,
+        "servingEligible": false,
+        "setsNoHarmFraction": null,
+        "validationScope": "held-out-set-and-time"
       },
       {
         "baselineMae": {
-          "damped_momentum": 0.11625869065736114,
-          "lifecycle_cohort": 0.10861224642316447,
-          "market_index": 0.10952345800646542,
-          "structural_convergence": 0.28508101030636224
+          "damped_momentum": 0.14464943243965975,
+          "lifecycle_cohort": 0.1401275953920615,
+          "market_index": 0.13915725577865048,
+          "structural_convergence": 0.29070332902390544
         },
+        "bootstrapLiftLower90": 5.075597451824653e-17,
         "categoryId": 85,
-        "cohort": "standard",
-        "coverage80": 0.8449260422802539,
-        "directionAccuracyMovers": 0.54639957682666,
+        "cohort": "low-history",
+        "coverage80": 0.8208642879564717,
+        "coverageCells": [
+          {
+            "cell": "high:established",
+            "coverage80": 0.8443357783211084,
+            "nCases": 1227
+          },
+          {
+            "cell": "high:young",
+            "coverage80": 0.8551031200423057,
+            "nCases": 1891
+          },
+          {
+            "cell": "low:established",
+            "coverage80": 0.8152550767706785,
+            "nCases": 4038
+          },
+          {
+            "cell": "mid:established",
+            "coverage80": 0.8049519959575543,
+            "nCases": 1979
+          }
+        ],
+        "directionAccuracyMovers": 0.31196860693263573,
+        "eligibleSetCount": 98,
+        "evidenceTier": "range-only",
         "failReasons": [
           "MAE lift over no-change not positive (0.000000)",
-          "pinball(q50) 0.054256 does not beat no-change 0.054256"
+          "directional validation is restricted to the standard-history cohort"
         ],
         "horizonDays": 30,
-        "maeEngine": 0.10851163375703173,
+        "macroSetLift": 5.051715771258458e-17,
+        "maeEngine": 0.13873037806394783,
         "maeLiftOverNoChange": 0.0,
-        "maeNoChange": 0.10851163375703173,
-        "nCases": 122232,
-        "nMovers": 43481,
+        "maeNoChange": 0.13873037806394783,
+        "nCases": 9557,
+        "nMovers": 3058,
+        "nScoreBlocks": 14,
         "passes": false,
         "pinballBeatsNoChange": false,
-        "pinballQ50Engine": 0.05425581687851586,
-        "pinballQ50NoChange": 0.05425581687851586,
-        "servingEligible": false
+        "pinballQ50Engine": 0.06936518903197392,
+        "pinballQ50NoChange": 0.06936518903197392,
+        "servingEligible": false,
+        "setsNoHarmFraction": 1.0,
+        "validationScope": "held-out-set-and-time"
       },
       {
         "baselineMae": {
-          "damped_momentum": 0.26452557475429533,
-          "lifecycle_cohort": 0.24682503806883457,
-          "market_index": 0.24926447353958017,
-          "structural_convergence": 0.37221160133677167
+          "damped_momentum": 0.298717206630508,
+          "lifecycle_cohort": 0.2738856517762289,
+          "market_index": 0.2888453226397946,
+          "structural_convergence": 0.37774253545668224
         },
+        "bootstrapLiftLower90": -0.0002153991331299087,
         "categoryId": 85,
-        "cohort": "standard",
-        "coverage80": 0.8603319877505567,
-        "directionAccuracyMovers": 0.4964418231156892,
+        "cohort": "low-history",
+        "coverage80": 0.7649644910382144,
+        "coverageCells": [
+          {
+            "cell": "high:young",
+            "coverage80": 0.8512518409425626,
+            "nCases": 679
+          },
+          {
+            "cell": "low:established",
+            "coverage80": 0.7535037098103875,
+            "nCases": 1213
+          },
+          {
+            "cell": "mid:established",
+            "coverage80": 0.6774744027303754,
+            "nCases": 586
+          }
+        ],
+        "directionAccuracyMovers": 0.549618320610687,
+        "eligibleSetCount": 27,
+        "evidenceTier": "range-only",
         "failReasons": [
-          "MAE lift over no-change not positive (-0.003154)",
-          "direction accuracy on 72228 >=5% movers (0.4964) <= 0.52",
-          "pinball(q50) 0.125887 does not beat no-change 0.124310"
+          "cluster-bootstrap 90% lower bound for held-out-set lift is not positive",
+          "80% coverage for mid:established (0.6775, n=586) outside (0.75, 0.88)",
+          "directional validation is restricted to the standard-history cohort"
+        ],
+        "horizonDays": 60,
+        "macroSetLift": 0.005879676471310209,
+        "maeEngine": 0.28130712119473467,
+        "maeLiftOverNoChange": 0.006608340738771146,
+        "maeNoChange": 0.2879154619335058,
+        "nCases": 2957,
+        "nMovers": 1441,
+        "nScoreBlocks": 5,
+        "passes": false,
+        "pinballBeatsNoChange": true,
+        "pinballQ50Engine": 0.14065356059736733,
+        "pinballQ50NoChange": 0.1439577309667529,
+        "servingEligible": false,
+        "setsNoHarmFraction": 1.0,
+        "validationScope": "held-out-set-and-time"
+      },
+      {
+        "baselineMae": {
+          "damped_momentum": 0.34917803723124324,
+          "lifecycle_cohort": 0.318403382111109,
+          "market_index": 0.3383641027664017,
+          "structural_convergence": 0.40540742145132524
+        },
+        "bootstrapLiftLower90": -0.0005717299750884493,
+        "categoryId": 85,
+        "cohort": "low-history",
+        "coverage80": 0.72110365398956,
+        "coverageCells": [
+          {
+            "cell": "low:established",
+            "coverage80": 0.7416918429003021,
+            "nCases": 662
+          }
+        ],
+        "directionAccuracyMovers": 0.583989501312336,
+        "eligibleSetCount": 6,
+        "evidenceTier": "range-only",
+        "failReasons": [
+          "80% band coverage 0.7211 outside (0.75, 0.88)",
+          "only 2 non-overlapping scored blocks; at least 3 required",
+          "cluster-bootstrap 90% lower bound for held-out-set lift is not positive",
+          "80% coverage for low:established (0.7417, n=662) outside (0.75, 0.88)",
+          "directional validation is restricted to the standard-history cohort"
         ],
         "horizonDays": 90,
-        "maeEngine": 0.2517739533057927,
-        "maeLiftOverNoChange": -0.003154152066871002,
-        "maeNoChange": 0.24861980123892172,
-        "nCases": 114944,
-        "nMovers": 72228,
+        "macroSetLift": 0.023652695214931168,
+        "maeEngine": 0.33031925315724375,
+        "maeLiftOverNoChange": 0.0073218211005358635,
+        "maeNoChange": 0.3376410742577796,
+        "nCases": 1341,
+        "nMovers": 762,
+        "nScoreBlocks": 2,
+        "passes": false,
+        "pinballBeatsNoChange": true,
+        "pinballQ50Engine": 0.16515962657862188,
+        "pinballQ50NoChange": 0.1688205371288898,
+        "servingEligible": false,
+        "setsNoHarmFraction": 1.0,
+        "validationScope": "held-out-set-and-time"
+      },
+      {
+        "baselineMae": {
+          "damped_momentum": 0.1071044849988662,
+          "lifecycle_cohort": 0.09773701329707196,
+          "market_index": 0.09715038678264487,
+          "structural_convergence": 0.28029730892212223
+        },
+        "bootstrapLiftLower90": 3.2253929962523993e-17,
+        "categoryId": 85,
+        "cohort": "standard",
+        "coverage80": 0.7588060939862552,
+        "coverageCells": [
+          {
+            "cell": "high:established",
+            "coverage80": 0.7337462283627124,
+            "nCases": 62970
+          },
+          {
+            "cell": "high:unknown-age",
+            "coverage80": 0.597678916827853,
+            "nCases": 517
+          },
+          {
+            "cell": "high:young",
+            "coverage80": 0.9258904328382047,
+            "nCases": 6261
+          },
+          {
+            "cell": "low:established",
+            "coverage80": 0.7644278007452587,
+            "nCases": 53941
+          },
+          {
+            "cell": "mid:established",
+            "coverage80": 0.7625844315952145,
+            "nCases": 57591
+          },
+          {
+            "cell": "mid:unknown-age",
+            "coverage80": 0.7862407862407862,
+            "nCases": 814
+          },
+          {
+            "cell": "mid:young",
+            "coverage80": 0.8347193347193347,
+            "nCases": 962
+          }
+        ],
+        "directionAccuracyMovers": 0.5064599070539949,
+        "eligibleSetCount": 224,
+        "evidenceTier": "range-only",
+        "failReasons": [
+          "MAE lift over no-change not positive (0.000000)",
+          "80% coverage for high:established (0.7337, n=62970) outside (0.75, 0.88)",
+          "80% coverage for high:unknown-age (0.5977, n=517) outside (0.75, 0.88)",
+          "80% coverage for high:young (0.9259, n=6261) outside (0.75, 0.88)"
+        ],
+        "horizonDays": 30,
+        "macroSetLift": 3.506124084547613e-17,
+        "maeEngine": 0.09683057236780386,
+        "maeLiftOverNoChange": 0.0,
+        "maeNoChange": 0.09683057236780386,
+        "nCases": 183197,
+        "nMovers": 62617,
+        "nScoreBlocks": 14,
         "passes": false,
         "pinballBeatsNoChange": false,
-        "pinballQ50Engine": 0.12588697665289636,
-        "pinballQ50NoChange": 0.12430990061946086,
-        "servingEligible": false
+        "pinballQ50Engine": 0.04841528618390193,
+        "pinballQ50NoChange": 0.04841528618390193,
+        "servingEligible": false,
+        "setsNoHarmFraction": 1.0,
+        "validationScope": "held-out-set-and-time"
+      },
+      {
+        "baselineMae": {
+          "damped_momentum": 0.1977559099477077,
+          "lifecycle_cohort": 0.17790337090106062,
+          "market_index": 0.1781004246944507,
+          "structural_convergence": 0.3283383368823475
+        },
+        "bootstrapLiftLower90": -0.00016730344523326946,
+        "categoryId": 85,
+        "cohort": "standard",
+        "coverage80": 0.7417223560788593,
+        "coverageCells": [
+          {
+            "cell": "high:established",
+            "coverage80": 0.7129544959721315,
+            "nCases": 22965
+          },
+          {
+            "cell": "high:young",
+            "coverage80": 0.8870106761565836,
+            "nCases": 2248
+          },
+          {
+            "cell": "low:established",
+            "coverage80": 0.7599299366338674,
+            "nCases": 19411
+          },
+          {
+            "cell": "mid:established",
+            "coverage80": 0.7421155729676787,
+            "nCases": 20420
+          }
+        ],
+        "directionAccuracyMovers": 0.5250150520370424,
+        "eligibleSetCount": 216,
+        "evidenceTier": "range-only",
+        "failReasons": [
+          "MAE lift over no-change not positive (-0.000010)",
+          "80% band coverage 0.7417 outside (0.75, 0.88)",
+          "cluster-bootstrap 90% lower bound for held-out-set lift is not positive",
+          "80% coverage for high:established (0.7130, n=22965) outside (0.75, 0.88)",
+          "80% coverage for high:young (0.8870, n=2248) outside (0.75, 0.88)",
+          "80% coverage for mid:established (0.7421, n=20420) outside (0.75, 0.88)"
+        ],
+        "horizonDays": 60,
+        "macroSetLift": 6.0585186383337e-05,
+        "maeEngine": 0.17770884210510624,
+        "maeLiftOverNoChange": -9.770684390564277e-06,
+        "maeNoChange": 0.17769907142071567,
+        "nCases": 65991,
+        "nMovers": 34879,
+        "nScoreBlocks": 5,
+        "passes": false,
+        "pinballBeatsNoChange": false,
+        "pinballQ50Engine": 0.08885442105255312,
+        "pinballQ50NoChange": 0.08884953571035784,
+        "servingEligible": false,
+        "setsNoHarmFraction": 1.0,
+        "validationScope": "held-out-set-and-time"
+      },
+      {
+        "baselineMae": {
+          "damped_momentum": 0.24800726865180855,
+          "lifecycle_cohort": 0.22534612651878386,
+          "market_index": 0.2263353724298018,
+          "structural_convergence": 0.36102732464916304
+        },
+        "bootstrapLiftLower90": -9.018835490938111e-05,
+        "categoryId": 85,
+        "cohort": "standard",
+        "coverage80": 0.7250352719862048,
+        "coverageCells": [
+          {
+            "cell": "high:established",
+            "coverage80": 0.6793986636971047,
+            "nCases": 8980
+          },
+          {
+            "cell": "high:young",
+            "coverage80": 0.8942408376963351,
+            "nCases": 955
+          },
+          {
+            "cell": "low:established",
+            "coverage80": 0.7512716174974567,
+            "nCases": 7864
+          },
+          {
+            "cell": "mid:established",
+            "coverage80": 0.7331374382262589,
+            "nCases": 7487
+          }
+        ],
+        "directionAccuracyMovers": 0.5528162214354683,
+        "eligibleSetCount": 196,
+        "evidenceTier": "range-only",
+        "failReasons": [
+          "80% band coverage 0.7250 outside (0.75, 0.88)",
+          "only 2 non-overlapping scored blocks; at least 3 required",
+          "cluster-bootstrap 90% lower bound for held-out-set lift is not positive",
+          "80% coverage for high:established (0.6794, n=8980) outside (0.75, 0.88)",
+          "80% coverage for high:young (0.8942, n=955) outside (0.75, 0.88)",
+          "80% coverage for mid:established (0.7331, n=7487) outside (0.75, 0.88)"
+        ],
+        "horizonDays": 90,
+        "macroSetLift": 0.00016900066175798656,
+        "maeEngine": 0.22578798349113144,
+        "maeLiftOverNoChange": 0.0003341067894004346,
+        "maeNoChange": 0.22612209028053187,
+        "nCases": 25516,
+        "nMovers": 15535,
+        "nScoreBlocks": 2,
+        "passes": false,
+        "pinballBeatsNoChange": true,
+        "pinballQ50Engine": 0.11289399174556572,
+        "pinballQ50NoChange": 0.11306104514026594,
+        "servingEligible": false,
+        "setsNoHarmFraction": 1.0,
+        "validationScope": "held-out-set-and-time"
       }
     ],
     "servingEligibleByCohort": {
       "insufficient-history": false,
       "low-history": false,
       "standard": false
+    },
+    "validationProtocol": {
+      "blockReceipts": [
+        {
+          "fitOrigins": [
+            15,
+            19
+          ],
+          "horizonDays": 30,
+          "origin": 23,
+          "scoredCases": 11421,
+          "scoredSets": 376,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 376
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23
+          ],
+          "horizonDays": 30,
+          "origin": 27,
+          "scoredCases": 11630,
+          "scoredSets": 376,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 376
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27
+          ],
+          "horizonDays": 30,
+          "origin": 31,
+          "scoredCases": 12065,
+          "scoredSets": 385,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 385
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31
+          ],
+          "horizonDays": 30,
+          "origin": 35,
+          "scoredCases": 12406,
+          "scoredSets": 394,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 394
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35
+          ],
+          "horizonDays": 30,
+          "origin": 39,
+          "scoredCases": 12790,
+          "scoredSets": 397,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 397
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39
+          ],
+          "horizonDays": 30,
+          "origin": 43,
+          "scoredCases": 12789,
+          "scoredSets": 402,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 402
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43
+          ],
+          "horizonDays": 30,
+          "origin": 47,
+          "scoredCases": 13459,
+          "scoredSets": 410,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 410
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43,
+            47
+          ],
+          "horizonDays": 30,
+          "origin": 51,
+          "scoredCases": 14221,
+          "scoredSets": 412,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 412
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43,
+            47,
+            51
+          ],
+          "horizonDays": 30,
+          "origin": 55,
+          "scoredCases": 14523,
+          "scoredSets": 416,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 416
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43,
+            47,
+            51,
+            55
+          ],
+          "horizonDays": 30,
+          "origin": 59,
+          "scoredCases": 14641,
+          "scoredSets": 419,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 419
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43,
+            47,
+            51,
+            55,
+            59
+          ],
+          "horizonDays": 30,
+          "origin": 63,
+          "scoredCases": 15058,
+          "scoredSets": 422,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 422
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43,
+            47,
+            51,
+            55,
+            59,
+            63
+          ],
+          "horizonDays": 30,
+          "origin": 67,
+          "scoredCases": 15445,
+          "scoredSets": 421,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 421
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43,
+            47,
+            51,
+            55,
+            59,
+            63,
+            67
+          ],
+          "horizonDays": 30,
+          "origin": 71,
+          "scoredCases": 15921,
+          "scoredSets": 423,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 423
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            19,
+            23,
+            27,
+            31,
+            35,
+            39,
+            43,
+            47,
+            51,
+            55,
+            59,
+            63,
+            67,
+            71
+          ],
+          "horizonDays": 30,
+          "origin": 75,
+          "scoredCases": 16385,
+          "scoredSets": 428,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 428
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            24
+          ],
+          "horizonDays": 60,
+          "origin": 33,
+          "scoredCases": 12019,
+          "scoredSets": 393,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 393
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            24,
+            33
+          ],
+          "horizonDays": 60,
+          "origin": 42,
+          "scoredCases": 12820,
+          "scoredSets": 401,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 401
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            24,
+            33,
+            42
+          ],
+          "horizonDays": 60,
+          "origin": 51,
+          "scoredCases": 13663,
+          "scoredSets": 409,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 3,
+            "(0.25, 0.0, 0.0)": 406
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            24,
+            33,
+            42,
+            51
+          ],
+          "horizonDays": 60,
+          "origin": 60,
+          "scoredCases": 14656,
+          "scoredSets": 418,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 2,
+            "(0.25, 0.0, 0.0)": 416
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            24,
+            33,
+            42,
+            51,
+            60
+          ],
+          "horizonDays": 60,
+          "origin": 69,
+          "scoredCases": 15790,
+          "scoredSets": 422,
+          "selectedCoefficientCounts": {
+            "(0.0, 0.0, 0.0)": 2,
+            "(0.25, 0.0, 0.0)": 420
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            28
+          ],
+          "horizonDays": 90,
+          "origin": 41,
+          "scoredCases": 12698,
+          "scoredSets": 403,
+          "selectedCoefficientCounts": {
+            "(0.25, 0.0, 0.0)": 403
+          }
+        },
+        {
+          "fitOrigins": [
+            15,
+            28,
+            41
+          ],
+          "horizonDays": 90,
+          "origin": 54,
+          "scoredCases": 14159,
+          "scoredSets": 416,
+          "selectedCoefficientCounts": {
+            "(0.25, 0.0, 0.0)": 416
+          }
+        }
+      ],
+      "bootstrap": "90% cluster interval over time blocks x sets",
+      "minimumInitialFitBlocks": 2,
+      "minimumScoredBlocks": 3,
+      "originRule": "15 + k*h, non-overlapping",
+      "q50PinnedToPointModel": true,
+      "setHoldout": "leave-one-set-out within each rolling score block"
     }
   },
-  "generatedAt": "2026-08-18T05:27:47.522462+00:00",
+  "generatedAt": "2026-08-22T05:37:37.566964+00:00",
   "gridScores": {
     "13": [
       {
-        "maeLiftOverNoChange": 0.0006926537877721961,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.016627344396468343,
+        "nCases": 44654,
         "weightA": 0.0,
-        "weightB": 0.0
+        "weightB": -0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.011179574900268052,
-        "nCases": 137593,
+        "maeLiftOverNoChange": 0.0,
+        "nCases": 44654,
         "weightA": 0.0,
-        "weightB": 0.25
+        "weightB": 0.0,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.02862163037537438,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.021694601001715354,
+        "nCases": 44654,
         "weightA": 0.0,
-        "weightB": 0.5
+        "weightB": 0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.07416709710866834,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.021319392286700885,
+        "nCases": 44654,
         "weightA": 0.0,
-        "weightB": 1.0
+        "weightB": -0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.00021470945763940597,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.002806219498234972,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.01683155769964808,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.029314264588630328,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.00804970796281705,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.011874771822908716,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.044907984547136306,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.01925255627814587,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.011593845597901564,
+        "nCases": 44654,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.016014925562324974,
+        "nCases": 44654,
         "weightA": 0.25,
-        "weightB": 0.0
+        "weightB": -0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.010983364385089622,
-        "nCases": 137593,
+        "maeLiftOverNoChange": 0.00039776435306597196,
+        "nCases": 44654,
         "weightA": 0.25,
-        "weightB": 0.25
+        "weightB": 0.0,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.028452010154451313,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.02107028088325165,
+        "nCases": 44654,
         "weightA": 0.25,
-        "weightB": 0.5
+        "weightB": 0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.073939652743828,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.020720857289230492,
+        "nCases": 44654,
         "weightA": 0.25,
-        "weightB": 1.0
+        "weightB": -0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.001559130691300037,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.0022601722832952674,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.016208466539024982,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.02871984836221376,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.007502011411655274,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.011263287133490004,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04434189193101971,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.01871253582208448,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.011019646145769623,
+        "nCases": 44654,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.015677335546654406,
+        "nCases": 44654,
         "weightA": 0.5,
-        "weightB": 0.0
+        "weightB": -0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.011579268989612757,
-        "nCases": 137593,
+        "maeLiftOverNoChange": 0.00045860099205526815,
+        "nCases": 44654,
         "weightA": 0.5,
-        "weightB": 0.25
+        "weightB": 0.0,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.02890585419075234,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.020809843038279492,
+        "nCases": 44654,
         "weightA": 0.5,
-        "weightB": 0.5
+        "weightB": 0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.07447816479681427,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.020381015404419958,
+        "nCases": 44654,
         "weightA": 0.5,
-        "weightB": 1.0
+        "weightB": -0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.0058956234145241815,
-        "nCases": 137593,
-        "weightA": 1.0,
-        "weightB": 0.0
+        "maeLiftOverNoChange": -0.0020796413800197684,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.015681291664203234,
-        "nCases": 137593,
-        "weightA": 1.0,
-        "weightB": 0.25
+        "maeLiftOverNoChange": -0.015970810393663003,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.031740405233625424,
-        "nCases": 137593,
-        "weightA": 1.0,
-        "weightB": 0.5
+        "maeLiftOverNoChange": -0.02838751158416896,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.25
       },
       {
-        "maeLiftOverNoChange": -0.07691340323386911,
-        "nCases": 137593,
+        "maeLiftOverNoChange": -0.007288489954555165,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.011044744284283464,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04402506466338617,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.01847357940489725,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.010810377730706642,
+        "nCases": 44654,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.016030038941848183,
+        "nCases": 44654,
         "weightA": 1.0,
-        "weightB": 1.0
+        "weightB": -0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.00032811011703955497,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.021172140939858527,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.020711643800707242,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.0026788247839414398,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.01640200632021565,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.028682441703906127,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.007811835693024998,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.0115401424197801,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04424426345384904,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.018911266195576804,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.011291017515150133,
+        "nCases": 44654,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.5
       }
     ],
     "4": [
       {
+        "maeLiftOverNoChange": -0.008325414558889516,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.0
+      },
+      {
         "maeLiftOverNoChange": 0.0,
-        "nCases": 143642,
+        "nCases": 201523,
         "weightA": 0.0,
-        "weightB": 0.0
+        "weightB": 0.0,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.005091042877151786,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.00999000398960579,
+        "nCases": 201523,
         "weightA": 0.0,
-        "weightB": 0.25
+        "weightB": 0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.011019033663001304,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.014479303764485352,
+        "nCases": 201523,
         "weightA": 0.0,
-        "weightB": 0.5
+        "weightB": -0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.024805928052311563,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.005551843956129348,
+        "nCases": 201523,
         "weightA": 0.0,
-        "weightB": 1.0
+        "weightB": 0.0,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.00033734718515002204,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.005519933701784416,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.024782709419699327,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.014955947530387047,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.009102212433422659,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04404734791205385,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.03300782508987656,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.025136074310182617,
+        "nCases": 201523,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.008209537569628337,
+        "nCases": 201523,
         "weightA": 0.25,
-        "weightB": 0.0
+        "weightB": -0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.00480307408873612,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.00012980122276251625,
+        "nCases": 201523,
         "weightA": 0.25,
-        "weightB": 0.25
+        "weightB": 0.0,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.010653120206977007,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.009793032335731117,
+        "nCases": 201523,
         "weightA": 0.25,
-        "weightB": 0.5
+        "weightB": 0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.024392159378565467,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.014368700087825433,
+        "nCases": 201523,
         "weightA": 0.25,
-        "weightB": 1.0
+        "weightB": -0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.000909294913886069,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.005511349889084663,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.005389091524116571,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.024677156687037106,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.014908372396848047,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.009015075906854759,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04395748067244407,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.032963378256411366,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.025058143966172685,
+        "nCases": 201523,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.00821339374477793,
+        "nCases": 201523,
         "weightA": 0.5,
-        "weightB": 0.0
+        "weightB": -0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.00504094524641846,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.0003290540487054471,
+        "nCases": 201523,
         "weightA": 0.5,
-        "weightB": 0.25
+        "weightB": 0.0,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.010748982896411782,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.009734638583010869,
+        "nCases": 201523,
         "weightA": 0.5,
-        "weightB": 0.5
+        "weightB": 0.25,
+        "weightC": 0.0
       },
       {
-        "maeLiftOverNoChange": -0.02444134556172302,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.014363093327174954,
+        "nCases": 201523,
         "weightA": 0.5,
-        "weightB": 1.0
+        "weightB": -0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.003006217228830349,
-        "nCases": 143642,
-        "weightA": 1.0,
-        "weightB": 0.0
+        "maeLiftOverNoChange": -0.005569308075269523,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.006865643674609914,
-        "nCases": 143642,
-        "weightA": 1.0,
-        "weightB": 0.25
+        "maeLiftOverNoChange": -0.005408665601924153,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.1
       },
       {
-        "maeLiftOverNoChange": -0.012167635886473183,
-        "nCases": 143642,
-        "weightA": 1.0,
-        "weightB": 0.5
+        "maeLiftOverNoChange": -0.02466926765137421,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.25
       },
       {
-        "maeLiftOverNoChange": -0.025531609612658768,
-        "nCases": 143642,
+        "maeLiftOverNoChange": -0.014947981610363327,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.009042521525599301,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04395412969811047,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.03299906485298809,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.02507430577385696,
+        "nCases": 201523,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.008471750316288607,
+        "nCases": 201523,
         "weightA": 1.0,
-        "weightB": 1.0
+        "weightB": -0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.0009249235236199679,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.009959253240720157,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.014592809660399534,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.005917125694560237,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.005746644209411646,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.0248818372856487,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.015248918254104788,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.00934656499047939,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.044154685485110805,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.033274798848052206,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.02532857706545708,
+        "nCases": 201523,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.5
+      }
+    ],
+    "9": [
+      {
+        "maeLiftOverNoChange": -0.01450945926587145,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": 0.0,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.019866600678924748,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.019820036638775514,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.003668781653990913,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.014318500386080481,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.028774660173200826,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.01031144462815122,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.010155368118017505,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04620407680418038,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.02412325195836146,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.013654190337628566,
+        "nCases": 84667,
+        "weightA": 0.0,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.014241118923279825,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": 3.205329329666894e-05,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.019501692909334175,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.019557612852835422,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.003483758433093808,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.013978302012382962,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.028522348450546253,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.010122231266278746,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.00986406668091434,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04596923933845553,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.023934662878458354,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.013413609723702015,
+        "nCases": 84667,
+        "weightA": 0.25,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.014078172081458664,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -3.1535638894002277e-06,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.019265822834031172,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.019399988287827883,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.003397562806963603,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.013772548492358662,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.028375878909689387,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.010027635750133613,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.009701837642488324,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.04582628495701023,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.0238455540933969,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.01328463427772261,
+        "nCases": 84667,
+        "weightA": 0.5,
+        "weightB": 0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.014063826866751379,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.0003483189260190523,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.019146519618521735,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.0
+      },
+      {
+        "maeLiftOverNoChange": -0.0193823613948313,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.0035268677354262207,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.013734834843192704,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.1
+      },
+      {
+        "maeLiftOverNoChange": -0.028364021652910475,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.010122213038696115,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.009711854273563343,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.25
+      },
+      {
+        "maeLiftOverNoChange": -0.0458267381420389,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": -0.25,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.02392528606152193,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.0,
+        "weightC": 0.5
+      },
+      {
+        "maeLiftOverNoChange": -0.013310038294838364,
+        "nCases": 84667,
+        "weightA": 1.0,
+        "weightB": 0.25,
+        "weightC": 0.5
       }
     ]
   },
-  "modelVersion": "trajectory-v1",
-  "peakRssBytes": 773718016,
+  "modelVersion": "trajectory-v1.1",
+  "peakRssBytes": 446722048,
   "sampledVariants": 20000,
   "samplingApplied": true,
   "samplingRule": "deterministic N-of-M variant sample: every (productId, subTypeName) key is ranked by sha256(f'{productId}|{subTypeName}')'s hex digest (ties broken by the key itself), and the first N in that ranking are kept -- order-independent (depends only on the key set, not on load order) and exactly reproducible.",
   "selection": {
     "13": {
-      "holdoutOrigins": [
-        47,
-        50,
-        53,
-        55,
-        58,
-        61,
-        63,
-        66
-      ],
+      "holdoutOrigins": [],
       "horizonDays": 90,
-      "trainMaeLiftOverNoChange": 0.0006926537877721961,
-      "trainNCases": 137593,
+      "trainMaeLiftOverNoChange": 0.00045860099205526815,
+      "trainNCases": 44654,
       "trainOrigins": [
         15,
-        18,
-        20,
-        23,
-        26,
         28,
-        31,
-        34,
-        36,
-        39,
-        42,
-        45
+        41,
+        54
       ],
-      "weightA": 0.0,
+      "weightA": 0.5,
       "weightB": 0.0,
+      "weightC": 0.0,
       "zeroWeightZeroLift": false
     },
     "4": {
-      "holdoutOrigins": [
-        53,
-        56,
-        59,
-        62,
-        66,
-        69,
-        72,
-        75
-      ],
+      "holdoutOrigins": [],
       "horizonDays": 30,
       "trainMaeLiftOverNoChange": 0.0,
-      "trainNCases": 143642,
+      "trainNCases": 201523,
       "trainOrigins": [
         15,
-        18,
-        21,
-        24,
-        28,
+        19,
+        23,
+        27,
         31,
-        34,
-        37,
-        40,
+        35,
+        39,
         43,
         47,
-        50
+        51,
+        55,
+        59,
+        63,
+        67,
+        71,
+        75
       ],
       "weightA": 0.0,
       "weightB": 0.0,
+      "weightC": 0.0,
       "zeroWeightZeroLift": true
+    },
+    "9": {
+      "holdoutOrigins": [],
+      "horizonDays": 60,
+      "trainMaeLiftOverNoChange": 3.205329329666894e-05,
+      "trainNCases": 84667,
+      "trainOrigins": [
+        15,
+        24,
+        33,
+        42,
+        51,
+        60,
+        69
+      ],
+      "weightA": 0.25,
+      "weightB": 0.0,
+      "weightC": 0.0,
+      "zeroWeightZeroLift": false
     }
   },
   "totalVariants": 32365,
-  "wallClockSeconds": 172.673
+  "wallClockSeconds": 290.219
 }

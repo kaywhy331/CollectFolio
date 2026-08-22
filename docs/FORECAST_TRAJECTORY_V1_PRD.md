@@ -7,6 +7,44 @@ Execution model: one supervised implementation lane works the tasks below
 before the next task starts. Merges to `main` and production deploys are
 performed by the supervisor/Kevin, never by the lane.
 
+## trajectory-v1.1 validation and display addendum (2026-08-21)
+
+This addendum supersedes all conflicting v1 point-path, horizon, serving, and
+gate language below. The remainder of the document is the historical v1 task
+record and is retained only for traceability.
+
+- Independently model nominal 30-, 60-, and 90-day checkpoints. On the weekly
+  panel these mature at 28, 63, and 91 actual days, recorded in every band.
+- Use `log(P_h/P_0) = a_h F_common + c_h F_reversion + b_h F_drift` with one
+  coefficient triple per category × horizon. Select from the fixed grid
+  `a ∈ {0,.25,.5,1}`, `c ∈ {0,.1,.25,.5}`, `b ∈ {-.25,0,.25}`. Do not fit
+  per-set weights.
+- Fix damped-trend phi at `0.85` and Theta SES alpha at `0.3`. Rebuild the
+  lifecycle curve, MAD/volatility cohort, confidence label, set age, and
+  trailing own-level reversion signal using only data available at each
+  historical origin. Hedonic anchors are excluded from the directional gate.
+- Validate on non-overlapping origins `15 + k*h`. At every scored block, use
+  earlier blocks only and remove the scored set from coefficient selection and
+  conformal calibration. Require at least two prior fit blocks and three
+  blocks that actually contribute scored cases.
+- A directional evidence tier additionally requires positive aggregate and
+  macro held-out-set MAE lift over no-change, a positive 90% two-way block/set
+  bootstrap lower bound, at least three held-out sets with 20 variants each,
+  at least 80% of eligible sets above the `-0.005` no-harm floor, and 80%
+  interval coverage within `[75%, 88%]`. Direction accuracy and q50 pinball
+  remain diagnostics; q50 is pinned to the point model so conformal
+  calibration cannot become a second point forecaster.
+- Evidence claims are per category × cohort × horizon: `category-validated`,
+  `relative-validated` (when `a_h = 0`, disclosed as assuming a flat common
+  market), `range-only`, or `attribute-reference`. Legacy or failed results
+  are always range-only. Cold start is attribute-reference and explicitly not
+  a forecast. This validates eligible held-out sets, never literally all sets.
+- Packets contain the observed anchor plus the three checkpoint values only.
+  The chart may draw a light connector through validated q50 checkpoints as
+  visual interpolation. It must not create daily dots, a continuous forecast
+  path, or a continuous uncertainty polygon. Range/reference checkpoints show
+  whiskers without a directional median dot or connector.
+
 ## 1. Product definition
 
 For every covered card variant, CollectFolio shows a **predicted price** — a

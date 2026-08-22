@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import resource
 import sys
 import time
@@ -60,7 +61,7 @@ from .hedonic_features import (
     cold_start_candidates,
     load_or_fetch_products_metadata,
 )
-from .forecast_publisher import DEFAULT_MAX_OBJECT_BYTES, NINETY_DAY_ONLY_OVERRIDE, publish_forecasts
+from .forecast_publisher import DEFAULT_MAX_OBJECT_BYTES, publish_forecasts
 from .history_publisher import DEFAULT_MAX_OBJECT_BYTES as HISTORY_DEFAULT_MAX_OBJECT_BYTES, publish_history
 from .indices import IndexSet, build_indices
 from .lifecycle import (
@@ -451,15 +452,16 @@ def _load_hedonic_predictions(
 
 def _load_component_weights(
     path: Path, category_id: int
-) -> dict[int, tuple[float, float]] | None:
-    """Load a ``component-weights.json`` receipt (T4 remediation) and
+) -> dict[int, tuple[float, float, float]] | None:
+    """Load a trajectory-v1.1 ``component-weights.json`` receipt and
     return this category's selected weights keyed by ``horizon_steps`` (the
     key ``process_category``'s ``component_weights`` parameter expects).
 
     Expected schema (written by the remediation's weight-selection step,
     see ``trajectory_eval.select_component_weights``):
-    ``{"<categoryId>": {"<horizonDays>": {"weightA": a, "weightB": b, ...}, ...}, ...}``.
-    Returns ``None`` (implicit ``(1.0, 1.0)`` everywhere -- pre-remediation
+    ``{"<categoryId>": {"<horizonDays>": {"weightA": a, "weightC": c,
+    "weightB": b, ...}, ...}, ...}``. Legacy entries without ``weightC``
+    imply zero mean reversion. Returns ``None`` (implicit ``(1.0, 0.0, 1.0)`` everywhere
     behavior) when the file is absent or has no entry for this category.
     """
 
@@ -469,10 +471,14 @@ def _load_component_weights(
     category_payload = payload.get(str(category_id))
     if not category_payload:
         return None
-    weights: dict[int, tuple[float, float]] = {}
+    weights: dict[int, tuple[float, float, float]] = {}
     for horizon_days_str, entry in category_payload.items():
         h_steps = horizon_steps_for(int(horizon_days_str))
-        weights[h_steps] = (float(entry["weightA"]), float(entry["weightB"]))
+        weights[h_steps] = (
+            float(entry["weightA"]),
+            float(entry.get("weightC", 0.0)),
+            float(entry["weightB"]),
+        )
     return weights or None
 
 
@@ -557,7 +563,7 @@ def _run_category_command(args: argparse.Namespace) -> int:
 
 def _render_markdown(summary: Mapping[str, object]) -> str:
     lines = [
-        "# trajectory-v1 -- per-card forecast run summary",
+        "# trajectory-v1.1 -- per-card forecast run summary",
         "",
         f"- Generated at: {summary['generatedAt']}",
         f"- Categories: {summary['categoryIds']}",
@@ -606,45 +612,45 @@ def _report_command(args: argparse.Namespace) -> int:
 
 def _render_component_weights_summary_markdown(category_rows: list[dict]) -> str:
     lines = [
-        "# trajectory-v1 -- T4 remediation: component-weight selection + honest holdout gate",
+        "# trajectory-v1.1 -- causal rolling held-out-set validation",
         "",
-        "Per (category x horizon): weights `(a, b)` selected by grid search on TRAINING",
-        "origins only (minimizing standard-cohort MAE), then gated on HOLDOUT origins only",
-        "with conformal offsets calibrated from TRAINING origins only -- see",
-        "`trajectory_eval.select_component_weights` / `gate_holdout_evaluation`.",
+        "Per (category x horizon): deployment coefficients `(a, c, b)` are selected from",
+        "matured non-overlapping blocks. Validation is independently rolling and leaves",
+        "each scored set out of coefficient selection and conformal calibration.",
         "",
         "## Selected weights",
         "",
-        "| Category | Horizon (d) | a | b | Train lift | Train n | Train origins | Holdout origins |",
+        "| Category | Horizon (d) | a common | c reversion | b drift | Fit lift | Fit n | Fit blocks |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for row in category_rows:
         for h_days, sel in sorted(row["selection"].items()):
             lines.append(
-                f"| {row['categoryId']} | {h_days} | {sel['weightA']} | {sel['weightB']} | "
+                f"| {row['categoryId']} | {h_days} | {sel['weightA']} | {sel.get('weightC', 0.0)} | {sel['weightB']} | "
                 f"{sel['trainMaeLiftOverNoChange']} | {sel['trainNCases']} | "
-                f"{len(sel['trainOrigins'])} | {len(sel['holdoutOrigins'])} |"
+                f"{len(sel['trainOrigins'])} |"
             )
     lines += [
         "",
         "## Holdout gate: pass/fail per (category x cohort x horizon)",
         "",
-        "| Category | Cohort | Horizon (d) | n | MAE lift | Direction acc (>=5% movers) | "
-        "Coverage80 | Pinball beats no-change | Pass | Serving eligible |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Category | Cohort | Horizon (d) | n | Blocks | Sets | MAE lift | Macro set lift | "
+        "Bootstrap lower90 | No-harm sets | Coverage80 | Evidence tier | Pass |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in category_rows:
         for result in row["gate"]["results"]:
-            dir_acc = (
-                f"{result['directionAccuracyMovers']:.4f}"
-                if result["directionAccuracyMovers"] is not None else "n/a"
-            )
             lift = f"{result['maeLiftOverNoChange']:.6f}" if result["nCases"] else "n/a"
             cov = f"{result['coverage80']:.4f}" if result["nCases"] else "n/a"
+            macro = result.get("macroSetLift")
+            lower = result.get("bootstrapLiftLower90")
+            no_harm = result.get("setsNoHarmFraction")
             lines.append(
                 f"| {row['categoryId']} | {result['cohort']} | {result['horizonDays']} | "
-                f"{result['nCases']} | {lift} | {dir_acc} | {cov} | "
-                f"{result['pinballBeatsNoChange']} | {result['passes']} | {result['servingEligible']} |"
+                f"{result['nCases']} | {result.get('nScoreBlocks', 0)} | {result.get('eligibleSetCount', 0)} | "
+                f"{lift} | {macro if macro is not None else 'n/a'} | {lower if lower is not None else 'n/a'} | "
+                f"{no_harm if no_harm is not None else 'n/a'} | {cov} | {result.get('evidenceTier', 'range-only')} | "
+                f"{result['passes']} |"
             )
     lines += [
         "",
@@ -684,7 +690,7 @@ def _render_component_weights_summary_markdown(category_rows: list[dict]) -> str
     near_miss_lines = _near_miss_notes(category_rows)
     lines += [
         "",
-        "## Near-miss notes (informational; ENABLED entries are explicitly reviewed serving decisions)",
+        "## Near-miss notes (informational; failed horizons remain range-only)",
         "",
     ]
     if near_miss_lines:
@@ -694,9 +700,8 @@ def _render_component_weights_summary_markdown(category_rows: list[dict]) -> str
 
     lines += [
         "",
-        "cold-start: unevaluable by construction (no walk-forward truth exists for variants",
-        "with zero observed prices anywhere in the panel) -- serve only with explicit",
-        "cold-start labeling per PRD Sec4 hard criterion 3b.",
+        "cold-start: no observed current-price anchor exists. Hedonic output is published",
+        "only as an attribute-based reference range, never as a directional forecast.",
         "",
     ]
     return "\n".join(lines)
@@ -704,14 +709,9 @@ def _render_component_weights_summary_markdown(category_rows: list[dict]) -> str
 
 def _near_miss_notes(category_rows: list[dict]) -> list[str]:
     """Flag (category, cohort) pairs where a later horizon passes the
-    holdout gate but an earlier one does not -- informational, and NOT a
-    serving decision by itself. E.g. standard cohort passes 90d but not
-    30d: surfaced for Kevin as a possible 90d-only serving mode. Most such
-    near-misses stay unenabled; the ones explicitly activated by Kevin are
-    tracked separately in forecast_publisher.NINETY_DAY_ONLY_OVERRIDE and
-    are annotated ENABLED below (see publish-forecasts-receipt.json's
-    ninetyDayOnlyServingMode for the authoritative "is it currently being
-    served" record)."""
+    holdout gate but an earlier one does not. This is informational only:
+    each horizon keeps its own evidence tier and no override upgrades a
+    failed horizon."""
 
     notes = []
     for row in category_rows:
@@ -726,18 +726,10 @@ def _near_miss_notes(category_rows: list[dict]) -> list[str]:
             passing_later = [h for h in horizons[1:] if by_horizon[h]["passes"]]
             if passing_later and not by_horizon[earliest]["passes"]:
                 later_label = "/".join(f"{h}d" for h in passing_later)
-                if (row["categoryId"], cohort) in NINETY_DAY_ONLY_OVERRIDE:
-                    notes.append(
-                        f"- Category {row['categoryId']}, {cohort} cohort: passes {later_label} only "
-                        f"({earliest}d fails) -- ENABLED 2026-08-17 as {later_label}-only serving "
-                        f"mode per Kevin's 'forecasts should be for all products' directive."
-                    )
-                else:
-                    notes.append(
-                        f"- Category {row['categoryId']}, {cohort} cohort: passes {later_label} only "
-                        f"({earliest}d fails) -- flagged for Kevin as a possible future "
-                        f"{later_label}-only serving mode; NOT enabled."
-                    )
+                notes.append(
+                    f"- Category {row['categoryId']}, {cohort} cohort: passes {later_label} only "
+                    f"({earliest}d fails). Failed horizons remain range-only; no override upgrades them."
+                )
     return notes
 
 
@@ -840,12 +832,24 @@ def _eval_component_weights_command(args: argparse.Namespace) -> int:
                     "passes": r.passes,
                     "failReasons": r.fail_reasons,
                     "servingEligible": r.serving_eligible,
+                    "nScoreBlocks": r.n_score_blocks,
+                    "eligibleSetCount": r.eligible_set_count,
+                    "macroSetLift": r.macro_set_lift if math.isfinite(r.macro_set_lift) else None,
+                    "bootstrapLiftLower90": r.bootstrap_lift_lower_90 if math.isfinite(r.bootstrap_lift_lower_90) else None,
+                    "setsNoHarmFraction": r.sets_no_harm_fraction if math.isfinite(r.sets_no_harm_fraction) else None,
+                    "coverageCells": [
+                        {"cell": cell, "nCases": n_cases, "coverage80": coverage}
+                        for cell, n_cases, coverage in r.coverage_cells
+                    ],
+                    "validationScope": r.validation_scope,
+                    "evidenceTier": r.evidence_tier,
                 }
                 for r in gate["results"]
             ],
             "servingEligibleByCohort": gate["servingEligibleByCohort"],
             "coldStart": gate["coldStart"],
             "anyCohortServingEligible": gate["anyCohortServingEligible"],
+            "validationProtocol": gate.get("validationProtocol", {}),
         }
 
         receipt = {
@@ -870,7 +874,11 @@ def _eval_component_weights_command(args: argparse.Namespace) -> int:
         )
 
         combined_weights[str(category_id)] = {
-            str(sel["horizonDays"]): {"weightA": sel["weightA"], "weightB": sel["weightB"]}
+            str(sel["horizonDays"]): {
+                "weightA": sel["weightA"],
+                "weightC": sel.get("weightC", 0.0),
+                "weightB": sel["weightB"],
+            }
             for sel in selection_json.values()
         }
 
@@ -930,8 +938,8 @@ def _render_eval_summary_command(args: argparse.Namespace) -> int:
 
 
 def _publish_forecasts_command(args: argparse.Namespace) -> int:
-    """T5: slice every eligible packet (T4 fail-closed serving-eligibility
-    gate + cold-start-everywhere) into <=--max-object-bytes gzip objects
+    """Slice recognized packets, labeled by their validated evidence tier,
+    into <=--max-object-bytes gzip objects
     under --out-dir, plus forecasts/manifest.json. Gated on an explicit,
     separately-reviewed community-free-access SourceTerms record (tracked
     deviation from T1's research-only assert_tcgcsv_research_terms -- see
@@ -976,25 +984,8 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
         "maxObjectBytes": manifest["maxObjectBytes"],
         "manifestContentHash": manifest["manifestContentHash"],
         "sourceTerms": manifest["sourceTerms"],
-        # T5 90d-only serving mode: Kevin's 2026-08-17 "forecasts should be
-        # for all products" directive enabled the near-miss the T4 gate's
-        # own notes had already flagged as informational-only (category 1
-        # Magic / category 2 Yu-Gi-Oh standard cohort passes the holdout
-        # gate at 90 days but not 30). See forecast_publisher.NINETY_DAY_ONLY_OVERRIDE.
-        "ninetyDayOnlyServingMode": {
-            "enabledBy": "Kevin, 2026-08-17 'forecasts should be for all products' directive",
-            "cohorts": manifest["ninetyDayOnlyCohorts"],
-        },
-        # Serve-all-cohorts mode: Kevin's 2026-08-18 "the estimates are
-        # supposed to be provided on all products" directive. Every
-        # recognized cohort (standard / low-history / insufficient-history /
-        # cold-start) now serves both horizons everywhere; the T4 gate's
-        # per-cohort verdicts remain recorded in evaluation-summary.* as
-        # labeling/reporting input. See forecast_publisher.SERVE_ALL_COHORTS.
-        "serveAllCohortsMode": {
-            "enabledBy": "Kevin, 2026-08-18 'estimates are supposed to be provided on all products' directive",
-            "enabled": manifest["serveAllCohorts"],
-        },
+        "publishAllEvidenceTiers": manifest["publishAllEvidenceTiers"],
+        "evidenceTierPolicy": manifest["evidenceTierPolicy"],
         "servedHorizonsByCategory": manifest["servedHorizonsByCategory"],
         "categories": {
             category_id: {
@@ -1146,11 +1137,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--component-weights-path", default=None,
         help=(
-            "path to a component-weights.json receipt (T4 remediation) with this "
-            "category's selected per-horizon (a, b); defaults to "
+            "path to a trajectory-v1.1 component-weights.json receipt with this "
+            "category's selected per-horizon (a, c, b); defaults to "
             "<receipts-dir>/component-weights.json. When absent or missing this "
-            "category, every horizon implicitly uses (1.0, 1.0) -- byte-identical "
-            "to pre-remediation output."
+            "category, every horizon implicitly uses the legacy-compatible "
+            "(1.0, 0.0, 1.0)."
         ),
     )
     run.set_defaults(handler=_run_category_command)
@@ -1158,8 +1149,8 @@ def _parser() -> argparse.ArgumentParser:
     eval_weights = subparsers.add_parser(
         "eval-component-weights",
         help=(
-            "T4 remediation: per (category, horizon) walk-forward-honest component-weight "
-            "grid search on training origins, gated on holdout origins, writing "
+            "trajectory-v1.1 per-(category, horizon) coefficient selection plus causal "
+            "rolling held-out-set qualification, writing "
             "component-weights.json + evaluation-category-<id>.json + evaluation-summary.md/json"
         ),
     )
@@ -1248,8 +1239,8 @@ def _parser() -> argparse.ArgumentParser:
     publish = subparsers.add_parser(
         "publish-forecasts",
         help=(
-            "T5: slice T4's eligible packets (fail-closed serving-eligibility gate + "
-            "cold-start-everywhere) into <=128KiB gzip objects + forecasts/manifest.json "
+            "slice recognized packets with per-horizon evidence tiers into <=128KiB "
+            "gzip objects + forecasts/manifest.json "
             "under --out-dir, gated on an explicit community-free-access SourceTerms record"
         ),
     )

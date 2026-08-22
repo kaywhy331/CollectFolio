@@ -1,42 +1,70 @@
 {
   "1": {
     "30": {
-      "weightA": 0.0,
-      "weightB": 0.0
+      "weightA": 0.25,
+      "weightB": 0.0,
+      "weightC": 0.0
+    },
+    "60": {
+      "weightA": 1.0,
+      "weightB": 0.0,
+      "weightC": 0.0
     },
     "90": {
-      "weightA": 0.25,
-      "weightB": 0.0
+      "weightA": 1.0,
+      "weightB": 0.0,
+      "weightC": 0.0
     }
   },
   "2": {
     "30": {
-      "weightA": 0.25,
-      "weightB": 0.0
+      "weightA": 0.0,
+      "weightB": 0.0,
+      "weightC": 0.0
+    },
+    "60": {
+      "weightA": 0.0,
+      "weightB": 0.0,
+      "weightC": 0.0
     },
     "90": {
-      "weightA": 0.5,
-      "weightB": 0.0
+      "weightA": 0.0,
+      "weightB": 0.0,
+      "weightC": 0.0
     }
   },
   "3": {
     "30": {
-      "weightA": 0.0,
-      "weightB": 0.0
+      "weightA": 1.0,
+      "weightB": 0.0,
+      "weightC": 0.0
+    },
+    "60": {
+      "weightA": 1.0,
+      "weightB": 0.0,
+      "weightC": 0.0
     },
     "90": {
       "weightA": 1.0,
-      "weightB": 0.0
+      "weightB": 0.0,
+      "weightC": 0.0
     }
   },
   "85": {
     "30": {
       "weightA": 0.0,
-      "weightB": 0.0
+      "weightB": 0.0,
+      "weightC": 0.0
+    },
+    "60": {
+      "weightA": 0.25,
+      "weightB": 0.0,
+      "weightC": 0.0
     },
     "90": {
-      "weightA": 0.0,
-      "weightB": 0.0
+      "weightA": 0.5,
+      "weightB": 0.0,
+      "weightC": 0.0
     }
   }
 }
