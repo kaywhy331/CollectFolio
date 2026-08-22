@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.29';
+const CACHE = 'collectfolio-shell-v0.8.30';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
@@ -21,6 +21,7 @@ const SHELL = [
   './assets/js/services/providers/ygoprodeck.js', './assets/js/services/providers/tcgcsv.js', './assets/js/services/providers/tcgcsv-categories.js', './assets/js/services/image-algorithms.js',
   './assets/js/services/image.js', './assets/js/services/scan-workbench.js', './assets/js/services/scan-detection-worker.js',
   './assets/js/services/scan-review.js', './assets/js/services/visual-index.js', './assets/js/services/supabase.js', './assets/js/services/watchlist.js',
+  './assets/js/services/collectcapture.js',
   './assets/js/services/price-intelligence.js',
   './assets/js/services/forecast-trajectory.js',
   './assets/js/services/history-trajectory.js',

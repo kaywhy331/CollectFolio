@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 
 function pngChunk(type, data) {
@@ -85,81 +86,83 @@ async function openImageReview(page, buffer = rotatedCardPNG) {
   await expect(page).toHaveURL(/\/scan\/review$/);
 }
 
-async function configureNoRecognitionStubs(page) {
-  await page.route('**/runtime-config.js', (route) => route.fulfill({
-    contentType: 'application/javascript',
-    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.0-test',
-      ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
-      ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
-    });`
-  }));
-  await page.route('**/assets/data/visual-index/pokemon-v1/manifest.json', (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ format: 'collectfolio-visual-candidate-index', version: 1, fingerprintCount: 0, shards: [] })
-  }));
+const COLLECTCAPTURE_ORIGIN = 'https://collectcapture-e2e.example.test';
+
+function collectCaptureCandidate(overrides = {}) {
+  return {
+    id: 'tcgcsv:3:1102:5001', externalId: '3:1102:5001', provider: 'tcgcsv',
+    category: 'tcgcsv-category-3', game: 'Pokemon', name: 'CollectCapture Identity Card',
+    setName: 'Synthetic Set', setCode: 'SYN', number: '007', variant: 'Holofoil', rarity: 'Rare', year: '2026',
+    image: '', imageSmall: '', price: null, priceOptions: [], currency: 'USD',
+    priceSource: '', priceUrl: '', priceUpdatedAt: '', matchBucket: 'likely', matchScore: 0.98,
+    categoryId: 3, groupId: 1102, productId: 5001,
+    ...overrides
+  };
 }
 
-async function configureVisualIdentityStubs(page, { ambiguous = false } = {}) {
-  const TCGCSV_ORIGIN = 'https://tcgcsv-visual-e2e.example.test';
+function collectCaptureLookup(request, candidates = []) {
+  const query = String(request.query || '').trim();
+  const imageBytes = Buffer.from(String(request.imageDataUrl || '').split(',')[1] || '', 'base64');
+  return {
+    contentSha256: createHash('sha256').update(imageBytes).digest('hex'),
+    imageRetained: false,
+    recognition: {
+      source: query ? 'user_query' : 'vision', category: 'pokemon',
+      name: query || 'CollectCapture Identity Card', setName: query ? null : 'Synthetic Set',
+      collectorNumber: query ? null : '007', language: 'en',
+      visibleText: query ? [] : ['CollectCapture Identity Card', '007'],
+      queries: [query || 'CollectCapture Identity Card 007'], confidence: query ? 1 : 0.94,
+      provider: query ? 'collector' : 'openai', model: query ? 'manual-query' : 'e2e-vision'
+    },
+    candidates,
+    warnings: []
+  };
+}
+
+async function configureCollectCaptureStub(page, { respond } = {}) {
+  const requests = [];
   await page.addInitScript(() => {
-    // Make the 9x8 dHash canvas deterministic without changing the larger
-    // canvases used by corner detection and rectification.
-    const original = CanvasRenderingContext2D.prototype.getImageData;
-    CanvasRenderingContext2D.prototype.getImageData = function (...args) {
-      const result = original.apply(this, args);
-      if (this.canvas.width === 9 && this.canvas.height === 8) result.data.fill(255);
-      return result;
-    };
+    localStorage.setItem('collectfolio:supabase-session', JSON.stringify({
+      access_token: 'collectfolio-e2e-token', refresh_token: 'unused', expires_at: 4102444800,
+      user: { id: 'collectfolio-e2e-user', email: 'collector@example.test' }
+    }));
   });
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.0-test',
-      TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.30-test',
+      COLLECTCAPTURE_API_URL: '${COLLECTCAPTURE_ORIGIN}/', ENABLE_COLLECTCAPTURE: true,
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
       ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
     });`
   }));
-  await page.route('**/assets/data/visual-index/pokemon-v1/manifest.json', (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({
-      format: 'collectfolio-visual-candidate-index', version: 1,
-      fingerprintCount: 1, shards: [{ name: 'visual-e2e' }]
-    })
-  }));
-  await page.route('**/assets/data/visual-index/pokemon-v1/visual-e2e.json', (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify([['visual-1', 'Visual Identity Card', 'Synthetic Set', '007', 'Rare', '', '0000000000000000']])
-  }));
-  await page.route(`${TCGCSV_ORIGIN}/catalog/bridge/3`, (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({
-      provider: 'pokemon',
-      products: [
-        { groupId: 1102, productId: 5001, providerCardId: 'visual-1', matchMethod: 'provider-card-id' },
-        ...(ambiguous ? [{ groupId: 1102, productId: 5002, providerCardId: 'visual-1', matchMethod: 'provider-card-id' }] : [])
-      ]
-    })
-  }));
-  await page.route(`${TCGCSV_ORIGIN}/catalog/bridge/85`, (route) => route.fulfill({
-    status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not published' })
-  }));
-  await page.route(`${TCGCSV_ORIGIN}/catalog/products/3/1102/5001`, (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({
-      product: {
-        productId: 5001, categoryId: 3, groupId: 1102, name: 'Visual Identity Card',
-        cardNumber: '007', rarity: 'Rare', prices: [{ subtypeName: 'Holofoil', marketPrice: 42 }]
-      },
-      category: { categoryId: 3, displayName: 'Pokemon' },
-      group: { categoryId: 3, groupId: 1102, name: 'Synthetic Set' },
-      publicationId: 'visual-e2e', sourceUpdatedAt: '2026-08-20'
-    })
+  await page.route(`${COLLECTCAPTURE_ORIGIN}/v1/card-lookups`, async (route) => {
+    const request = {
+      authorization: route.request().headers().authorization,
+      body: route.request().postDataJSON()
+    };
+    requests.push(request);
+    const lookup = respond ? await respond(request.body, requests.length) : collectCaptureLookup(request.body);
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ lookup }) });
+  });
+  return requests;
+}
+
+async function configureDisabledCollectCapture(page, { localRollback = false } = {}) {
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.30-test',
+      COLLECTCAPTURE_API_URL: '', ENABLE_COLLECTCAPTURE: false,
+      ENABLE_LOCAL_SCAN_ROLLBACK: ${localRollback},
+      ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
+      ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
+    });`
   }));
 }
 
 test('search by image starts in an invariant one-card crop workflow', async ({ page }) => {
+  await configureCollectCaptureStub(page);
   await skipOnboarding(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
   await page.getByRole('button', { name: 'Search from an image' }).click();
@@ -187,8 +190,8 @@ test('search by image starts in an invariant one-card crop workflow', async ({ p
 
   await expect(page).toHaveURL(/\/scan\/review$/);
   await expect(page.locator('[data-crop-id]')).toHaveCount(1);
-  await expect(page.getByText(/Identifying automatically on this device|Couldn’t read a reliable card name/)).toBeVisible();
-  await expect(page.getByText(/bounded source working copy is held only in memory/i)).toBeVisible();
+  await expect(page.locator('.review-card [role="status"]')).toContainText(/CollectCapture found no catalog match/);
+  await expect(page.getByText(/bounded, metadata-free card crop is sent transiently to CollectCapture/i)).toBeVisible();
   const persisted = await page.evaluate(async () => {
     const database = await new Promise((resolve, reject) => {
       const request = indexedDB.open('collectfolio');
@@ -208,11 +211,12 @@ test('search by image starts in an invariant one-card crop workflow', async ({ p
   expect(persisted[0]).not.toHaveProperty('sourceImageRetainedAt');
   await page.reload();
   await expect(page.getByText(/full source photo is not stored with this draft/i)).toBeVisible();
+  await expect(page.getByText(/CollectCapture.*does not retain it/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Edit crop boundary' })).toHaveCount(0);
 });
 
 test('unrecognizable capture shows explicit editable fallback and remains retryable', async ({ page }) => {
-  await configureNoRecognitionStubs(page);
+  await configureCollectCaptureStub(page);
   await skipOnboarding(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
   await page.getByRole('button', { name: 'Search from an image' }).click();
@@ -223,147 +227,124 @@ test('unrecognizable capture shows explicit editable fallback and remains retrya
   await expect(workbench.getByText('Automatic corners were not reliable')).toBeVisible();
   await workbench.getByRole('button', { name: 'Straighten and identify' }).click();
   await expect(page).toHaveURL(/\/scan\/review$/);
-  await expect(page.getByRole('button', { name: 'Retry text recognition' })).toBeEnabled();
-  await expect(page.locator('.review-card [role="status"]')).toContainText(/Couldn’t read a reliable card name/);
+  await expect(page.getByRole('button', { name: 'Search CollectCapture' })).toBeEnabled();
+  await expect(page.locator('.review-card [role="status"]')).toContainText(/CollectCapture found no catalog match/);
 });
 
-test('low-quality native OCR falls through and never exposes random characters', async ({ page }) => {
+test('scanner sends only the bounded crop to CollectCapture and does not invoke local OCR', async ({ page }) => {
   await page.addInitScript(() => {
-    window.__tesseractRecognized = 0;
+    window.__localRecognitionCalls = 0;
     window.TextDetector = class {
-      async detect() { return [{ rawValue: '||| 1lI rrrr ???', confidence: 0.05 }]; }
+      constructor() { window.__localRecognitionCalls++; }
+      async detect() { window.__localRecognitionCalls++; return []; }
     };
     window.Tesseract = {
       async createWorker() {
-        return {
-          async setParameters() {},
-          async recognize() {
-            window.__tesseractRecognized++;
-            return { data: { text: '||| 1lI rrrr ???', confidence: 12 } };
-          },
-          async terminate() { window.__tesseractTerminated = true; }
-        };
+        window.__localRecognitionCalls++;
+        throw new Error('Local OCR must not run');
       }
     };
   });
-  await page.route('**/runtime-config.js', (route) => route.fulfill({
-    contentType: 'application/javascript',
-    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.0-test',
-      ENABLE_TESSERACT: true, ENABLE_WATCHLISTS: true,
-      ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
-    });`
-  }));
-  await page.route('**/assets/data/visual-index/pokemon-v1/manifest.json', (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({
-      format: 'collectfolio-visual-candidate-index', version: 1,
-      fingerprintCount: 0, shards: []
-    })
-  }));
+  const requests = await configureCollectCaptureStub(page);
   await skipOnboarding(page);
   await openImageReview(page);
 
-  await expect(page.locator('.review-card [role="status"]')).toContainText(/Text was unclear|tighter, well-lit crop/);
-  await expect(page.locator('[data-crop-query]')).toHaveValue('');
-  await expect(page.getByText('||| 1lI rrrr ???')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Retry text recognition' })).toBeEnabled();
-  await expect.poll(() => page.evaluate(() => window.__tesseractRecognized)).toBe(7);
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].authorization).toBe('Bearer collectfolio-e2e-token');
+  expect(requests[0].body.imageDataUrl).toMatch(/^data:image\/jpeg;base64,/);
+  expect(requests[0].body).toMatchObject({ query: '', category: 'all', limit: 24 });
+  await expect.poll(() => page.evaluate(() => window.__localRecognitionCalls)).toBe(0);
 });
 
-test('visual recognition becomes approvable only through one published TCGCSV bridge identity', async ({ page }) => {
-  await configureVisualIdentityStubs(page);
+test('a collector-selected CollectCapture catalog printing is approvable without a browser-side catalog request', async ({ page }) => {
+  const browserCatalogRequests = [];
+  page.on('request', (request) => {
+    if (/\/catalog\//.test(new URL(request.url()).pathname)) browserCatalogRequests.push(request.url());
+  });
+  await configureCollectCaptureStub(page, {
+    respond: (request) => collectCaptureLookup(request, [collectCaptureCandidate()])
+  });
   await skipOnboarding(page);
   await openImageReview(page, unrecognizablePNG);
 
-  const candidate = page.getByRole('button', { name: /Visual Identity Card/ });
-  await expect(candidate).toContainText('TCGCSV linked');
+  const candidate = page.getByRole('button', { name: /CollectCapture Identity Card/ });
   await candidate.click();
-  await expect(page.locator('.selected-match .match-state')).toHaveText('Exact source identity');
-  const confirm = page.getByRole('button', { name: 'Confirm exact item', exact: true });
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Catalog printing selected');
+  expect(browserCatalogRequests).toEqual([]);
+  const confirm = page.getByRole('button', { name: 'Confirm this printing', exact: true });
   await expect(confirm).toBeEnabled();
   await confirm.click();
   await page.getByRole('button', { name: 'Add 1 confirmed', exact: true }).click();
   await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
+  expect(browserCatalogRequests).toEqual([]);
 });
 
-test('an ambiguous visual bridge candidate stays similarity-only and cannot be approved', async ({ page }) => {
-  await configureVisualIdentityStubs(page, { ambiguous: true });
-  await skipOnboarding(page);
-  await openImageReview(page, unrecognizablePNG);
-
-  const candidate = page.getByRole('button', { name: /Visual Identity Card/ });
-  await expect(candidate).not.toContainText('TCGCSV linked');
-  await candidate.click();
-  const blocked = page.getByRole('button', { name: 'Exact catalog match required', exact: true });
-  await expect(blocked).toBeDisabled();
-  await expect(page.getByText('Similarity alone is never approval.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Add 0 confirmed', exact: true })).toBeDisabled();
-});
-
-test('accepted OCR relaxes an over-specific query and recovers a catalog candidate', async ({ page }) => {
-  // catalog-v2 B3: 'pokemon' search now goes exclusively through
-  // /catalog/search (TCGCSV) -- see services/catalog.js's FLAGSHIP_GAMES --
-  // so the relaxation flow (an over-specific query fails, a relaxed one
-  // recovers a candidate) is exercised against that backend's raw `q` text
-  // instead of pokemontcg.io's structured query syntax.
-  const TCGCSV_ORIGIN = 'https://tcgcsv-e2e.example.test';
-  const queries = [];
-  await page.addInitScript(() => {
-    window.TextDetector = class {
-      async detect() {
-        return [
-          { rawValue: 'Synthetic Dragon ex', confidence: 0.98 },
-          { rawValue: '223/197', confidence: 0.98 }
-        ];
-      }
-    };
+test('manual scanner query retries through CollectCapture without invoking browser catalogs', async ({ page }) => {
+  const browserCatalogRequests = [];
+  page.on('request', (request) => {
+    if (/\/catalog\//.test(new URL(request.url()).pathname)) browserCatalogRequests.push(request.url());
   });
-  await page.route('**/runtime-config.js', (route) => route.fulfill({
-    contentType: 'application/javascript',
-    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.0-test',
-      TCGCSV_CATALOG_URL: '${TCGCSV_ORIGIN}/',
-      ENABLE_TESSERACT: true, ENABLE_WATCHLISTS: true,
-      ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
-    });`
-  }));
-  await page.route(`${TCGCSV_ORIGIN}/catalog/search**`, (route) => {
-    const url = new URL(route.request().url());
-    const q = url.searchParams.get('q') || '';
-    queries.push(q);
-    // Same relaxation contract as the old provider-query assertions below:
-    // the over-specific "name + number" query still fails to match, and
-    // only the relaxed "name only" query recovers the candidate.
-    const matched = /synthetic dragon ex/i.test(q) && !/223/.test(q);
-    return route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        products: matched ? [{
-          productId: 5001, categoryId: 3, groupId: 1102,
-          categoryName: 'Pokemon', groupName: 'Synthetic Set',
-          name: 'Synthetic Dragon ex', cleanName: 'Synthetic Dragon ex',
-          cardNumber: '223', rarity: 'rare', prices: []
-        }] : [],
-        publicationId: 'e2e', sourceUpdatedAt: '2026-08-17'
-      })
-    });
+  const requests = await configureCollectCaptureStub(page, {
+    respond: (request) => collectCaptureLookup(
+      request,
+      request.query ? [collectCaptureCandidate({ name: 'Synthetic Dragon ex', number: '223/197' })] : []
+    )
   });
-
   await skipOnboarding(page);
   await openImageReview(page);
 
+  await expect(page.locator('.review-card [role="status"]')).toContainText(/CollectCapture found no catalog match/);
+  await page.locator('[data-crop-query]').fill('Synthetic Dragon ex 223/197');
+  await page.getByRole('button', { name: 'Search CollectCapture' }).click();
   await expect(page.getByRole('button', { name: /Synthetic Dragon ex/ })).toBeVisible();
   await expect(page.locator('[data-crop-query]')).toHaveValue('Synthetic Dragon ex 223/197');
-  expect(queries.some((query) => /223/.test(query))).toBe(true);
-  expect(queries.some((query) => /synthetic dragon ex/i.test(query) && !/223/.test(query))).toBe(true);
+  expect(requests).toHaveLength(2);
+  expect(requests[1].body.query).toBe('Synthetic Dragon ex 223/197');
+  expect(requests[1].body.imageDataUrl).toBe(requests[0].body.imageDataUrl);
+  expect(browserCatalogRequests).toEqual([]);
+});
 
-  await page.getByRole('button', { name: /Synthetic Dragon ex/ }).click();
-  const confirm = page.getByRole('button', { name: 'Confirm exact item', exact: true });
-  await expect(confirm).toBeEnabled();
-  await expect(page.locator('.selected-match .match-state')).toHaveText('Exact source identity');
-  await confirm.click();
-  await page.getByRole('button', { name: 'Add 1 confirmed', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Items added' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
+test('disabled CollectCapture fails explicitly without invoking a local scanner fallback', async ({ page }) => {
+  const remoteRequests = [];
+  page.on('request', (request) => {
+    if (/\/v1\/card-lookups$/.test(new URL(request.url()).pathname)) remoteRequests.push(request.url());
+  });
+  await page.addInitScript(() => {
+    window.__localRecognitionCalls = 0;
+    window.TextDetector = class {
+      constructor() { window.__localRecognitionCalls++; }
+      async detect() { window.__localRecognitionCalls++; return []; }
+    };
+    window.Tesseract = {
+      async createWorker() {
+        window.__localRecognitionCalls++;
+        throw new Error('Local OCR must not run');
+      }
+    };
+  });
+  await configureDisabledCollectCapture(page);
+  await skipOnboarding(page);
+  await openImageReview(page, unrecognizablePNG);
+
+  await expect(page.locator('.review-card [role="status"]')).toContainText(/identification is unavailable until CollectCapture is configured/i);
+  await expect.poll(() => page.evaluate(() => window.__localRecognitionCalls)).toBe(0);
+  expect(remoteRequests).toEqual([]);
+});
+
+test('explicit rollback mode keeps browser-native recognition available without contacting CollectCapture', async ({ page }) => {
+  const remoteRequests = [];
+  page.on('request', (request) => {
+    if (/\/v1\/card-lookups$/.test(new URL(request.url()).pathname)) remoteRequests.push(request.url());
+  });
+  await configureDisabledCollectCapture(page, { localRollback: true });
+  await page.route('**/assets/data/visual-index/pokemon-v1/manifest.json', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ format: 'collectfolio-visual-candidate-index', version: 1, fingerprintCount: 0, shards: [] })
+  }));
+  await skipOnboarding(page);
+  await openImageReview(page, unrecognizablePNG);
+
+  await expect(page.getByRole('button', { name: 'Retry text recognition' })).toBeEnabled();
+  await expect(page.getByText(/explicit scanner rollback is active/i)).toBeVisible();
+  expect(remoteRequests).toEqual([]);
 });

@@ -80,11 +80,12 @@ test('scan acquisition retains explicit currencies and excludes mismatched cost 
 test('redesigned review exposes bulk editing, exact identity, cost basis, and explicit confirmation', () => {
   const draft = reviewDraft();
   const html = renderScanReview(draft, {
-    settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }, scanSourceAvailable: true
+    settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true },
+    scanSourceAvailable: true, cardRecognitionMode: 'collectcapture'
   });
   assert.match(html, /Review queue summary/);
   assert.match(html, /Apply purchase details to all/);
-  assert.match(html, /Exact source identity/);
+  assert.match(html, /Confirmed printing/);
   assert.match(html, /data-crop-acquisition="purchasePrice"/);
   assert.match(html, /data-crop-acquisition="purchaseCurrency"/);
   assert.match(html, /data-crop-acquisition="manualMarketCurrency"/);
@@ -94,12 +95,13 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   assert.match(html, /\$22\.00 USD cost basis/);
   assert.match(html, /Add 1 confirmed/);
   assert.match(html, /Unconfirmed and unmatched items are skipped/);
-  assert.match(html, /bounded source working copy is held only in memory/i);
+  assert.match(html, /full source photo stays only in browser memory/i);
   assert.match(html, /data-action="release-source-photo"/);
   assert.match(html, /data-action="discard-scan"/);
   assert.match(html, /data-action="edit-crop"/);
   assert.match(html, /Edit crop boundary/);
-  assert.match(html, /only text queries and catalog identifiers may reach enabled catalog sources/i);
+  assert.match(html, /bounded, metadata-free card crop is sent transiently to CollectCapture/i);
+  assert.match(html, /does not retain it/i);
 });
 
 test('scan review recognizes a condition-aware mapped watch', () => {
@@ -130,8 +132,8 @@ test('review labels candidates as similarity evidence and requires explicit iden
     settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }
   });
   assert.match(html, /Proposed match/);
-  assert.match(html, /Confirm exact item/);
-  assert.match(html, /Strong similarity/);
+  assert.match(html, /Confirm this printing/);
+  assert.match(html, /Strong lookup match/);
   assert.doesNotMatch(html, /100%/);
   assert.doesNotMatch(html, /Approve this exact item/);
 });
@@ -146,9 +148,9 @@ test('similarity-only candidates cannot be approved or added as exact identities
   assert.equal(eligibleApprovedCrops(draft).length, 0);
   assert.deepEqual(scanReviewSummary(draft), { total: 2, exact: 0, needsReview: 1, unmatched: 1, approved: 0 });
   const html = renderScanReview(draft, { settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true } });
-  assert.match(html, /Exact catalog match required/);
-  assert.match(html, /Similarity alone is never approval/);
-  await assert.rejects(() => setCropApproval(draft, draft.crops[0].id, true), /exact catalog match/i);
+  assert.match(html, /Catalog printing required/);
+  assert.match(html, /lookup suggestion is never approved automatically/i);
+  await assert.rejects(() => setCropApproval(draft, draft.crops[0].id, true), /catalog printing/i);
 });
 
 test('a collector-selected TCGCSV row is an approvable exact source identity, not a similarity-only guess', () => {

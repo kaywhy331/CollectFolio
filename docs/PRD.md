@@ -100,14 +100,13 @@ The Add action is visually elevated because ingestion is the highest-frequency g
    - retry automatic detection;
    - apply a configurable row/column binder grid.
 6. App creates compressed individual crops.
-7. Straightened crops automatically run local OCR and catalog search.
-8. Reliable OCR text becomes ordered catalog queries; visual recovery remains available when text is unusable.
-9. Pokémon, Magic, and Yu-Gi-Oh! results are normalized and ranked.
-10. A perceptual image hash reranks candidate images when cross-origin image access permits.
-11. User selects the exact match and explicitly approves it.
-12. Approved items are added in one batch with their original crop as the user-owned image.
-13. Unidentified items can become custom holdings without leaving the queue.
-14. The review can be saved and resumed later without losing crop, match, or approval state.
+7. When configured, each straightened crop is sent over an authenticated connection to CollectCapture for recognition and private TCGCSV lookup.
+8. CollectCapture returns conservative recognition evidence and unselected catalog suggestions; it never asserts approval or authenticity.
+9. The user may edit the query and retry through the same server path.
+10. The user selects one exact TCGCSV printing and separately confirms it.
+11. Confirmed items are added in one batch with their crop as the user-owned image.
+12. Unidentified items can become custom holdings without leaving the queue.
+13. The review can be saved and resumed later without losing crop, match, or approval state.
 
 ### 7.2 Text search
 
@@ -150,7 +149,7 @@ The Add action is visually elevated because ingestion is the highest-frequency g
 - **SEA-02:** Provider failures must not discard successful results from other providers.
 - **SEA-03:** Search responses must be cached locally for 30 minutes.
 - **SEA-04:** Sports/comics filters must route to custom entry rather than imply universal pricing coverage.
-- **SEA-05:** Search-by-image must route into the same crop, OCR, candidate, and approval pipeline as Add.
+- **SEA-05:** Search-by-image must route into the same crop, authenticated lookup, candidate, and approval pipeline as Add.
 
 ### Capture and recognition
 
@@ -158,7 +157,7 @@ The Add action is visually elevated because ingestion is the highest-frequency g
 - **CAP-02:** The app must return at least one editable box; full-frame fallback is acceptable when auto-detection fails.
 - **CAP-03:** Users must be able to add, move, resize, delete, and retry boundaries.
 - **CAP-04:** Binder grid fallback must support 1–12 rows and columns.
-- **CAP-05:** OCR must be lazy-loaded, local, automatically initiated after crop confirmation, and safely retryable/manual when unavailable.
+- **CAP-05:** CollectCapture lookup must be authenticated, automatically initiated after crop confirmation, bounded, non-persisting on the application server, and safely retryable/manual when unavailable.
 - **CAP-06:** Low-confidence results must never be silently added.
 - **CAP-07:** Users must be able to approve, retry, search manually, delete, or create a custom item per crop.
 - **CAP-08:** Batch add must add only explicitly approved crops.
@@ -206,13 +205,13 @@ Sports cards, comics, autographs, memorabilia, unsupported TCGs, altered items, 
 ## 10. Non-functional requirements
 
 - Initial shell should remain small and dependency-free.
-- External OCR code may load only after the user explicitly chooses/captures an image and confirms its crop; no OCR runs during ordinary browsing.
-- Original photos must not be automatically uploaded.
+- External recognition may run only after the user explicitly chooses/captures an image and confirms its crop; no recognition runs during ordinary browsing.
+- Full source photos must never be uploaded or persisted. Only a bounded, Canvas-reencoded metadata-free crop may leave the browser, and the review UI must disclose CollectCapture and provider processing.
 - The UI must work from 320 px through desktop widths.
 - All interactive controls must have visible focus states.
 - Reduced-motion preferences must be respected.
-- Core local features must work after initial PWA caching while offline.
-- Static deployment must not require Netlify Functions or paid compute.
+- Core portfolio features must work after initial PWA caching while offline; remote card identification may become explicitly unavailable.
+- The browser shell must remain statically deployable. Enabled recognition uses the separately deployed CollectCapture API.
 
 ## 11. Success metrics
 
@@ -233,7 +232,7 @@ The MVP is complete when:
 2. Text search returns normalized Pokémon, Magic, and Yu-Gi-Oh! results.
 3. A user can upload a multi-item image and receive editable crop boundaries.
 4. Boundary add, move, resize, delete, retry, and grid split work.
-5. OCR automatically produces an editable query or an explicit recoverable fallback.
+5. CollectCapture automatically produces editable recognition evidence and catalog suggestions, or an explicit recoverable/unavailable state.
 6. Candidate results can be selected and explicitly approved.
 7. Approved crops can be batch-added; unapproved crops are excluded.
 8. Custom sports/comic/other entries can use the user’s photo.
@@ -251,7 +250,7 @@ The MVP is complete when:
 
 ### Phase 1 — implemented MVP
 
-Local-first PWA, free TCG search, editable multi-scan, OCR-assisted review, manual universal holdings, portfolio analytics, backup, optional Supabase sync.
+Local-first PWA, free text search, editable multi-scan, authenticated CollectCapture-assisted review, manual universal holdings, portfolio analytics, backup, optional Supabase sync.
 
 ### Phase 2 — recognition quality
 

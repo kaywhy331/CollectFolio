@@ -1,5 +1,17 @@
 import { pageHeader } from '../core/components.js';
 import { escapeAttribute, escapeHTML } from '../core/utils.js';
+import { cardRecognitionMode } from '../services/collectcapture.js';
+
+function capturePrivacyNotice() {
+  const mode = cardRecognitionMode();
+  if (mode === 'local') {
+    return 'The full source photo never leaves this browser and is never saved. A bounded working copy exists only in memory for the active review; saved drafts contain compressed crops and review decisions. Recognition runs locally because the explicit scanner rollback is active. Photos are not uploaded.';
+  }
+  if (mode === 'unavailable') {
+    return 'The full source photo never leaves this browser and is never saved. A bounded working copy exists only in memory for the active review; saved drafts contain compressed crops and review decisions. Automatic card identification is unavailable until CollectCapture is configured. There is no silent local recognition or catalog fallback.';
+  }
+  return 'The full source photo never leaves this browser and is never saved. After you apply crop boundaries, each bounded, metadata-free card crop is sent transiently over an authenticated connection to CollectCapture for recognition and catalog suggestions. CollectCapture verifies the crop but does not retain it; its recognition provider processes it under the configured provider controls. Saved drafts keep compressed crops and review decisions locally. Sign-in is required for identification.';
+}
 
 function scanDraftControls(state = {}) {
   const drafts = Array.isArray(state.scanDrafts) ? state.scanDrafts : [];
@@ -29,5 +41,5 @@ export function renderAdd(state) {
     <input class="sr-only" id="scan-camera-input" data-scan-input="camera" type="file" accept="image/*" capture="environment" aria-label="Take a photo for scanning">
     <input class="sr-only" id="scan-upload-input" data-scan-input="upload" type="file" accept="image/*" aria-label="Choose a photo for scanning">
     <input class="sr-only" id="backup-file" type="file" accept="application/json,.json" aria-label="Choose CollectFolio backup, up to 128 MB">
-    <p class="intake-privacy"><span aria-hidden="true">◇</span><span><strong>Private by default.</strong> The full source photo is never saved. A bounded working copy exists only in browser memory for the active review; saved drafts contain compressed crops and review decisions. Cropping and text recognition run locally; only text queries and catalog identifiers may be sent to enabled catalog sources. Photos are never uploaded.</span></p>`;
+    <p class="intake-privacy"><span aria-hidden="true">◇</span><span><strong>Private by default.</strong> ${escapeHTML(capturePrivacyNotice())}</span></p>`;
 }
