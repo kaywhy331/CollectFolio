@@ -49,6 +49,7 @@ function tcgcsvSearchProduct(product) {
 
 function forecastManifestPayload() {
   return {
+    modelVersion: 'trajectory-v1.1',
     asOf: '2026-08-10',
     categories: { 3: { groups: {
       100: { status: 'published', parts: [{ part: 1, partsTotal: 1, objectKey: 'forecasts/3/100.json.gz' }] }
@@ -61,7 +62,7 @@ function forecastGroupPayload() {
     categoryId: 3,
     groupId: 100,
     asOf: '2026-08-10',
-    modelVersion: 'trajectory-v1',
+    modelVersion: 'trajectory-v1.1',
     part: 1,
     partsTotal: 1,
     variants: [{
@@ -72,12 +73,14 @@ function forecastGroupPayload() {
       lastKnownDate: '2026-08-10',
       medianPath: [
         { date: '2026-08-10', price: 120 },
-        { date: '2026-09-09', price: 128 },
-        { date: '2026-11-08', price: 140 }
+        { date: '2026-09-07', price: 128 },
+        { date: '2026-10-12', price: 134 },
+        { date: '2026-11-09', price: 140 }
       ],
       horizons: {
-        30: { q10: 108, q25: 115, q50: 128, q75: 138, q90: 148 },
-        90: { q10: 100, q25: 118, q50: 140, q75: 160, q90: 180 }
+        30: { q10: 108, q25: 115, q50: 128, q75: 138, q90: 148, horizonDaysActual: 28, evidenceTier: 'category-validated' },
+        60: { q10: 104, q25: 118, q50: 134, q75: 150, q90: 166, horizonDaysActual: 63, evidenceTier: 'category-validated' },
+        90: { q10: 100, q25: 118, q50: 140, q75: 160, q90: 180, horizonDaysActual: 91, evidenceTier: 'category-validated' }
       }
     }]
   };
@@ -168,10 +171,11 @@ test('history line chart renders on the full detail page with forecast projectio
   await expect(chart).toBeVisible();
   await expect(chart.locator('polyline.history-line')).toBeVisible();
   await expect(chart.locator('polyline.history-forecast-line').first()).toBeVisible();
-  await expect(chart.locator('line.history-bar-whisker')).toHaveCount(2);
+  await expect(chart.locator('line.history-bar-whisker')).toHaveCount(3);
   await expect(page.getByText('+30d est.')).toBeVisible();
+  await expect(page.getByText('+60d est.')).toBeVisible();
   await expect(page.getByText('+90d est.')).toBeVisible();
-  await expect(chart.locator('polygon.history-forecast-band')).toBeVisible();
+  await expect(chart.locator('polygon.history-forecast-band')).toHaveCount(0);
 
   // Forecast is an independent overlay, while range controls affect only
   // the observed history window.
@@ -206,9 +210,9 @@ test('history line chart renders on the full detail page with forecast projectio
   await expect(tooltip).toBeVisible();
   await expect(tooltip).toHaveText(/[A-Z][a-z]{2} \d{1,2}, 2026 — \$\d/);
   // Pointing into the projection region (right of the today divider)
-  // surfaces a projected-day reading.
+  // surfaces the nearest independent modeled checkpoint.
   await page.mouse.move(box.x + (box.width * 0.97), box.y + (box.height * 0.5));
-  await expect(tooltip).toHaveText(/\(projected\)/);
+  await expect(tooltip).toHaveText(/\(estimated\)/);
   // Leaving the chart hides the tooltip.
   await page.mouse.move(box.x + (box.width / 2), box.y + box.height + 120);
   await expect(tooltip).toBeHidden();

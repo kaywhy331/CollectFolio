@@ -9,15 +9,17 @@ from array import array
 from datetime import date, timedelta
 from pathlib import Path
 
-from collectfolio_analytics.indices import build_indices
+from collectfolio_analytics.indices import IndexSet, build_indices
 from collectfolio_analytics.lifecycle import build_lifecycle_curve
 from collectfolio_analytics.trajectory import (
+    HORIZONS_DAYS,
     MAX_HEDONIC_BLEND_LOG_SHIFT,
     MIN_HISTORY_FOR_STANDARD,
     N0_DRIFT,
     REQUIRED_QUANTILES,
     STALE_WEEKS_THRESHOLD,
     ThetaDriftFit,
+    _calibrate_conformal,
     confidence_tier,
     content_sha256,
     damped_forecast_delta,
@@ -26,8 +28,10 @@ from collectfolio_analytics.trajectory import (
     fit_theta_drift,
     hedonic_blend_anchor_log,
     horizon_steps_for,
+    horizon_actual_days_for,
     interpolated_component_weights,
     mad_volatility,
+    own_level_reversion_at,
     process_category,
     select_walk_forward_origins,
     shrunk_drift_at,
@@ -38,9 +42,15 @@ from collectfolio_analytics.trajectory import (
 
 
 class HorizonStepsForTests(unittest.TestCase):
-    def test_30_and_90_days_map_onto_the_weekly_grid(self):
+    def test_30_60_and_90_days_map_onto_the_weekly_grid(self):
         self.assertEqual(horizon_steps_for(30), 4)  # 30/7 = 4.29 -> 4
+        self.assertEqual(horizon_steps_for(60), 9)  # 60/7 = 8.57 -> 9
         self.assertEqual(horizon_steps_for(90), 13)  # 90/7 = 12.86 -> 13
+        self.assertEqual(HORIZONS_DAYS, (30, 60, 90))
+        self.assertEqual(
+            [horizon_actual_days_for(horizon) for horizon in HORIZONS_DAYS],
+            [28, 63, 91],
+        )
 
     def test_rejects_non_positive(self):
         with self.assertRaises(ValueError):
@@ -206,6 +216,51 @@ class ConformalCoverageOnSyntheticResidualsTests(unittest.TestCase):
             covered = sum(1 for v in held_out if v <= offsets[q]) / len(held_out)
             self.assertLess(abs(covered - q), 0.01, f"quantile {q} miscovered: {covered}")
 
+    def test_calibration_never_moves_the_point_forecast(self):
+        _low, _high, _fallback, _bucket_mad, offsets, _defaults, _sizes = (
+            _calibrate_conformal(array("d", [1.0]), [(0, 4, 2.0), (0, 4, 3.0)])
+        )
+        calibrated = offsets[("low", 4)]
+        self.assertEqual(calibrated[0.5], 0.0)
+        self.assertLessEqual(calibrated[0.1], 0.0)
+        self.assertGreaterEqual(calibrated[0.9], 0.0)
+
+
+class OwnLevelReversionTests(unittest.TestCase):
+    def setUp(self):
+        category_id, group_id = 1, 10
+        dates = tuple(date(2025, 1, 1) + timedelta(weeks=i) for i in range(4))
+        zeros = array("d", [0.0]) * len(dates)
+        self.category_id = category_id
+        self.group_id = group_id
+        self.index_set = IndexSet(
+            dates=dates,
+            category_ids=(category_id,),
+            market=array("d", zeros),
+            category={category_id: array("d", zeros)},
+            group={(category_id, group_id): array("d", zeros)},
+            group_first_index={(category_id, group_id): 0},
+            row_counts={category_id: 4},
+            variant_counts={category_id: 1},
+        )
+
+    def test_temporarily_elevated_price_has_negative_pull(self):
+        signal = own_level_reversion_at(
+            array("d", [100.0, 100.0, 100.0, 200.0]),
+            self.index_set,
+            self.category_id,
+            self.group_id,
+            3,
+        )
+        self.assertAlmostEqual(signal, -math.log(2.0), places=9)
+
+    def test_signal_is_causal_at_the_requested_origin(self):
+        prices = array("d", [100.0, 100.0, 100.0, 10_000.0])
+        signal = own_level_reversion_at(
+            prices, self.index_set, self.category_id, self.group_id, 2
+        )
+        self.assertEqual(signal, 0.0)
+
 
 class TercileAndBucketTests(unittest.TestCase):
     def test_tercile_cutoffs_and_bucket_assignment(self):
@@ -355,16 +410,21 @@ class ProcessCategoryIntegrationTests(unittest.TestCase):
                     ordered = [horizon[f"q{int(round(p * 100)):02d}"] for p in REQUIRED_QUANTILES]
                     self.assertEqual(ordered, sorted(ordered))
 
-    def test_median_path_is_bounded_and_starts_at_last_known_price(self):
+    def test_median_path_contains_only_independent_forecast_checkpoints(self):
         result = self._run()
         with gzip.open(result.output_path, "rt", encoding="utf-8") as handle:
             for line in handle:
                 row = json.loads(line)
                 path = row["medianPath"]
-                self.assertLessEqual(len(path), 32)
-                self.assertGreater(len(path), 0)
+                self.assertEqual(len(path), 4)
                 self.assertEqual(path[0]["date"], row["lastKnownDate"])
                 self.assertAlmostEqual(path[0]["price"], row["lastKnownPrice"], places=4)
+                origin = date.fromisoformat(path[0]["date"])
+                for index, (horizon, actual_days) in enumerate(((30, 28), (60, 63), (90, 91)), start=1):
+                    band = row["horizons"][str(horizon)]
+                    self.assertEqual(band["horizonDaysActual"], actual_days)
+                    self.assertEqual(path[index]["date"], (origin + timedelta(days=actual_days)).isoformat())
+                    self.assertAlmostEqual(path[index]["price"], band["q50"], places=4)
 
     def test_content_sha256_helper_is_order_independent(self):
         a = content_sha256({"b": 1, "a": 2})
@@ -657,11 +717,8 @@ _STATE_DIR = Path(__file__).resolve().parents[2] / "analytics" / "data" / "traje
     and (_STATE_DIR / "groups_metadata.json.gz").is_file(),
     "real category-85 panel + build-indices state cache not present on disk",
 )
-class RealCategory85BackwardCompatibilityRegressionTests(unittest.TestCase):
-    """Pins the ad hoc T3 finding: with every hedonic parameter at its
-    default, process_category on the real, already-fetched category-85
-    panel reproduces the exact packet content hash committed in T2's
-    receipt (docs/receipts/trajectory-v1/trajectory-category-85.json).
+class RealCategory85TrajectoryV11RegressionTests(unittest.TestCase):
+    """Pins trajectory-v1.1 output for the locally cached category-85 panel.
 
     Deliberately loads the *cached* shared-state files
     (indices.json.gz/lifecycle_curve.json.gz/groups_metadata.json.gz --
@@ -687,9 +744,9 @@ class RealCategory85BackwardCompatibilityRegressionTests(unittest.TestCase):
     on prices+bands going forward, just anchored to the post-T4 baseline.
     """
 
-    COMMITTED_T2_HASH = "14089cf4a663fee7d044797243b3e74db19ecebfe4c849a872585506a2b638b1"
+    COMMITTED_V11_HASH = "d97bc0f0bd8e48cc5a421ae8f655716cb71541b2ae8829dcc1a404bef8aeae90"
 
-    def test_reproduces_committed_t2_content_hash(self):
+    def test_reproduces_trajectory_v11_content_hash(self):
         from collectfolio_analytics.trajectory_cli import _load_shared_inputs
 
         repo_root = Path(__file__).resolve().parents[2]
@@ -706,7 +763,7 @@ class RealCategory85BackwardCompatibilityRegressionTests(unittest.TestCase):
             result = process_category(
                 panel_dir, category_id, index_set, curve, groups_metadata, Path(tmp) / "out",
             )
-        self.assertEqual(result.content_hash, self.COMMITTED_T2_HASH)
+        self.assertEqual(result.content_hash, self.COMMITTED_V11_HASH)
 
 
 class ConfidenceTierTests(unittest.TestCase):
@@ -885,26 +942,34 @@ class ComponentWeightsApplicationTests(unittest.TestCase):
         )
 
     def test_none_is_byte_identical_to_pre_remediation_default(self):
-        # component_weights=None must implicitly mean (1.0, 1.0) everywhere
-        # -- the exact pre-T3/T2 forecast_log formula -- so every existing
-        # regression-test hash (e.g.
-        # RealCategory85BackwardCompatibilityRegressionTests) stays valid
-        # without ever passing this new parameter.
+        # component_weights=None means the trajectory-v1.1 identity
+        # coefficients (common=1, reversion=0, drift=1).
         baseline = self._run()
-        explicit_identity = self._run(component_weights={4: (1.0, 1.0), 13: (1.0, 1.0)})
+        explicit_identity = self._run(component_weights={
+            4: (1.0, 0.0, 1.0),
+            9: (1.0, 0.0, 1.0),
+            13: (1.0, 0.0, 1.0),
+        })
         self.assertEqual(baseline.content_hash, explicit_identity.content_hash)
 
     def test_zero_weights_change_the_output_hash(self):
         baseline = self._run()
-        zeroed = self._run(component_weights={4: (0.0, 0.0), 13: (0.0, 0.0)})
+        zeroed = self._run(component_weights={
+            4: (0.0, 0.0, 0.0),
+            9: (0.0, 0.0, 0.0),
+            13: (0.0, 0.0, 0.0),
+        })
         self.assertNotEqual(baseline.content_hash, zeroed.content_hash)
 
     def test_zero_weights_flatten_median_path_to_the_anchor_price(self):
-        # With a=b=0 for every configured horizon, medianPath's own
-        # interpolated weight lookup resolves to (0, 0) everywhere too, so
-        # every emitted medianPath point must equal lastKnownPrice exactly
+        # With a=c=b=0 at every modeled checkpoint, every median point must
+        # equal lastKnownPrice exactly
         # (medianPath carries no conformal offset, unlike the quantiles).
-        zeroed = self._run(component_weights={4: (0.0, 0.0), 13: (0.0, 0.0)})
+        zeroed = self._run(component_weights={
+            4: (0.0, 0.0, 0.0),
+            9: (0.0, 0.0, 0.0),
+            13: (0.0, 0.0, 0.0),
+        })
         with gzip.open(zeroed.output_path, "rt", encoding="utf-8") as handle:
             rows = [json.loads(line) for line in handle]
         self.assertTrue(rows)
@@ -927,8 +992,7 @@ class ComponentWeightsApplicationTests(unittest.TestCase):
 
     def test_missing_horizon_key_defaults_to_identity_for_that_horizon(self):
         # A weights map that only covers one horizon must not KeyError or
-        # silently zero out the other -- the other horizon implicitly
-        # keeps (1.0, 1.0).
+        # silently zero out the others; omitted horizons keep identity.
         baseline = self._run()
         partial = self._run(component_weights={4: (1.0, 1.0)})
         self.assertEqual(baseline.content_hash, partial.content_hash)

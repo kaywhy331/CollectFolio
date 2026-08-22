@@ -19,18 +19,16 @@ async function skipOnboarding(page) {
 // different groups, one per display state: 100 = published/standard,
 // 101 = published/cold-start, 102 = excluded (collapses to the same
 // "insufficient evidence" honest state as an unrecognized/unknown group),
-// 103 = published/standard but 90d-only serving mode (forecast-display-
-// everywhere: the T5 publisher stripped the 30d horizon because only the
-// 90d horizon passed the T4 holdout gate for this category/cohort).
+// 103 = published/standard with one conservative 90d range (legacy/failed
+// directional evidence); no absent horizon may be fabricated.
 const PRODUCTS = [
   { categoryId: 3, groupId: 100, productId: 5001, name: 'Trajectory Eligible Card', subtypeName: 'Holofoil', marketPrice: 120 },
   { categoryId: 3, groupId: 101, productId: 5002, name: 'Trajectory Cold Start Card', subtypeName: 'Holofoil', marketPrice: 80 },
   { categoryId: 3, groupId: 102, productId: 5003, name: 'Trajectory Excluded Card', subtypeName: 'Holofoil', marketPrice: 40 },
-  { categoryId: 3, groupId: 103, productId: 5004, name: 'Trajectory 90d Only Card', subtypeName: 'Holofoil', marketPrice: 60 },
-  // 104 = published/low-history (serve-all-cohorts mode, Kevin 2026-08-18):
-  // served everywhere but labeled as an early estimate, never presented as
-  // a fully modeled forecast.
-  { categoryId: 3, groupId: 104, productId: 5005, name: 'Trajectory Early Estimate Card', subtypeName: 'Holofoil', marketPrice: 30 }
+  { categoryId: 3, groupId: 103, productId: 5004, name: 'Trajectory 90d Range Card', subtypeName: 'Holofoil', marketPrice: 60 },
+  // 104 = published/low-history: served as range-only context, never as a
+  // directional point forecast.
+  { categoryId: 3, groupId: 104, productId: 5005, name: 'Trajectory Limited Range Card', subtypeName: 'Holofoil', marketPrice: 30 }
 ];
 
 function tcgcsvSearchProduct(product) {
@@ -48,6 +46,7 @@ function tcgcsvSearchProduct(product) {
 
 function manifestPayload() {
   return {
+    modelVersion: 'trajectory-v1.1',
     asOf: '2026-08-10',
     categories: {
       3: {
@@ -69,7 +68,7 @@ function groupPayload(groupId) {
       categoryId: 3,
       groupId,
       asOf: '2026-08-10',
-      modelVersion: 'trajectory-v1',
+      modelVersion: 'trajectory-v1.1',
       part: 1,
       partsTotal: 1,
       variants: [{
@@ -78,10 +77,16 @@ function groupPayload(groupId) {
         confidence: 'standard',
         lastKnownPrice: 120,
         lastKnownDate: '2026-08-10',
-        medianPath: [{ date: '2026-08-10', price: 120 }, { date: '2026-09-09', price: 128 }],
+        medianPath: [
+          { date: '2026-08-10', price: 120 },
+          { date: '2026-09-07', price: 128 },
+          { date: '2026-10-12', price: 134 },
+          { date: '2026-11-09', price: 140 }
+        ],
         horizons: {
-          30: { q10: 108, q25: 115, q50: 128, q75: 138, q90: 148 },
-          90: { q10: 100, q25: 118, q50: 140, q75: 160, q90: 180 }
+          30: { q10: 108, q25: 115, q50: 128, q75: 138, q90: 148, horizonDaysActual: 28, evidenceTier: 'category-validated' },
+          60: { q10: 104, q25: 118, q50: 134, q75: 150, q90: 166, horizonDaysActual: 63, evidenceTier: 'category-validated' },
+          90: { q10: 100, q25: 118, q50: 140, q75: 160, q90: 180, horizonDaysActual: 91, evidenceTier: 'category-validated' }
         }
       }]
     };
@@ -91,35 +96,32 @@ function groupPayload(groupId) {
       categoryId: 3,
       groupId,
       asOf: '2026-08-10',
-      modelVersion: 'trajectory-v1',
+      modelVersion: 'trajectory-v1.1',
       part: 1,
       partsTotal: 1,
       variants: [{
         productId: 5002,
         subTypeName: 'Holofoil',
         confidence: 'cold-start',
-        // The publisher's cold-start contract has no observed-price anchor;
-        // its pure hedonic-prior path begins at the publication date.
+        // The publisher's cold-start contract has no observed-price anchor.
         lastKnownPrice: null,
         lastKnownDate: null,
-        medianPath: [{ date: '2026-08-10', price: 80 }],
+        medianPath: [],
         horizons: {
-          30: { q10: 50, q25: 65, q50: 85, q75: 105, q90: 130 },
-          90: { q10: 40, q25: 60, q50: 95, q75: 130, q90: 170 }
+          30: { q10: 50, q25: 65, q50: 85, q75: 105, q90: 130, horizonDaysActual: 28, evidenceTier: 'attribute-reference' },
+          60: { q10: 45, q25: 62, q50: 90, q75: 118, q90: 150, horizonDaysActual: 63, evidenceTier: 'attribute-reference' },
+          90: { q10: 40, q25: 60, q50: 95, q75: 130, q90: 170, horizonDaysActual: 91, evidenceTier: 'attribute-reference' }
         }
       }]
     };
   }
   if (groupId === 103) {
-    // forecast-display-everywhere: 90d-only serving mode. The publisher
-    // strips this packet's horizons object down to just "90" -- the app
-    // must render only the 3-month estimate and never fabricate a 30-day
-    // one that was never published.
+    // One range-only horizon; the app must never fabricate the other two.
     return {
       categoryId: 3,
       groupId,
       asOf: '2026-08-10',
-      modelVersion: 'trajectory-v1',
+      modelVersion: 'trajectory-v1.1',
       part: 1,
       partsTotal: 1,
       variants: [{
@@ -128,21 +130,21 @@ function groupPayload(groupId) {
         confidence: 'standard',
         lastKnownPrice: 60,
         lastKnownDate: '2026-08-10',
-        medianPath: [{ date: '2026-08-10', price: 60 }, { date: '2026-11-08', price: 66 }],
+        medianPath: [{ date: '2026-08-10', price: 60 }, { date: '2026-11-09', price: 60 }],
         horizons: {
-          90: { q10: 50, q25: 58, q50: 66, q75: 74, q90: 82 }
+          90: { q10: 44, q25: 52, q50: 60, q75: 69.23, q90: 81.82, horizonDaysActual: 91, evidenceTier: 'range-only' }
         }
       }]
     };
   }
   if (groupId === 104) {
-    // Serve-all-cohorts mode: a low-history packet serves both horizons
-    // with an explicit early-estimate label.
+    // A low-history packet serves all checkpoints as ranges without a
+    // directional median claim.
     return {
       categoryId: 3,
       groupId,
       asOf: '2026-08-10',
-      modelVersion: 'trajectory-v1',
+      modelVersion: 'trajectory-v1.1',
       part: 1,
       partsTotal: 1,
       variants: [{
@@ -151,15 +153,21 @@ function groupPayload(groupId) {
         confidence: 'low-history',
         lastKnownPrice: 30,
         lastKnownDate: '2026-08-10',
-        medianPath: [{ date: '2026-08-10', price: 30 }, { date: '2026-09-09', price: 32 }],
+        medianPath: [
+          { date: '2026-08-10', price: 30 },
+          { date: '2026-09-07', price: 30 },
+          { date: '2026-10-12', price: 30 },
+          { date: '2026-11-09', price: 30 }
+        ],
         horizons: {
-          30: { q10: 24, q25: 28, q50: 32, q75: 36, q90: 42 },
-          90: { q10: 20, q25: 27, q50: 34, q75: 42, q90: 52 }
+          30: { q10: 22.5, q25: 27, q50: 30, q75: 33.33, q90: 40, horizonDaysActual: 28, evidenceTier: 'range-only' },
+          60: { q10: 20, q25: 25, q50: 30, q75: 36, q90: 45, horizonDaysActual: 63, evidenceTier: 'range-only' },
+          90: { q10: 18, q25: 24, q50: 30, q75: 37.5, q90: 50, horizonDaysActual: 91, evidenceTier: 'range-only' }
         }
       }]
     };
   }
-  return { categoryId: 3, groupId, asOf: '2026-08-10', modelVersion: 'trajectory-v1', part: 1, partsTotal: 1, variants: [] };
+  return { categoryId: 3, groupId, asOf: '2026-08-10', modelVersion: 'trajectory-v1.1', part: 1, partsTotal: 1, variants: [] };
 }
 
 async function configureTrajectoryStubs(page) {
@@ -225,8 +233,8 @@ async function runSearch(page) {
   const eligibleCard = page.locator('.result-card', { hasText: 'Trajectory Eligible Card' });
   const coldStartCard = page.locator('.result-card', { hasText: 'Trajectory Cold Start Card' });
   const excludedCard = page.locator('.result-card', { hasText: 'Trajectory Excluded Card' });
-  const ninetyDayOnlyCard = page.locator('.result-card', { hasText: 'Trajectory 90d Only Card' });
-  const earlyEstimateCard = page.locator('.result-card', { hasText: 'Trajectory Early Estimate Card' });
+  const ninetyDayOnlyCard = page.locator('.result-card', { hasText: 'Trajectory 90d Range Card' });
+  const earlyEstimateCard = page.locator('.result-card', { hasText: 'Trajectory Limited Range Card' });
   await expect(eligibleCard).toBeVisible();
   await expect(coldStartCard).toBeVisible();
   await expect(excludedCard).toBeVisible();
@@ -252,6 +260,7 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   // State 2 -- published/cold-start: the tile remains concise; the richer
   // confidence context is retained on the detail page below.
   await expect(coldStartCard.locator('.result-market-outlook')).toBeVisible();
+  await expect(coldStartCard.getByText('1 mo range', { exact: true })).toBeVisible();
   await expect(coldStartCard.locator('.result-outlook-note')).toHaveCount(0);
 
   // State 3 -- excluded (collapses with "unknown" per the fail-closed
@@ -267,8 +276,9 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   // chart + q50 horizon display.
   await eligibleCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Estimated price checkpoints' })).toBeVisible();
   await expect(page.locator('.trajectory-section .forecast-horizon-list')).toBeVisible();
+  await expect(page.getByText('60-day checkpoint')).toBeVisible();
   await expect(page.locator('.trajectory-chart svg')).toHaveCount(0);
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 
@@ -278,8 +288,8 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   const coldRun = await runSearch(page);
   await coldRun.coldStartCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Cold start estimate' })).toBeVisible();
-  await expect(page.getByText(/wider and less certain than a standard forecast/).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Attribute-based reference range' })).toBeVisible();
+  await expect(page.getByText(/reference information, not forecasts/).first()).toBeVisible();
 
   // Drill into the excluded card's detail view: honest "insufficient
   // evidence" state, not a fabricated band, not local-scenario-v1.
@@ -287,15 +297,12 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   await excludedRun.excludedCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
   await expect(page.getByText('Insufficient evidence for a price forecast')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Estimated price checkpoints' })).toHaveCount(0);
   await expect(page.getByText('Manual scenario outlook')).toHaveCount(0);
 });
 
-test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, never a fabricated 30-day estimate', async ({ page }) => {
-  // forecast-display-everywhere: categories 1/2 standard cohort are served
-  // 90d-only (the T4 holdout gate only passed the 90-day horizon), and
-  // this must render as an honestly-partial forecast, not a fabricated
-  // 30-day block. The Supabase public_price_intelligence flag is off in
+test('a one-horizon range packet renders only that range and never fabricates 30/60-day checkpoints', async ({ page }) => {
+  // The Supabase public_price_intelligence flag is off in
   // this stub (see configureTrajectoryStubs) -- trajectory-v1 forecasts
   // must still render because they're gated by their own default-enabled
   // trajectoryForecasts flag, decoupled from that Supabase rights gate.
@@ -305,40 +312,42 @@ test('trajectory-v1 90d-only serving mode renders only the gate-passed horizon, 
   const { ninetyDayOnlyCard } = await runSearch(page);
 
   await expect(ninetyDayOnlyCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(ninetyDayOnlyCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  await expect(ninetyDayOnlyCard.getByText('3 mo range', { exact: true })).toBeVisible();
   // Only a gate-passed horizon is rendered; a missing horizon does not
   // reserve a chart/value slot that could be mistaken for an estimate.
   await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.getByText('2 mo est.', { exact: true })).toHaveCount(0);
   await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(0);
   await expect(ninetyDayOnlyCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
   await expect(ninetyDayOnlyCard.locator('.result-outlook-note')).toHaveCount(0);
 
   await ninetyDayOnlyCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toBeVisible();
-  await expect(page.getByText('90-day outlook')).toBeVisible();
-  await expect(page.getByText('30-day outlook')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Price ranges' })).toBeVisible();
+  await expect(page.getByText('90-day price range')).toBeVisible();
+  await expect(page.getByText('30-day price range')).toHaveCount(0);
+  await expect(page.getByText('60-day price range')).toHaveCount(0);
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);
 });
 
-test('serve-all-cohorts (2026-08-18): a low-history packet keeps cards concise and labels detail context', async ({ page }) => {
+test('a low-history packet remains range-only on cards and detail', async ({ page }) => {
   await configureTrajectoryStubs(page);
   await skipOnboarding(page);
 
   const { earlyEstimateCard } = await runSearch(page);
 
   await expect(earlyEstimateCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(earlyEstimateCard.getByText('1 mo est.', { exact: true })).toBeVisible();
-  await expect(earlyEstimateCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  await expect(earlyEstimateCard.getByText('1 mo range', { exact: true })).toBeVisible();
+  await expect(earlyEstimateCard.getByText('3 mo range', { exact: true })).toBeVisible();
   await expect(earlyEstimateCard.getByText(/early estimate/).first()).toHaveCount(0);
   await expect(earlyEstimateCard.locator('.result-outlook-note')).toHaveCount(0);
   await expect(earlyEstimateCard.getByText('cold start estimate')).toHaveCount(0);
 
   await earlyEstimateCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Early estimate', exact: true })).toBeVisible();
-  await expect(page.getByText(/short observed price history/).first()).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Price ranges', exact: true })).toBeVisible();
+  await expect(page.getByText(/without a directional price estimate/).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Estimated price checkpoints' })).toHaveCount(0);
 });
 
 test('bugfix (0.8.17): a card-detail deep link with no prior search still hydrates trajectory forecasts', async ({ page }) => {
@@ -371,7 +380,7 @@ test('bugfix (0.8.17): a card-detail deep link with no prior search still hydrat
   // A card-detail deep link renders the full detail page directly (no
   // Quick Inspector drawer / "Open full details" step in between).
   await expect(page.getByRole('heading', { name: 'Trajectory Eligible Card' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Modeled trajectory' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Estimated price checkpoints' })).toBeVisible();
   await expect(page.locator('.trajectory-section .forecast-horizon-list')).toBeVisible();
   await expect(page.locator('.trajectory-chart svg')).toHaveCount(0);
   await expect(page.getByText('Insufficient evidence for a price forecast')).toHaveCount(0);

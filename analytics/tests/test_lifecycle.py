@@ -204,6 +204,32 @@ class BuildLifecycleCurveTests(unittest.TestCase):
         curve = build_lifecycle_curve(index_set, {})
         self.assertEqual(curve.curve, {})
 
+    def test_point_in_time_cutoff_excludes_future_returns(self):
+        category_id, group_id = 1, 100
+        dates = [date(2025, 1, 1) + timedelta(weeks=i) for i in range(5)]
+        index_set = _index_set_with_group_returns(
+            category_id, group_id, dates, [0.0, 0.10, 0.20, 9.0, 10.0]
+        )
+        metadata = {(category_id, group_id): {"published_on": dates[0].isoformat()}}
+
+        causal = build_lifecycle_curve(index_set, metadata, up_to_index=2)
+
+        self.assertAlmostEqual(causal.expected_step_return(1), 0.10, places=9)
+        self.assertAlmostEqual(causal.expected_step_return(2), 0.20, places=9)
+        self.assertEqual(causal.expected_step_return(3), 0.0)
+        self.assertEqual(causal.expected_step_return(4), 0.0)
+
+    def test_point_in_time_cutoff_must_be_inside_date_grid(self):
+        category_id, group_id = 1, 100
+        dates = [date(2025, 1, 1) + timedelta(weeks=i) for i in range(3)]
+        index_set = _index_set_with_group_returns(
+            category_id, group_id, dates, [0.0, 0.10, 0.20]
+        )
+        metadata = {(category_id, group_id): {"published_on": dates[0].isoformat()}}
+        for cutoff in (-1, len(dates), True):
+            with self.subTest(cutoff=cutoff), self.assertRaises(ValueError):
+                build_lifecycle_curve(index_set, metadata, up_to_index=cutoff)
+
 
 class CohortReturnOverHorizonTests(unittest.TestCase):
     def test_sums_the_next_horizon_steps(self):

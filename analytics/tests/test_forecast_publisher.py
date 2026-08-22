@@ -11,11 +11,11 @@ from collectfolio_analytics import forecast_publisher
 from collectfolio_analytics.forecast_publisher import (
     DEFAULT_MAX_OBJECT_BYTES,
     GroupPart,
-    NINETY_DAY_ONLY_OVERRIDE,
     eligible_horizons,
     is_packet_eligible,
     load_serving_eligibility,
     load_serving_eligibility_by_horizon,
+    load_evidence_tiers_by_horizon,
     load_source_terms,
     object_key,
     publish_category,
@@ -34,7 +34,7 @@ EVALUATION_SUMMARY_PATH = REPO_ROOT / "docs/receipts/trajectory-v1/evaluation-su
 
 def _variant(product_id, sub_type="Normal", *, confidence="standard", price=5.0, medium_path_points=1):
     return {
-        "modelVersion": "trajectory-v1",
+        "modelVersion": "trajectory-v1.1",
         "categoryId": 3,
         "groupId": 1,
         "productId": product_id,
@@ -47,6 +47,7 @@ def _variant(product_id, sub_type="Normal", *, confidence="standard", price=5.0,
         "asOf": "2026-01-01T00:00:00+00:00",
         "horizons": {
             "30": {"q10": 1, "q25": 2, "q50": 3, "q75": 4, "q90": 5},
+            "60": {"q10": 1, "q25": 2, "q50": 3, "q75": 4, "q90": 5},
             "90": {"q10": 1, "q25": 2, "q50": 3, "q75": 4, "q90": 5},
         },
         "medianPath": [
@@ -101,27 +102,47 @@ class IsPacketEligibleTests(unittest.TestCase):
 
 
 class LoadServingEligibilityTests(unittest.TestCase):
-    def test_real_evaluation_summary_matches_fail_closed_gate(self):
+    def test_real_v11_evaluation_has_no_directionally_eligible_category(self):
         by_category = load_serving_eligibility(EVALUATION_SUMMARY_PATH)
-        self.assertTrue(by_category[3]["standard"])
-        self.assertFalse(by_category[1]["standard"])
-        self.assertFalse(by_category[2]["standard"])
-        self.assertFalse(by_category[85]["standard"])
+        for category_id in (1, 2, 3, 85):
+            self.assertFalse(by_category[category_id]["standard"])
 
 
 class LoadServingEligibilityByHorizonTests(unittest.TestCase):
-    def test_real_evaluation_summary_confirms_the_90d_near_miss(self):
-        # This is exactly the near-miss trajectory_cli._near_miss_notes
-        # surfaces as informational-only: cat 1/2 standard passes at 90d
-        # but not 30d. eligible_horizons's NINETY_DAY_ONLY_OVERRIDE
-        # activation depends on this data staying true.
+    def test_real_v11_evaluation_keeps_every_horizon_out_of_legacy_directional_mode(self):
         by_horizon = load_serving_eligibility_by_horizon(EVALUATION_SUMMARY_PATH)
-        self.assertFalse(by_horizon[1]["standard"][30])
-        self.assertTrue(by_horizon[1]["standard"][90])
-        self.assertFalse(by_horizon[2]["standard"][30])
-        self.assertTrue(by_horizon[2]["standard"][90])
-        self.assertTrue(by_horizon[3]["standard"][30])
-        self.assertTrue(by_horizon[3]["standard"][90])
+        for category_id in (1, 2, 3, 85):
+            for horizon in (30, 60, 90):
+                self.assertFalse(by_horizon[category_id]["standard"][horizon])
+
+
+class LoadEvidenceTiersByHorizonTests(unittest.TestCase):
+    def test_real_v11_receipt_explicitly_keeps_all_current_results_range_only(self):
+        tiers = load_evidence_tiers_by_horizon(EVALUATION_SUMMARY_PATH)
+        for category_id in (1, 2, 3, 85):
+            for horizon in (30, 60, 90):
+                self.assertEqual(tiers[category_id]["standard"][horizon], "range-only")
+
+    def test_explicit_v11_tier_is_authoritative(self):
+        payload = {
+            "categories": [{
+                "categoryId": 3,
+                "gate": {
+                    "componentWeights": {"60": [0.0, 0.25, 0.0]},
+                    "results": [{
+                        "cohort": "standard", "horizonDays": 60,
+                        "servingEligible": True, "evidenceTier": "relative-validated",
+                    }],
+                },
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "evaluation.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(
+                load_evidence_tiers_by_horizon(path)[3]["standard"][60],
+                "relative-validated",
+            )
 
 
 class EligibleHorizonsTests(unittest.TestCase):
@@ -138,10 +159,10 @@ class EligibleHorizonsTests(unittest.TestCase):
             2: {"standard": {30: False, 90: False}},
         }
 
-    def test_cold_start_serves_both_horizons_regardless_of_gate(self):
+    def test_cold_start_serves_all_reference_horizons_regardless_of_gate(self):
         self.assertEqual(
             eligible_horizons(999, "cold-start", self.serving_eligibility, self.serving_eligibility_by_horizon),
-            (30, 90),
+            (30, 60, 90),
         )
 
     def test_fully_eligible_cohort_serves_both_horizons(self):
@@ -150,18 +171,13 @@ class EligibleHorizonsTests(unittest.TestCase):
             (30, 90),
         )
 
-    def test_override_cohort_with_confirmed_90d_pass_serves_90_only(self):
-        self.assertIn((1, "standard"), NINETY_DAY_ONLY_OVERRIDE)
+    def test_horizon_with_confirmed_pass_serves_without_an_override(self):
         self.assertEqual(
             eligible_horizons(1, "standard", self.serving_eligibility, self.serving_eligibility_by_horizon),
             (90,),
         )
 
-    def test_override_cohort_without_confirmed_90d_pass_serves_nothing(self):
-        # cat 2 is on the override allowlist, but its 90d gate does NOT
-        # actually pass in this synthetic fixture -- the override must
-        # never be trusted blindly.
-        self.assertIn((2, "standard"), NINETY_DAY_ONLY_OVERRIDE)
+    def test_cohort_without_any_confirmed_horizon_serves_nothing(self):
         self.assertEqual(
             eligible_horizons(2, "standard", self.serving_eligibility, self.serving_eligibility_by_horizon),
             (),
@@ -400,18 +416,15 @@ class PublishCategoryTests(unittest.TestCase):
             self.assertEqual(row["lastKnownDateRange"]["latest"], "2026-02-01")
 
 
-class PublishCategoryNinetyDayOnlyTests(unittest.TestCase):
-    """T5's 90d-only serving mode against the real evaluation-summary.json
-    (Kevin's 2026-08-17 "all products" directive activating the cat 1/2
-    standard-cohort near-miss trajectory_cli._near_miss_notes had already
-    flagged as informational-only)."""
+class PublishCategoryHorizonEvidenceTests(unittest.TestCase):
+    """Each horizon keeps its own gate result; no allowlist upgrades it."""
 
     def setUp(self):
         _legacy_gate_mode(self)  # see LEGACY_GATE_DOC
         self.serving_eligibility = load_serving_eligibility(EVALUATION_SUMMARY_PATH)
         self.serving_eligibility_by_horizon = load_serving_eligibility_by_horizon(EVALUATION_SUMMARY_PATH)
 
-    def test_cat1_standard_packet_serves_90_only(self):
+    def test_cat1_standard_packet_is_excluded_when_legacy_gate_filter_is_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             packets_path = tmp_path / "packets.jsonl.gz"
@@ -424,14 +437,10 @@ class PublishCategoryNinetyDayOnlyTests(unittest.TestCase):
                 serving_eligibility_by_horizon=self.serving_eligibility_by_horizon,
             )
             group = row["groups"]["4"]
-            self.assertEqual(group["status"], "published")
-            self.assertEqual(row["servedHorizonsByCohort"], {"standard": [90]})
-            dest = staging_root / group["parts"][0]["objectKey"]
-            payload = json.loads(gzip.decompress(dest.read_bytes()))
-            variant = payload["variants"][0]
-            self.assertEqual(sorted(variant["horizons"]), ["90"])
+            self.assertEqual(group["status"], "excluded")
+            self.assertEqual(row["servedHorizonsByCohort"], {})
 
-    def test_cat3_standard_packet_still_serves_both_horizons(self):
+    def test_cat3_standard_packet_is_also_excluded_in_legacy_gate_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             packets_path = tmp_path / "packets.jsonl.gz"
@@ -443,14 +452,11 @@ class PublishCategoryNinetyDayOnlyTests(unittest.TestCase):
                 3, packets_path, self.serving_eligibility, staging_root,
                 serving_eligibility_by_horizon=self.serving_eligibility_by_horizon,
             )
-            self.assertEqual(row["servedHorizonsByCohort"], {"standard": [30, 90]})
-            dest = staging_root / row["groups"]["4"]["parts"][0]["objectKey"]
-            payload = json.loads(gzip.decompress(dest.read_bytes()))
-            self.assertEqual(sorted(payload["variants"][0]["horizons"]), ["30", "90"])
+            self.assertEqual(row["groups"]["4"]["status"], "excluded")
+            self.assertEqual(row["servedHorizonsByCohort"], {})
 
     def test_cat85_standard_still_excluded_entirely(self):
-        # cat85 is not on NINETY_DAY_ONLY_OVERRIDE and does not pass the
-        # gate at either horizon -- the packet must not be served at all.
+        # cat85 does not pass the gate at either recorded horizon.
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             packets_path = tmp_path / "packets.jsonl.gz"
@@ -492,18 +498,18 @@ class PublishForecastsTests(unittest.TestCase):
             on_disk = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(on_disk["manifestContentHash"], manifest["manifestContentHash"])
 
-            self.assertEqual(manifest["categories"]["3"]["eligibleVariants"], 1)
+            self.assertEqual(manifest["categories"]["3"]["eligibleVariants"], 0)
             self.assertEqual(manifest["categories"]["1"]["eligibleVariants"], 1)
-            self.assertTrue(manifest["eligibilityPolicy"]["3"]["standard"])
+            self.assertFalse(manifest["eligibilityPolicy"]["3"]["standard"])
             self.assertTrue(manifest["eligibilityPolicy"]["1"]["cold-start"])
             self.assertFalse(manifest["eligibilityPolicy"]["1"]["standard"])
-            self.assertEqual(manifest["servedHorizonsByCategory"]["3"], {"standard": [30, 90]})
-            self.assertEqual(manifest["servedHorizonsByCategory"]["1"], {"cold-start": [30, 90]})
-            self.assertIn("1:standard", manifest["ninetyDayOnlyCohorts"])
-            self.assertIn("2:standard", manifest["ninetyDayOnlyCohorts"])
+            self.assertEqual(manifest["servedHorizonsByCategory"]["3"], {})
+            self.assertEqual(manifest["servedHorizonsByCategory"]["1"], {"cold-start": [30, 60, 90]})
+            self.assertTrue(manifest["publishAllEvidenceTiers"])
+            self.assertNotIn("ninetyDayOnlyCohorts", manifest)
 
             cat3_object = staging_root / "forecasts" / "3" / "1.json.gz"
-            self.assertTrue(cat3_object.is_file())
+            self.assertFalse(cat3_object.is_file())
             cat1_object = staging_root / "forecasts" / "1" / "9.json.gz"
             self.assertTrue(cat1_object.is_file())
 
@@ -538,21 +544,18 @@ class PublishForecastsTests(unittest.TestCase):
                 )
 
 
-class ServeAllCohortsModeTests(unittest.TestCase):
-    """Serve-all-cohorts mode (Kevin's 2026-08-18 "the estimates are supposed
-    to be provided on all products" directive): every cohort string the engine
-    itself emits serves both horizons everywhere, regardless of per-cohort
-    gate verdicts; unrecognized cohort strings stay fail-closed excluded."""
+class PublishAllEvidenceTiersModeTests(unittest.TestCase):
+    """Every known cohort gets a packet, but failed horizons are ranges."""
 
     def test_mode_is_enabled_in_production(self):
         self.assertTrue(forecast_publisher.SERVE_ALL_COHORTS)
 
-    def test_every_known_cohort_serves_both_horizons_despite_failing_gate(self):
+    def test_every_known_cohort_publishes_all_horizons_despite_failing_gate(self):
         failing_gate = {3: {"standard": False, "low-history": False, "insufficient-history": False}}
         for cohort in ("standard", "low-history", "insufficient-history", "cold-start"):
             self.assertEqual(
                 eligible_horizons(3, cohort, failing_gate, {}),
-                (30, 90),
+                (30, 60, 90),
                 cohort,
             )
 
@@ -578,10 +581,25 @@ class ServeAllCohortsModeTests(unittest.TestCase):
             self.assertEqual(row["groups"]["1"]["status"], "published")
             self.assertEqual(row["groups"]["1"]["eligibleVariantCount"], 3)
             self.assertEqual(row["servedHorizonsByCohort"], {
-                "insufficient-history": [30, 90],
-                "low-history": [30, 90],
-                "standard": [30, 90],
+                "insufficient-history": [30, 60, 90],
+                "low-history": [30, 60, 90],
+                "standard": [30, 60, 90],
             })
+            part = row["groups"]["1"]["parts"][0]
+            payload = json.loads(gzip.decompress((tmp_path / "out" / part["objectKey"]).read_bytes()))
+            by_product = {variant["productId"]: variant for variant in payload["variants"]}
+            for product_id in (1, 2, 3):
+                band = by_product[product_id]["horizons"]["60"]
+                self.assertEqual(band["evidenceTier"], "range-only")
+                self.assertEqual(band["q50"], by_product[product_id]["lastKnownPrice"])
+                self.assertEqual(band["horizonDaysActual"], 63)
+                current = by_product[product_id]["lastKnownPrice"]
+                self.assertAlmostEqual(band["q10"] * band["q90"], current * current)
+                self.assertAlmostEqual(band["q25"] * band["q75"], current * current)
+            self.assertEqual(
+                [point["date"] for point in by_product[1]["medianPath"]],
+                ["2026-01-01", "2026-01-29", "2026-03-05", "2026-04-02"],
+            )
 
     def test_manifest_records_serve_all_cohorts_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
