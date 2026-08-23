@@ -378,6 +378,8 @@ Measure boundary recall, false boxes, OCR query usefulness, top-1/top-3 candidat
 
 - [x] Publish a privacy-safe execution protocol and reusable receipt template for the
   four evidence lanes that repository automation cannot perform.
+- [x] Keep the deterministic premium acceptance fixtures compatible with production CSP
+  and requalify all five scenarios locally and against live application `0.8.32`.
 - [ ] Run a preregistered moderated external collector study across all 12 required
   usability tasks and disposition every observed P0/P1 finding.
 - [ ] Complete physical iPhone, Android, tablet, and desktop/PWA review with exact

@@ -482,6 +482,8 @@ test('Scan separates camera and upload, previews the workflow, and keeps export 
   assert.match(html, /data-scan-dropzone/);
   assert.match(html, /drop an image here or paste one/);
   assert.match(html, /Import collection/);
+  assert.match(html, /Export is available in Settings under Data &amp; Backups/);
+  assert.doesNotMatch(html, /Settings → Data &amp; Backups/);
   assert.doesNotMatch(html, /data-action="export-json"/);
   assert.doesNotMatch(html, /data-action="start-multi-scan"/);
   assert.match(html, /full source photo never leaves this browser and is never saved/i);
