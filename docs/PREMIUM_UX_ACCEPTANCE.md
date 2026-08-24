@@ -49,6 +49,23 @@ as complete by this receipt. The execution protocol and blank evidence receipt a
 [`receipts/PREMIUM_UX_HUMAN_VALIDATION_TEMPLATE.md`](receipts/PREMIUM_UX_HUMAN_VALIDATION_TEMPLATE.md).
 Those artifacts make the work reproducible; their existence does not close a human gate.
 
+## Hosted premium-suite requalification — 2026-08-23
+
+The complete five-scenario premium acceptance suite passes locally and against live
+application `0.8.32` at `https://collectfolio-staging.netlify.app`. The hosted run covers
+all eight viewport classes, touch and mouse navigation, keyboard use at 200% text zoom,
+serious/critical WCAG 2.2 A/AA checks on all five destinations, the lab performance
+budgets, and failed-image retry/recovery.
+
+The failed-image fixture now serves its synthetic catalog from intercepted same-origin
+`/catalog/*` requests. This makes the deterministic scenario compatible with the
+production `connect-src 'self'` policy without adding a test hostname or weakening CSP;
+the simulated product image remains on the already-approved TCGplayer CDN origin. A
+separate live visual pass at 390 × 844 and 1440 × 900 captured Home, Discover, Scan,
+Collection, and Insights with no horizontal overflow, clipped controls, page errors, or
+console errors. These results refresh browser evidence only. Moderated collector,
+physical-device, manual screen-reader, and consented field-data gates remain pending.
+
 ## Required usability-task simulations
 
 | # | Task | Acceptance evidence | Result |
@@ -145,6 +162,7 @@ would violate the P0 rule against silently confirming unresolved matches.
 npm run check
 npm run test:browser
 npx playwright test tests/e2e/premium-ux-acceptance.spec.js
+PLAYWRIGHT_BASE_URL=https://collectfolio-staging.netlify.app npx playwright test tests/e2e/premium-ux-acceptance.spec.js --project=chromium
 ```
 
 The full commands above are the release gate. The focused premium suite is also useful when iterating on CSS, navigation, accessibility, or media recovery.

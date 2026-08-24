@@ -154,36 +154,61 @@ function retryExternalImage(button) {
 // img nodes -- even cache-hit images repaint asynchronously after decode,
 // so pages with many card images flickered on each hydration step (products,
 // intelligence, forecasts, history each trigger a render). Fix: build the new
-// tree in a template, then ADOPT any already-decoded live img element whose src is
-// unchanged -- moving a live element preserves its decoded bitmap, so
-// unchanged images never blank. Attributes from the fresh markup are carried
-// onto the adopted node; the error/fallback path keeps working because image
-// error handling is delegated on `root` (see the capture listener above).
+// tree in a template, then ADOPT any already-decoded live img element or failed
+// image retry control whose source is unchanged. Moving a live image preserves
+// its decoded bitmap, while moving a failed placeholder prevents unrelated
+// hydration renders from silently retrying the request and stealing the retry
+// button from the collector. Attributes from the fresh markup are carried onto
+// adopted media; error/fallback handling remains delegated on `root`.
 function renderRoot(html) {
   const template = document.createElement('template');
   template.innerHTML = html;
   const live = new Map();
+  const failed = new Map();
   root.querySelectorAll('img[data-external-image]').forEach((image) => {
     const src = image.getAttribute('src');
     if (src && image.complete && image.naturalWidth > 0 && !live.has(src)) live.set(src, image);
   });
-  if (live.size) {
+  root.querySelectorAll('.image-retry [data-action="retry-image"]').forEach((button) => {
+    const source = safeImageUrl(button.dataset.src);
+    const placeholder = button.closest('.image-retry');
+    if (source && placeholder && !failed.has(source)) failed.set(source, placeholder);
+  });
+  if (live.size || failed.size) {
     template.content.querySelectorAll('img[data-external-image]').forEach((image) => {
       const src = image.getAttribute('src');
       const decoded = src ? live.get(src) : null;
-      if (!decoded) return;
-      live.delete(src);
-      decoded.className = image.className;
-      decoded.alt = image.alt;
-      decoded.loading = image.loading;
-      ['srcset', 'sizes', 'width', 'height', 'data-fallback-src', 'data-retry-src', 'data-image-label', 'data-placeholder-mark']
-        .forEach((attribute) => {
-          const value = image.getAttribute(attribute);
-          if (value === null) decoded.removeAttribute(attribute);
-          else decoded.setAttribute(attribute, value);
-        });
-      delete decoded.dataset.fallbackAttempted;
-      image.replaceWith(decoded);
+      if (decoded) {
+        live.delete(src);
+        decoded.className = image.className;
+        decoded.alt = image.alt;
+        decoded.loading = image.loading;
+        ['srcset', 'sizes', 'width', 'height', 'data-fallback-src', 'data-retry-src', 'data-image-label', 'data-placeholder-mark']
+          .forEach((attribute) => {
+            const value = image.getAttribute(attribute);
+            if (value === null) decoded.removeAttribute(attribute);
+            else decoded.setAttribute(attribute, value);
+          });
+        delete decoded.dataset.fallbackAttempted;
+        image.replaceWith(decoded);
+        return;
+      }
+      const retrySource = safeImageUrl(image.dataset.retrySrc || src);
+      const placeholder = retrySource ? failed.get(retrySource) : null;
+      if (!placeholder) return;
+      failed.delete(retrySource);
+      const button = placeholder.querySelector('[data-action="retry-image"]');
+      placeholder.className = image.className;
+      placeholder.classList.add('image-placeholder', 'image-retry');
+      placeholder.setAttribute('aria-label', `${image.alt || 'Collectible'} image unavailable`);
+      button.dataset.imageClass = image.className;
+      button.dataset.imageLabel = image.dataset.imageLabel || image.alt || 'Collectible';
+      button.dataset.fallbackSrc = image.dataset.fallbackSrc || '';
+      button.dataset.loading = image.loading || 'lazy';
+      button.dataset.width = image.getAttribute('width') || '';
+      button.dataset.height = image.getAttribute('height') || '';
+      button.dataset.sizes = image.getAttribute('sizes') || '';
+      image.replaceWith(placeholder);
     });
   }
   root.replaceChildren(template.content);

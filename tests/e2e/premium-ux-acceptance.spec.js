@@ -190,7 +190,9 @@ test('a failed catalog image exposes a retry action and recovers in place', asyn
   // before exercising the recovery path; keep shared-runner contention from
   // consuming the functional assertion's entire timeout budget.
   test.slow();
-  const catalogOrigin = 'https://premium-image-retry.example.test';
+  // Keep the synthetic catalog under the application origin so the same
+  // deterministic fixture can qualify immutable/production deployments
+  // without weakening their connect-src policy for a test-only hostname.
   let imageAttempts = 0;
   let allowImage = false;
   await page.route('**/runtime-config.js', (route) => route.fulfill({
@@ -199,16 +201,16 @@ test('a failed catalog image exposes a retry action and recovers in place', asyn
       SUPABASE_URL: window.location.origin + '/__premium-cloud',
       SUPABASE_ANON_KEY: 'synthetic-browser-key',
       APP_VERSION: 'premium-acceptance',
-      TCGCSV_CATALOG_URL: '${catalogOrigin}/',
+      TCGCSV_CATALOG_URL: window.location.origin + '/',
       ENABLE_TESSERACT: false,
       ENABLE_PRICE_INTELLIGENCE: false
     });`
   }));
   await page.route('**/__premium-cloud/**', (route) => route.fulfill({ contentType: 'application/json', body: '[]' }));
-  await page.route(`${catalogOrigin}/catalog/summary**`, (route) => route.fulfill({ contentType: 'application/json', body: '{"categories":[]}' }));
-  await page.route(`${catalogOrigin}/catalog/forecasts/manifest**`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
-  await page.route(`${catalogOrigin}/catalog/history/manifest**`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
-  await page.route(`${catalogOrigin}/catalog/search**`, (route) => route.fulfill({
+  await page.route('**/catalog/summary**', (route) => route.fulfill({ contentType: 'application/json', body: '{"categories":[]}' }));
+  await page.route('**/catalog/forecasts/manifest**', (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+  await page.route('**/catalog/history/manifest**', (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+  await page.route('**/catalog/search**', (route) => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ products: [{
       productId: 88001, categoryId: 3, groupId: 1442, categoryName: 'Pokemon', groupName: 'Retry Set',
