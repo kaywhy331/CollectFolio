@@ -168,8 +168,8 @@ for (const name of required) if (!await exists(resolve(root, name))) errors.push
 
 const packageJSON = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageLock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-if (packageJSON.version !== '0.8.32' || packageLock.version !== '0.8.32' || packageLock.packages?.['']?.version !== '0.8.32') {
-  errors.push('Application and lockfile versions must agree on 0.8.32.');
+if (packageJSON.version !== '0.8.33' || packageLock.version !== '0.8.33' || packageLock.packages?.['']?.version !== '0.8.33') {
+  errors.push('Application and lockfile versions must agree on 0.8.33.');
 }
 const dependencies = packageJSON.dependencies || {};
 if (Object.keys(dependencies).join(',') !== '@netlify/blobs' || dependencies['@netlify/blobs'] !== '9.1.5') {
@@ -465,9 +465,9 @@ if (!application.includes("serviceWorker.register('/sw.js')")) errors.push('Serv
 const runtimeConfig = await readFile(resolve(app, 'runtime-config.js'), 'utf8');
 const buildScript = await readFile(resolve(root, 'scripts/build.mjs'), 'utf8');
 const netlifyDeployWorkflow = await readFile(resolve(root, '.github/workflows/netlify-deploy.yml'), 'utf8');
-if (!runtimeConfig.includes("APP_VERSION: '0.8.32-dev'")) errors.push('Local runtime config must identify the 0.8.32 development build.');
-if (!buildScript.includes("process.env.APP_VERSION || '0.8.32'")) errors.push('Production builds must default APP_VERSION to 0.8.32.');
-if (!/^\s+APP_VERSION: 0\.8\.32$/m.test(netlifyDeployWorkflow)) errors.push('Netlify production deploys must bake APP_VERSION 0.8.32.');
+if (!runtimeConfig.includes("APP_VERSION: '0.8.33-dev'")) errors.push('Local runtime config must identify the 0.8.33 development build.');
+if (!buildScript.includes("process.env.APP_VERSION || '0.8.33'")) errors.push('Production builds must default APP_VERSION to 0.8.33.');
+if (!/^\s+APP_VERSION: 0\.8\.33$/m.test(netlifyDeployWorkflow)) errors.push('Netlify production deploys must bake APP_VERSION 0.8.33.');
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
 }
@@ -591,7 +591,7 @@ for (const contract of ['export function validateBackup', 'const plan = validate
 }
 
 const serviceWorker = await readFile(resolve(app, 'sw.js'), 'utf8');
-if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.32'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.32.');
+if (!serviceWorker.includes("const CACHE = 'collectfolio-shell-v0.8.33'")) errors.push('Service worker cache name must be collectfolio-shell-v0.8.33.');
 if (!serviceWorker.includes('Promise.allSettled') && !(await readFile(resolve(app, 'assets/js/services/catalog.js'), 'utf8')).includes('Promise.allSettled')) errors.push('Catalog provider fan-out must use Promise.allSettled.');
 for (const file of appFiles) {
   const name = `./${relative(app, file).replaceAll('\\', '/')}`;
