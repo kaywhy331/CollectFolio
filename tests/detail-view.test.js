@@ -96,7 +96,10 @@ test('item detail prioritizes price, uses direct image zoom, and keeps methodolo
   assert.match(html, /class="detail-image-frame" type="button" data-action="zoom-detail-image"/);
   assert.doesNotMatch(html, />Zoom image</);
   assert.ok(html.indexOf('Current value') < html.indexOf('<dl class="detail-metadata">'));
-  assert.match(html, /Price history will appear after additional verified updates/);
+  // DCL-DET-01: no history evidence exists for this non-TCGCSV item, so
+  // RULE-2 means the history section renders nothing at all here (no
+  // "additional updates needed" placeholder card).
+  assert.doesNotMatch(html, /id="detail-history"/);
   assert.match(html, /<details class="data-details" id="detail-data">/);
   assert.doesNotMatch(html, /<details class="data-details" id="detail-data" open/);
 });
@@ -109,7 +112,9 @@ test('item detail preserves a long title and labels missing identity fields with
   assert.match(html, new RegExp(name));
   assert.match(html, /Condition<\/dt><dd>Unconfirmed/);
   assert.match(html, /Language<\/dt><dd>Not specified/);
-  assert.match(html, /Variant not specified/);
+  // DCL-DET-05: with nothing to show, no identity pill row renders at all
+  // (the "Variant not specified" fallback pill is gone).
+  assert.doesNotMatch(html, /detail-identity-pills/);
 });
 
 test('sealed item metadata names its product format and never labels it Raw', () => {
@@ -129,12 +134,10 @@ test('detail price-history chart requires two distinct valid observations', () =
     priceHistory: { byKey: { [key]: { available: true, points: [['2026-08-01', 90]] } } }
   }));
   assert.doesNotMatch(one, /history-line-chart/);
-  assert.match(one, /Price history will appear after additional verified updates/);
   const two = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState({
     priceHistory: { byKey: { [key]: { available: true, points: [['2026-08-01', 90], ['2026-08-08', 95]] } } }
   }));
   assert.match(two, /history-line-chart/);
-  assert.doesNotMatch(two, /Price history will appear after additional verified updates/);
 });
 
 test('owned catalog card detail no longer renders local-scenario-v1, deferring to a published trajectory forecast', () => {
@@ -268,11 +271,14 @@ test('tier-2 publication shows trend but explicitly withholds fair value and for
     }, 2) }, loading: false, error: '' }
   });
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef }, state);
-  assert.match(html, /Fair value not supported/);
-  assert.match(html, /No forecast published/);
+  // DCL-DET-01/RULE-2: fair value, forecast, and drivers render nothing at
+  // all below tier -- no "not supported" card variants -- while trend
+  // (tier 2+) still renders normally.
+  assert.doesNotMatch(html, /Fair value not supported/);
+  assert.doesNotMatch(html, /No forecast published/);
+  assert.doesNotMatch(html, /No recorded driver evidence/);
   assert.doesNotMatch(html, /projection-chart/);
   assert.match(html, /2 final approved price points/);
-  assert.match(html, /No recorded driver evidence/);
 });
 
 test('home renders no movers or signals chrome when there is no supporting data', () => {

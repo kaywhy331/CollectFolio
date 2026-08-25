@@ -96,67 +96,16 @@ function pricingMarkup(model, item, { compact = false } = {}) {
   return `<div class="result-pricing ${escapeAttribute(model.pricingStatus)}"><strong>${hasValue ? escapeHTML(formatCurrency(model.currentMarketValue, model.currency)) : escapeHTML(labels[model.pricingStatus] || 'No verified price')}</strong>${hasValue && !compact ? `<small>${escapeHTML(provenance || labels[model.pricingStatus] || 'Market price')}</small>` : ''}</div>`;
 }
 
+// DCL-DISC-02/03: signedPercent is now only used by the list-view 30-day
+// movement chip in resultCard -- the full outlook <dl> (all horizons,
+// evidence-tier qualifiers, the cold-start/early-estimate note rows) was
+// deleted along with marketOutlookMarkup/outlookEstimateCell/
+// EARLY_ESTIMATE_CONFIDENCES. That per-horizon forecast detail still lives
+// on the item detail page; result cards show identity + price + match
+// state only (plus the one movement chip in list view).
 function signedPercent(value) {
   if (!Number.isFinite(value)) return '—';
   return formatPercent(value * 100);
-}
-
-// Reduced-confidence trajectory tiers (serve-all-cohorts mode, Kevin
-// 2026-08-18): served and displayed, but never presented as a fully
-// modeled forecast -- each carries an explicit qualifier.
-const EARLY_ESTIMATE_CONFIDENCES = Object.freeze(['low-history', 'insufficient-history']);
-
-function outlookEstimateCell(forecast, label, currency, { compact = false } = {}) {
-  if (!forecast) {
-    return `<div><dt>${escapeHTML(label)}</dt><dd>—<small>Not enough data yet</small></dd></div>`;
-  }
-  const referenceOnly = forecast.evidenceTier === 'attribute-reference';
-  const rangeOnly = forecast.evidenceTier === 'range-only';
-  if (referenceOnly || rangeOnly) {
-    const rangeLabel = label.replace(/\best\.$/, 'range');
-    const description = referenceOnly
-      ? 'attribute-based reference range · not a forecast'
-      : 'typical movement range · no directional estimate';
-    return `<div><dt>${escapeHTML(rangeLabel)}</dt><dd>${escapeHTML(formatCurrency(forecast.lowerBound, currency))}–${escapeHTML(formatCurrency(forecast.upperBound, currency))}<small>${escapeHTML(description)}</small></dd></div>`;
-  }
-  const qualifier = compact ? '' : forecast.status === 'reference-range'
-    ? ' · reference range'
-    : EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence)
-      ? ' · early estimate'
-      : forecast.evidenceTier === 'relative-validated'
-        ? ' · assumes flat market'
-        : ' modeled';
-  const baseline = forecast.estimatedChange === null
-    ? ''
-    : compact
-      ? ' vs model baseline'
-      : forecast.baselineValue > 0
-        ? ` vs ${formatCurrency(forecast.baselineValue, currency)} model baseline${forecast.baselineDate ? ` (${forecast.baselineDate})` : ''}`
-        : ' vs model baseline';
-  return `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(formatCurrency(forecast.estimatedValue, currency))}<small class="${forecast.estimatedChange === null ? '' : forecast.estimatedChange >= 0 ? 'positive' : 'negative'}">${escapeHTML(signedPercent(forecast.estimatedChange))}${escapeHTML(baseline)}${qualifier}</small></dd></div>`;
-}
-
-function marketOutlookMarkup(model, { compact = false, showNotes = true } = {}) {
-  const horizons = (compact ? [
-    [model.forecast30d, '1 mo est.'],
-    [model.forecast90d, '3 mo est.']
-  ] : [
-    [model.forecast30d, '1 mo est.'],
-    [model.forecast60d, '2 mo est.'],
-    [model.forecast90d, '3 mo est.'],
-    [model.forecast180d, '6 mo est.'],
-    [model.forecast365d, '1 year est.']
-  ]).filter(([forecast]) => forecast);
-  if ((compact || model.change30d === null) && !horizons.length) return '';
-  const trendClass = model.change30d === null ? '' : model.change30d >= 0 ? 'positive' : 'negative';
-  const coldStart = horizons.some(([forecast]) => forecast?.evidenceTier === 'attribute-reference');
-  const early = horizons.some(([forecast]) => forecast && forecast.evidenceTier !== 'attribute-reference' && EARLY_ESTIMATE_CONFIDENCES.includes(forecast.confidence));
-  return `<dl class="result-market-outlook${compact ? ' compact' : ''}" aria-label="Published market trend and outlook checkpoints">
-    ${compact || model.change30d === null ? '' : `<div><dt>30D trend</dt><dd class="${trendClass}">${escapeHTML(signedPercent(model.change30d))}<small>${model.change30d >= 0 ? 'Rolling increase' : 'Rolling decrease'}</small></dd></div>`}
-    ${horizons.map(([forecast, label]) => outlookEstimateCell(forecast, label, model.currency, { compact })).join('')}
-    ${showNotes && coldStart ? '<div class="result-outlook-note"><dt class="sr-only">Range note</dt><dd><small>Attribute-based reference range: no observed current-price anchor; this is not a forecast.</small></dd></div>' : ''}
-    ${showNotes && early ? '<div class="result-outlook-note"><dt class="sr-only">Range note</dt><dd><small>Price range only: available for context, with no directional estimate.</small></dd></div>' : ''}
-  </dl>`;
 }
 
 function productFormat(item, model) {
@@ -174,8 +123,7 @@ function productFormat(item, model) {
 function resultCard(item, index, state, view, {
   scope = 'search',
   matchBadge = true,
-  compact = false,
-  showForecastNotes = true
+  compact = false
 } = {}) {
   const rawPublication = item.canonicalVariantId ? state.intelligence?.byVariant?.[item.canonicalVariantId] : null;
   const publication = selectPublicationForCatalogItem(rawPublication, item, state.settings.currency);
@@ -189,9 +137,16 @@ function resultCard(item, index, state, view, {
   ).filter(Boolean).join(' · ');
   const format = productFormat(item, model);
   const confirmedIdentity = model.matchBucket === 'exact';
+  // DCL-DISC-03/Decision D-2: list view only gets one 30-day movement chip
+  // plus the pricing provenance small line; gallery tiles stay identity +
+  // price + badge with no other market data.
+  const listView = view === 'list';
+  const movementChip = listView && model.change30d !== null
+    ? `<span class="result-movement ${model.change30d >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${model.change30d >= 0 ? '↗' : '↘'}</span> ${escapeHTML(signedPercent(model.change30d))}</span>`
+    : '';
   return `<article class="result-card ${escapeAttribute(view)}${compact ? ' catalog-tile' : ''}" data-action="open-detail" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}" tabindex="0" aria-label="Inspect ${escapeAttribute(model.name || 'catalog result')}">
     <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}${!compact || item.productKind === 'sealed' ? `<span class="product-format-badge">${escapeHTML(format)}</span>` : ''}${matchBadge ? `<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(model.matchBucket === 'exact' ? 'Exact' : model.matchBucket === 'likely' ? 'Likely' : model.matchBucket === 'possible' ? 'Confirm variant' : 'Unresolved')}</span>` : ''}</div>
-    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model, item, { compact })}${marketOutlookMarkup(model, { compact, showNotes: showForecastNotes })}${compact ? '' : `<div class="result-facts"><span>${escapeHTML(model.game || model.category || 'other')}</span>${finishes.length > 1 ? `<span>${finishes.length} finishes</span>` : ''}${model.forecastStatus === 'available' ? '<span>Published outlook</span>' : ''}</div>`}</div>
+    <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model, item, { compact: listView ? false : compact })}${movementChip}</div>
     <div class="result-actions">${confirmedIdentity ? `<button class="button small" type="button" data-action="add-catalog" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Add to collection</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">${escapeHTML(watchLabel)}</button>` : ''}` : `<button class="button small" type="button" data-action="review-catalog-identity" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Confirm exact item</button>`}</div>
   </article>`;
 }
@@ -203,8 +158,7 @@ function catalogTileGrid(entries, state, view = 'gallery', {
   return `<div class="catalog-tile-grid result-list ${escapeAttribute(view)}${scope === 'browse' ? ' browse-product-grid' : ''}">${entries.map(({ item, index }) => resultCard(item, index, state, view, {
     scope,
     matchBadge,
-    compact: true,
-    showForecastNotes: false
+    compact: true
   })).join('')}</div>`;
 }
 
@@ -316,7 +270,7 @@ function discoverLanding(state) {
 }
 
 function setTile(set, games, covers = {}) {
-  const count = Number.isFinite(Number(set.cardCount)) ? `${Number(set.cardCount).toLocaleString()} cards` : 'Card count pending';
+  const count = Number.isFinite(Number(set.cardCount)) ? `${Number(set.cardCount).toLocaleString()} cards` : '';
   const identity = [set.code, set.year, count].filter(Boolean).join(' · ');
   const cover = safeImageUrl(covers[set.id] || set.image || '');
   const gameName = set.game || catalogGame(set.gameId, games)?.name || set.gameId;
@@ -364,7 +318,6 @@ function renderBrowseSets(state, browse) {
     : totalPages > 1
       ? `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${sets.length.toLocaleString()} sets`
       : `${sets.length.toLocaleString()} ${sets.length === 1 ? 'set' : 'sets'}`;
-  const rightsNote = 'Browse the available catalog by category, set, product, and finish. Availability and price coverage vary by item.';
   return `${browseGameHeader(browse, games)}
     <div class="browse-controls">
       <label class="browse-query"><span class="sr-only">Search sets</span><input type="search" data-browse-set-query value="${escapeAttribute(browse.query || '')}" placeholder="Search sets or codes…" autocomplete="off"></label>
@@ -373,9 +326,8 @@ function renderBrowseSets(state, browse) {
       ${browseYearFilter(browse)}
     </div>
     ${browseWarnings(browse)}
-    <div class="browse-results-head"><strong>${escapeHTML(resultLabel)}</strong><span>Newest releases appear first unless you choose another sort.</span></div>
-    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `<div class="catalog-tile-grid browse-set-grid">${visible.map((set) => setTile(set, games, browse.setCovers || {})).join('')}</div>${catalogPager({ action: 'browse-sets-page', page, totalPages, start, end, total: sets.length, label: 'set catalog' })}` : emptyState('No matching sets', 'Try another name, code, game, set type, or year.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}
-    <p class="fine-print browse-rights-note">${escapeHTML(rightsNote)}</p>`;
+    <div class="browse-results-head"><strong>${escapeHTML(resultLabel)}</strong></div>
+    ${browse.loading ? '<div class="set-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading sets</span></div>' : visible.length ? `<div class="catalog-tile-grid browse-set-grid">${visible.map((set) => setTile(set, games, browse.setCovers || {})).join('')}</div>${catalogPager({ action: 'browse-sets-page', page, totalPages, start, end, total: sets.length, label: 'set catalog' })}` : emptyState('No matching sets', 'Try another name, code, game, set type, or year.', '<button class="button ghost" type="button" data-action="clear-browse-filters">Clear filters</button>')}`;
 }
 
 function browseProductKindTabs(browse, counts) {
@@ -433,13 +385,12 @@ function renderBrowseProducts(state, browse) {
     ? ['sealed product', 'sealed products']
     : kind === 'cards' || !counts.sealed ? ['card', 'cards'] : ['item', 'items'];
   return `<nav class="browse-breadcrumbs" aria-label="Browse path"><button type="button" data-action="browse-all-games">Discover</button><span>/</span><button type="button" data-action="select-browse-game" data-game="${escapeAttribute(browse.game)}">${escapeHTML(game?.shortName || browse.game)}</button><span>/</span><strong>${escapeHTML(title)}</strong></nav>
-    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading the first products…' : declaredTotal > products.length ? `${products.length.toLocaleString()} of ${declaredTotal.toLocaleString()} products loaded` : `${filtered.length.toLocaleString()} ${escapeHTML(filtered.length === 1 ? noun[0] : noun[1])}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
+    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading the first products…' : declaredTotal > products.length ? `${declaredTotal.toLocaleString()} ${escapeHTML(declaredTotal === 1 ? noun[0] : noun[1])}` : `${filtered.length.toLocaleString()} ${escapeHTML(filtered.length === 1 ? noun[0] : noun[1])}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
     ${browseProductKindTabs({ ...browse, productKind: kind }, counts)}
     <div class="browse-controls products">
       <label class="browse-query"><span class="sr-only">Search this set</span><input type="search" data-browse-product-query value="${escapeAttribute(browse.productQuery || '')}" placeholder="Search this set…" autocomplete="off"></label>
       <label><span class="sr-only">Sort items</span><select data-browse-product-sort>${sortControl.options.map(([value, label]) => `<option value="${value}" ${sortControl.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
     </div>
-    ${sortControl.hasPrice ? '' : '<p class="sort-availability">Price sorting is unavailable because these results have no verified prices.</p>'}
     ${browse.productsLoadingMore && browse.productQuery ? '<p class="sort-availability" role="status">Searching the complete set…</p>' : ''}
     ${browseWarnings(browse)}
     ${browse.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading cards</span></div>' : visible.length ? `${catalogTileGrid(visible, state, 'gallery', { scope: 'browse', matchBadge: false })}${catalogPager({ action: 'browse-products-page', page, totalPages, start, end, total: exactTotal, loading: browse.productsLoadingMore, label: 'set products' })}` : browse.productsLoadingMore ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching the complete set</span></div>' : emptyState(`No matching ${noun[1]}`, browse.error ? 'Retry the catalog request.' : 'Try another name, collector number, rarity, or product type.', browse.error ? '<button class="button" type="button" data-action="retry-browse">Retry</button>' : '<button class="button ghost" type="button" data-action="clear-browse-product-query">Clear search</button>')}`;
@@ -537,7 +488,6 @@ function searchToolbar(search, state, view, sortContract, activeFilters) {
       <div class="view-toggle" role="group" aria-label="Result view"><button type="button" data-discover-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Gallery view">▦</button><button type="button" data-discover-view="list" aria-pressed="${view === 'list'}" aria-label="List view">☷</button></div>
     </div>
     ${activeFilters.length ? `<div class="active-filter-chips" aria-label="Applied filters">${activeFilters.map((filter) => `<button type="button" data-action="remove-search-filter" data-filter="${escapeAttribute(filter.key)}">${escapeHTML(filter.label)} <span aria-hidden="true">×</span><span class="sr-only">Remove filter</span></button>`).join('')}<button class="clear-filters" type="button" data-action="clear-search-filters">Clear all</button></div>` : ''}
-    ${sortContract.hasPrice || !search.results.length ? '' : '<p class="sort-availability">Price sorting is unavailable because these results have no verified prices.</p>'}
   </section>`;
 }
 
@@ -566,7 +516,6 @@ export function renderSearch(state) {
       ${state.discover?.searchFiltersOpen ? '' : hiddenSearchFilters(search)}
     </form>
     ${hasIntent ? searchToolbar(search, state, view, sortContract, activeFilters) : discoverLanding(state)}
-    ${search.cached ? '<p class="fine-print search-status">Showing a recent result cached on this device.</p>' : ''}
     ${search.warnings.length ? `<div class="search-warning" role="status"><strong>Some sources were unavailable.</strong>${search.warnings.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<small>Your search and filters are unchanged.</small><button class="button ghost small" type="button" data-action="retry-search">Retry search</button></div>` : ''}
     ${!hasIntent ? '' : manualCategory ? `${emptyState(`Create a precise ${search.category} record`, 'There is no universal rights-cleared catalog for this category. Add the identity and value you can verify.', `<button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create custom item</button>`)}` : `<div class="discover-results-head"><div><strong>${search.loading ? 'Searching sources…' : resultCount}</strong><span>${search.query ? `for “${escapeHTML(search.query)}”` : 'filtered catalog'}</span></div></div>${search.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching catalog sources</span></div>' : `${resultGrid(visibleResults, { ...state, search }, view)}${catalogPager({ action: 'search-results-page', page, totalPages, start, end, total: search.results.length, label: 'Discover results' })}`}`}${searchFilterOverlay(search, state, activeFilters.length)}${categoryPickerOverlay(state.discover || {}, mergeCatalogGames(state.discover?.games))}`;
 }

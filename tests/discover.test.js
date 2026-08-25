@@ -329,9 +329,9 @@ test('Discover set cards retain concise forecast values without forecast disclai
       sets: [], products: [forecastItem]
     }
   }));
-  assert.match(html, /1 mo est\./);
-  assert.match(html, /3 mo est\./);
-  assert.doesNotMatch(html, /6 mo est\.|1 year est\.|30D trend|modeled|result-outlook-note|Treat as wider/);
+  // DCL-DISC-02: the outlook <dl> (all horizons) is deleted from result
+  // cards entirely -- forecast estimates no longer render on gallery tiles.
+  assert.doesNotMatch(html, /1 mo est\.|3 mo est\.|6 mo est\.|1 year est\.|30D trend|modeled|result-outlook-note|Treat as wider/);
 });
 
 test('Discover uses the same concise forecast tile template as set products', () => {
@@ -351,11 +351,9 @@ test('Discover uses the same concise forecast tile template as set products', ()
     }
   }));
   assert.match(html, /Synthetic Alpha · #001 · foil · Rare/);
-  assert.match(html, /1 mo est\./);
-  assert.match(html, /3 mo est\./);
-  assert.match(html, /\$130\.00/);
-  assert.match(html, /\$140\.00/);
-  assert.match(html, /vs model baseline/);
+  // DCL-DISC-02: result cards no longer carry any forecast estimate --
+  // "model baseline" is also an Appendix-C banned phrase.
+  assert.doesNotMatch(html, /1 mo est\.|3 mo est\.|\$130\.00|\$140\.00|vs model baseline/);
   assert.doesNotMatch(html, /30D trend|6 mo est\.|1 year est\.|result-outlook-note/);
 });
 
@@ -408,7 +406,9 @@ test('Discover exposes removable filter chips and only supported result sorting'
   assert.match(html, /data-filter="year">Year: 2026/);
   assert.match(html, /data-action="clear-search-filters">Clear all/);
   assert.doesNotMatch(html, /value="price-desc"/);
-  assert.match(html, /Price sorting is unavailable/);
+  // DCL-DISC-08: the "Price sorting is unavailable…" notice is deleted;
+  // the hidden option needs no explanation.
+  assert.doesNotMatch(html, /Price sorting is unavailable/);
   assert.doesNotMatch(html, /result-market-outlook/);
 });
 
@@ -424,7 +424,8 @@ test('Discover never enables or applies price sorting to rights-suppressed provi
     }
   }));
   assert.doesNotMatch(html, /value="price-desc"/);
-  assert.match(html, /Price sorting is unavailable/);
+  // DCL-DISC-08: the "Price sorting is unavailable…" notice is deleted.
+  assert.doesNotMatch(html, /Price sorting is unavailable/);
   assert.ok(html.indexOf('First restricted result') < html.indexOf('Second restricted result'));
   assert.equal((html.match(/Pricing not supported/g) || []).length, 2);
 });

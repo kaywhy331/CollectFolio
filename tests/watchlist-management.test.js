@@ -67,11 +67,14 @@ test('populated Watchlist separates current value and future outlook with access
     alerts: [{ id: 'signal', watchKey: entry.watchKey, message: 'Target is close', triggeredAt: '2026-08-10T00:00:00.000Z', readAt: '' }]
   }));
   assert.match(html, /Current market/);
-  assert.match(html, /Future outlook/);
-  assert.match(html, /\$95\.00–\$130\.00/);
-  assert.match(html, /confidence 70\/100/);
+  // DCL-COLL-02: the forecast range + confidence "Future outlook" block
+  // and the opportunity-ranking paragraph are both deleted from the
+  // watchlist card.
+  assert.doesNotMatch(html, /Future outlook/);
+  assert.doesNotMatch(html, /\$95\.00–\$130\.00/);
+  assert.doesNotMatch(html, /confidence 70\/100/);
+  assert.doesNotMatch(html, /Opportunity ranking withheld/);
+  assert.doesNotMatch(html, /Forecast upside alone is not profit/);
   assert.match(html, /1 new alert/);
-  assert.match(html, /Opportunity ranking withheld/);
-  assert.match(html, /Forecast upside alone is not profit/);
   assert.match(html, /data-action="remove-watch"/);
 });

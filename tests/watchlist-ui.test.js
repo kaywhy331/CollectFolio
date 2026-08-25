@@ -47,7 +47,9 @@ test('watchlist renders exact identity safely and explains unsupported intellige
   }));
   assert.doesNotMatch(html, /<script>bad<\/script>/);
   assert.match(html, /Card identified; pricing pending/);
-  assert.match(html, /awaiting card verification/);
+  // DCL-COLL-02: the support-badge sentence is dropped -- the badge keeps
+  // its short status text only, no appended verification-status clause.
+  assert.doesNotMatch(html, /awaiting card verification/);
   assert.match(html, /data-action="edit-watch"/);
 });
 
@@ -85,8 +87,11 @@ test('search shows watching state and forecast center publishes no invented numb
   assert.doesNotMatch(search, /Choose finish|\$90\.00|\$70\.00/);
 
   const forecasts = renderInsights(baseState());
-  assert.match(forecasts, /Research gate active/);
-  assert.match(forecasts, /Published market forecasts remain gated/);
+  // DCL-LEX-06/DCL-INS-03: the "Research gate active" badge and the
+  // publication-gate explainer card are both removed; with the flag off,
+  // the published-forecasts section simply doesn't render.
+  assert.doesNotMatch(forecasts, /Research gate active/);
+  assert.doesNotMatch(forecasts, /Published market forecasts remain gated/);
   assert.doesNotMatch(forecasts, /Probability of gain|\$845/);
 });
 

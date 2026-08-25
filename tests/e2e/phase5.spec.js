@@ -91,10 +91,12 @@ test('three-step onboarding survives refresh and completes after the first colle
   await dialog.getByRole('button', { name: 'Add to collection' }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' }).click();
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  // DCL-HOME-01: a holding now exists, so Home's first element is the
+  // hero card, not a page-header h1.
+  await expect(page.locator('.overview-hero')).toBeVisible();
   await expect(page.getByText('First onboarding collectible', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await expect(page.locator('.overview-hero')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Set up CollectFolio' })).toHaveCount(0);
 });
 

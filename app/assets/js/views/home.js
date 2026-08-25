@@ -2,7 +2,6 @@ import { emptyState, externalImage, pageHeader } from '../core/components.js';
 import { holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioAllocation, portfolioSummary, snapshotFor } from '../core/calculations.js';
 import { collectionFreshness } from '../core/data-freshness.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
-import { localPortfolioInsights } from '../core/local-scenarios.js';
 import { trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
@@ -230,9 +229,18 @@ function refreshStatusMarkup(refresh = {}) {
   return `<section class="source-refresh-status" data-source-refresh-status="${escapeAttribute(refresh.status)}" role="status"><span class="source-refresh-dot" aria-hidden="true"></span><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(detail + receipt)}</small></span></section>`;
 }
 
-function dataHealthModule(state, coverage, historyCoverage, freshness) {
+// DCL-HOME-10/LEX-09: the currency-scope note is owned here (Data Health)
+// only -- the in-flow hero/summary fine print that used to repeat it was
+// deleted. Renders nothing when every holding's value/cost is already in
+// the collection currency.
+function currencyScopeNote(summary, currency) {
+  if (!summary.excludedMarketItems && !summary.excludedCostItems) return '';
+  return `<p class="fine-print currency-scope-note">Amounts in ${escapeHTML(summary.excludedCurrencies.join(', '))} are shown separately from ${escapeHTML(currency)} totals.</p>`;
+}
+
+function dataHealthModule(state, coverage, historyCoverage, freshness, summary, currency) {
   const historyPercent = Number(historyCoverage?.percent) || 0;
-  return `<details class="card data-health"><summary><span><strong>Data Health</strong><small>${coverage.percent.toFixed(0)}% pricing coverage · ${freshness.stale} stale</small></span><span aria-hidden="true">⌄</span></summary><div class="data-health-grid"><div><span>Market-price coverage</span><strong>${coverage.market} of ${coverage.total}</strong></div><div><span>History coverage</span><strong>${historyPercent}%</strong></div><div><span>Stale values</span><strong>${freshness.stale}</strong></div><div><span>Manual values</span><strong>${coverage.manual}</strong></div><div><span>Last price update</span><strong>${escapeHTML(freshness.latest.label)}</strong></div></div>${refreshStatusMarkup(state.tcgcsvRefresh)}</details>`;
+  return `<details class="card data-health"><summary><span><strong>Data Health</strong><small>${coverage.percent.toFixed(0)}% pricing coverage · ${freshness.stale} stale</small></span><span aria-hidden="true">⌄</span></summary><div class="data-health-grid"><div><span>Market-price coverage</span><strong>${coverage.market} of ${coverage.total}</strong></div><div><span>History coverage</span><strong>${historyPercent}%</strong></div><div><span>Stale values</span><strong>${freshness.stale}</strong></div><div><span>Manual values</span><strong>${coverage.manual}</strong></div><div><span>Last price update</span><strong>${escapeHTML(freshness.latest.label)}</strong></div></div>${currencyScopeNote(summary, currency)}${refreshStatusMarkup(state.tcgcsvRefresh)}</details>`;
 }
 
 export function renderHome(state) {
@@ -245,36 +253,31 @@ export function renderHome(state) {
   );
   const change = overviewChange(series);
   const coverage = pricingCoverage(state.holdings, state.intelligence?.byVariant);
-  const localInsights = localPortfolioInsights(state.holdings, currency);
   const freshness = collectionFreshness(state.holdings);
   const chartSeries = series.map((point) => ({ ...point, costBasis: summary.costBasisItems ? point.costBasis : null }));
   const gainValid = summary.gainEligibleItems > 0 && summary.returnPercent !== null;
   const gainTone = gainValid && summary.gain < 0 ? 'negative' : 'positive';
 
-  const header = pageHeader(state.settings.collectionName || 'Personal Collection', 'Home', state.holdings.length
-    ? `${summary.uniqueItems} unique items · ${summary.totalQuantity} total quantity`
-    : 'A clear view of what you own and what needs attention', '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>');
-  const dataHealth = dataHealthModule(state, coverage, historyCoverage, freshness);
+  const dataHealth = dataHealthModule(state, coverage, historyCoverage, freshness, summary, currency);
 
+  // DCL-HOME-01: the page header only survives on the empty-state path --
+  // once holdings exist the hero card is the first element on Home.
   if (!state.holdings.length) {
+    const header = pageHeader(state.settings.collectionName || 'Personal Collection', 'Home', 'A clear view of what you own and what needs attention', '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>');
     return `${header}<div class="overview-empty">${emptyState('Build your collection', 'Scan or search for one collectible to begin tracking accepted values and collection mix.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan first item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}${dataHealth}`;
   }
 
-  return `${header}
-    <section class="overview-hero" aria-label="Collection performance">
+  return `<section class="overview-hero" aria-label="Collection performance">
       <article class="card overview-performance">
-        <div class="overview-performance-head"><div><p class="metric-label">Estimated collection value · ${escapeHTML(currency)} only</p><strong class="overview-value">${coverage.covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : 'Value not available'}</strong><p class="overview-hero-support">${coverage.covered} of ${coverage.total} items priced · ${gainValid ? `${escapeHTML(formatCurrency(summary.gain, currency))} estimated gain` : 'Gain unavailable'}</p><span class="freshness-badge" data-freshness="${escapeAttribute(freshness.latest.state)}">${escapeHTML(freshness.latest.label)}</span>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Collection chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
+        <div class="overview-performance-head"><div><p class="metric-label">Estimated value</p><strong class="overview-value">${coverage.covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : 'Unpriced'}</strong><span class="freshness-badge" data-freshness="${escapeAttribute(freshness.latest.state)}">${escapeHTML(freshness.latest.label)}</span>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Collection chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
         ${trendChart(chartSeries, currency)}
-        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> coverage · ${coverage.covered} of ${coverage.total} priced</span>${historyCoverage.total ? `<span><strong>${historyCoverage.percent}%</strong> history coverage</span>` : ''}</div>
       </article>
       <aside class="overview-summary" aria-label="Collection summary">
-        <article class="summary-stat"><span>Cost basis</span><strong>${summary.costBasisItems ? escapeHTML(formatCurrency(summary.costBasis, currency)) : 'Unavailable'}</strong><small>${summary.costBasisItems ? `${summary.costBasisItems} of ${summary.uniqueItems} purchases include cost` : 'Add purchase details to calculate'}</small></article>
-        <article class="summary-stat"><span>Estimated gain</span><strong class="${gainValid ? gainTone : ''}">${gainValid ? `<span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}` : 'Unavailable'}</strong><small>${gainValid ? `${escapeHTML(formatPercent(summary.returnPercent))} · ${summary.gainEligibleItems} comparable purchase${summary.gainEligibleItems === 1 ? '' : 's'}` : 'Needs both current value and cost basis'}</small></article>
+        <article class="summary-stat"><span>Cost basis</span><strong>${summary.costBasisItems ? escapeHTML(formatCurrency(summary.costBasis, currency)) : 'Not recorded'}</strong><small>${summary.costBasisItems ? `${summary.costBasisItems} of ${summary.uniqueItems} purchases include cost` : 'Add purchase details to calculate'}</small></article>
+        <article class="summary-stat"><span>Estimated gain</span><strong class="${gainValid ? gainTone : ''}">${gainValid ? `<span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}` : '—'}</strong><small>${gainValid ? `${escapeHTML(formatPercent(summary.returnPercent))} · ${summary.gainEligibleItems} comparable purchase${summary.gainEligibleItems === 1 ? '' : 's'}` : 'Needs both current value and cost basis'}</small></article>
         <article class="summary-stat"><span>Pricing coverage</span><strong>${coverage.percent.toFixed(0)}%</strong><small>${coverage.market} market · ${coverage.manual} manual · ${coverage.unpriced} unpriced</small></article>
-        <article class="summary-stat"><span>Value concentration</span><strong>${escapeHTML(localInsights.concentration[0].toUpperCase() + localInsights.concentration.slice(1))}</strong><small>${localInsights.topHolding ? `${escapeHTML(localInsights.topHolding.name)} is ${(localInsights.topHolding.share * 100).toFixed(1)}%` : 'Add a value to an item'}</small></article>
       </aside>
     </section>
     ${attentionModule(state, coverage)}
-    ${summary.excludedMarketItems || summary.excludedCostItems ? `<p class="fine-print" role="status">Amounts in ${escapeHTML(summary.excludedCurrencies.join(', '))} stay in their source currency and are excluded from ${escapeHTML(currency)} totals. No exchange rate was guessed.</p>` : ''}
     <div class="overview-modules">${moversModule(state)}${recentHoldingsModule(state, currency)}${allocationModule(state, currency)}</div>${dataHealth}`;
 }

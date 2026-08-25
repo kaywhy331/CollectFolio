@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
+    "lint:copy": "node scripts/check-copy.mjs",
     "test": "node --test tests/*.test.js && npm run test:analytics",
     "test:analytics": "PYTHONPATH=analytics/src python3 -m unittest discover -s analytics/tests -p 'test_*.py'",
     "test:forecast-db": "PYTHONPATH=analytics/src python3 tests/postgres/run_forecast_runtime.py",

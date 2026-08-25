@@ -215,7 +215,9 @@ test('Scenario Lab exposes all assumptions, outputs, evidence, sorting, and one 
   assert.match(html, /<details class="data-details scenario-methodology">/);
   assert.match(html, /Model version/);
   assert.match(html, /Calculation timestamp/);
-  assert.match(html, /Published market forecasts remain gated/);
+  // DCL-INS-03: with the publication flag off, the gate explainer card is
+  // gone entirely -- the section simply doesn't render.
+  assert.doesNotMatch(html, /Published market forecasts remain gated/);
   assert.doesNotMatch(html, /local-scenario-chart/);
   const disclosure = 'Scenarios are assumption-based estimates and are not appraisals, market observations, investment recommendations, or guaranteed outcomes.';
   assert.equal(html.split(disclosure).length - 1, 1);
@@ -250,10 +252,26 @@ test('Scenario Lab excludes restricted catalog prices instead of turning them in
 });
 
 test('Insights Overview is a concise actionable list without a duplicate dashboard chart', () => {
-  const base = state();
+  const base = state({
+    intelligence: { byVariant: { [variantId]: publication({ payload: { ...publication().payload, trend: { return30d: 0.15, status: 'rise' } } }) }, history: [], loading: false, error: '' }
+  });
   const html = renderInsights({ ...base, insights: { ...base.insights, view: 'performance' } });
-  for (const label of ['Largest value increase', 'Largest value decrease', 'Highest concentration', 'Missing prices', 'Stale prices', 'Watchlist alerts', 'Coverage improvement', 'Recently completed sets']) assert.match(html, new RegExp(label));
+  // DCL-INS-01/RULE-2: a row renders only with real supporting data -- no
+  // permanent "Unavailable"/"None" placeholder variants. This fixture's
+  // one holding has a genuine 30-day increase, so that row renders; there
+  // is no decrease to report (one holding can't move both ways), no
+  // priced holding for concentration (this provider's price is
+  // rights-restricted), and no known update time for staleness -- each of
+  // those rows correctly renders nothing rather than a fabricated
+  // placeholder.
+  for (const label of ['Largest value increase', 'Missing prices', 'Watchlist alerts']) assert.match(html, new RegExp(label));
+  for (const label of ['Largest value decrease', 'Highest concentration', 'Stale prices']) assert.doesNotMatch(html, new RegExp(label));
   assert.doesNotMatch(html, /trend-chart/);
+  // The two unpriced-count rows merge into one "Missing prices" row, and
+  // the permanent "Recently completed sets" row (which could only ever
+  // say "Unavailable") is gone.
+  assert.doesNotMatch(html, /Coverage improvement/);
+  assert.doesNotMatch(html, /Recently completed sets/);
 });
 
 test('Alerts use plain supported-kind labels and hide internal variant IDs', () => {

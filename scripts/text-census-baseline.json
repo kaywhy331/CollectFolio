@@ -1,0 +1,18 @@
+{
+  "version": "0.8.33",
+  "targets": {
+    "home": 40,
+    "discover": 60,
+    "watchlist": 50,
+    "detail": 50,
+    "add": 40
+  },
+  "surfaces": {
+    "home": 1370,
+    "discover": 414,
+    "watchlist": 839,
+    "detail": 2077,
+    "add": 1177
+  },
+  "generatedAt": "v0.8.33 pre-declutter baseline (2026-08-25)"
+}

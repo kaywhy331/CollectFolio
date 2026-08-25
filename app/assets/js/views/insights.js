@@ -11,6 +11,7 @@ import {
 import { localPortfolioInsights } from '../core/local-scenarios.js';
 import { buildCollectionScenario, SCENARIO_SORTS, sortScenarioRows } from '../core/scenario-lab.js';
 import { collectionFreshness } from '../core/data-freshness.js';
+import { methodologyDisclosure } from '../core/methodology.js';
 import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { portfolioMovers, pricingCoverage } from './home.js';
@@ -44,14 +45,16 @@ export function renderInsights(state) {
     performance: 'Understand changes, gaps, and risks across your collection.',
     forecasts: 'Explore how your collection could change under different assumptions.',
     alerts: 'Local notification history for exact watched variants.',
-    'track-record': 'Immutable forecast receipts and approved matured-model scorecards.'
+    'track-record': 'How published forecasts are scored against outcomes.'
   };
   const content = selected === 'performance'
     ? overviewSection(state)
     : selected === 'alerts'
       ? alertsSection(state)
       : selected === 'track-record' ? trackRecordSection(state) : forecastsSection(state);
-  return `${pageHeader('Evidence before prediction', 'Insights', subtitles[selected])}${insightsTabs(state, selected)}${content}`;
+  // DCL-LEX-11: the Methodology disclosure is reachable from Insights,
+  // once, regardless of which tab is active.
+  return `${pageHeader('Evidence before prediction', 'Insights', subtitles[selected])}${insightsTabs(state, selected)}${content}${methodologyDisclosure()}`;
 }
 
 function insightRow({ eyebrow, title, value, detail, action = '' }) {
@@ -73,17 +76,20 @@ function overviewSection(state) {
   const freshness = collectionFreshness(state.holdings);
   const unread = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt).length;
   const detailAction = (holding) => holding ? `<button class="button ghost small" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">Review item</button>` : '';
+  // DCL-INS-01/RULE-2: a row renders only when its supporting data exists
+  // -- no permanent "Unavailable"/"None" placeholder variants. The two
+  // rows that both reported the unpriced count are merged into one, and
+  // "Recently completed sets" (which could only ever say "Unavailable")
+  // is gone.
   const rows = [
-    insightRow(increase ? { eyebrow: 'Largest value increase', title: increase.holding.item?.name || 'Unnamed item', value: `+${formatPercent(increase.intelligence.trend.return30d * 100)}`, detail: 'Largest approved 30-day increase in your collection.', action: detailAction(increase.holding) } : { eyebrow: 'Largest value increase', title: 'Additional history needed', value: 'Unavailable', detail: 'A verified 30-day comparison has not been recorded yet.' }),
-    insightRow(decrease ? { eyebrow: 'Largest value decrease', title: decrease.holding.item?.name || 'Unnamed item', value: formatPercent(decrease.intelligence.trend.return30d * 100), detail: 'Largest approved 30-day decrease in your collection.', action: detailAction(decrease.holding) } : { eyebrow: 'Largest value decrease', title: 'No verified decrease', value: 'None', detail: 'No approved 30-day decrease is currently available.' }),
-    insightRow({ eyebrow: 'Highest concentration', title: localInsights.topHolding?.name || 'No valued item', value: localInsights.topHolding ? formatPercent(localInsights.topHolding.share * 100) : 'Unavailable', detail: localInsights.topHolding ? `${localInsights.concentration} concentration; top five represent ${formatPercent(localInsights.topFiveShare * 100)}.` : 'Add an accepted current value to measure concentration.', action: '<button class="button ghost small" type="button" data-go="portfolio">Open Collection</button>' }),
+    increase ? insightRow({ eyebrow: 'Largest value increase', title: increase.holding.item?.name || 'Unnamed item', value: `+${formatPercent(increase.intelligence.trend.return30d * 100)}`, detail: 'Largest approved 30-day increase in your collection.', action: detailAction(increase.holding) }) : '',
+    decrease ? insightRow({ eyebrow: 'Largest value decrease', title: decrease.holding.item?.name || 'Unnamed item', value: formatPercent(decrease.intelligence.trend.return30d * 100), detail: 'Largest approved 30-day decrease in your collection.', action: detailAction(decrease.holding) }) : '',
+    localInsights.topHolding ? insightRow({ eyebrow: 'Highest concentration', title: localInsights.topHolding.name, value: formatPercent(localInsights.topHolding.share * 100), detail: `${localInsights.concentration} concentration; top five represent ${formatPercent(localInsights.topFiveShare * 100)}.`, action: '<button class="button ghost small" type="button" data-go="portfolio">Open Collection</button>' }) : '',
     insightRow({ eyebrow: 'Missing prices', title: coverage.unpriced ? `${coverage.unpriced} item${coverage.unpriced === 1 ? '' : 's'} need a value` : 'Every item is priced', value: `${coverage.percent.toFixed(0)}% covered`, detail: coverage.unpriced ? 'Add a manual value or review an exact catalog match.' : 'Market and explicit manual values cover the full collection.', action: '<button class="button ghost small" type="button" data-go="portfolio">Resolve pricing</button>' }),
-    insightRow({ eyebrow: 'Stale prices', title: freshness.stale ? `${freshness.stale} may be stale` : 'No known stale prices', value: freshness.latest.label, detail: freshness.known ? `${freshness.known} market-price update time${freshness.known === 1 ? '' : 's'} checked.` : 'Price update times are not available yet.', action: '<button class="button ghost small" type="button" data-action="refresh-prices">Refresh prices</button>' }),
-    insightRow({ eyebrow: 'Watchlist alerts', title: unread ? `${unread} unread alert${unread === 1 ? '' : 's'}` : 'No unread alerts', value: unread ? 'Review' : 'Clear', detail: unread ? 'Review the exact watched items whose saved rules were triggered.' : 'No active Watchlist rule needs attention.', action: '<button class="button ghost small" type="button" data-insights-view="alerts">Open Alerts</button>' }),
-    insightRow({ eyebrow: 'Coverage improvement', title: coverage.unpriced ? `${coverage.unpriced} resolution opportunit${coverage.unpriced === 1 ? 'y' : 'ies'}` : 'Coverage complete', value: `${coverage.covered} of ${coverage.total}`, detail: 'Only accepted market values and explicit manual values count.' }),
-    insightRow({ eyebrow: 'Recently completed sets', title: 'Catalog totals not linked', value: 'Unavailable', detail: 'CollectFolio will not claim a completed set until an authoritative catalog total is linked.', action: '<button class="button ghost small" type="button" data-go="portfolio" data-portfolio-target="sets">Review Sets</button>' })
-  ];
-  return `<section class="insights-overview" aria-labelledby="insights-overview-title"><div class="section-heading"><div><p class="eyebrow">Actionable collection signals</p><h2 id="insights-overview-title">Overview</h2><p class="muted">Values, gaps, and alerts are shown only when their supporting data exists.</p></div></div><div class="insight-row-list">${rows.join('')}</div></section>`;
+    freshness.known ? insightRow({ eyebrow: 'Stale prices', title: freshness.stale ? `${freshness.stale} may be stale` : 'No known stale prices', value: freshness.latest.label, detail: `${freshness.known} market-price update time${freshness.known === 1 ? '' : 's'} checked.`, action: '<button class="button ghost small" type="button" data-action="refresh-prices">Refresh prices</button>' }) : '',
+    insightRow({ eyebrow: 'Watchlist alerts', title: unread ? `${unread} unread alert${unread === 1 ? '' : 's'}` : 'No unread alerts', value: unread ? 'Review' : 'Clear', detail: unread ? 'Review the exact watched items whose saved rules were triggered.' : 'No active Watchlist rule needs attention.', action: '<button class="button ghost small" type="button" data-insights-view="alerts">Open Alerts</button>' })
+  ].filter(Boolean);
+  return `<section class="insights-overview" aria-labelledby="insights-overview-title"><div class="section-heading"><div><p class="eyebrow">Actionable collection signals</p><h2 id="insights-overview-title">Overview</h2></div></div><div class="insight-row-list">${rows.join('')}</div></section>`;
 }
 
 function intelligenceStatus(state) {
@@ -176,13 +182,14 @@ function publishedForecastsSection(summary, assets, state, currency) {
       ? `<button class="button ghost small" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(asset.holdingId)}">Open item detail</button>`
       : `<button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(asset.watchKey)}">Open item detail</button>`;
     const detail = expanded ? `<div class="scenario-item-detail"><dl><div><dt>Broad 80% range</dt><dd>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</dd></div><div><dt>Evidence</dt><dd>${escapeHTML(evidence.detail)}</dd></div><div><dt>Published</dt><dd>${escapeHTML(dateLabel(publication.publishedAt))}</dd></div><div><dt>Matures</dt><dd>${escapeHTML(dateLabel(forecast.maturesAt))}</dd></div></dl>${action}</div>` : '';
-    return `<article class="scenario-item-row published-outlook-row ${expanded ? 'expanded' : ''}"><button type="button" data-published-expand="${escapeAttribute(asset.key)}" aria-expanded="${expanded}">${externalImage(asset.item, 'scenario-item-image')}<span class="scenario-item-name"><strong>${escapeHTML(asset.item?.name || 'Unnamed item')}</strong><small>${escapeHTML(asset.context)}</small></span><span><small>Current market</small><strong>${publication.observed ? escapeHTML(formatCurrency(publication.observed.price, currency)) : 'Unavailable'}</strong></span><span><small>Median</small><strong>${escapeHTML(formatCurrency(forecast.q50, currency))}</strong></span><span><small>Middle 50%</small><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></span><span class="scenario-evidence"><small>Evidence</small><strong>${escapeHTML(evidence.level)}</strong></span><i aria-hidden="true">${expanded ? '−' : '+'}</i></button>${detail}</article>`;
+    return `<article class="scenario-item-row published-outlook-row ${expanded ? 'expanded' : ''}"><button type="button" data-published-expand="${escapeAttribute(asset.key)}" aria-expanded="${expanded}">${externalImage(asset.item, 'scenario-item-image')}<span class="scenario-item-name"><strong>${escapeHTML(asset.item?.name || 'Unnamed item')}</strong><small>${escapeHTML(asset.context)}</small></span><span><small>Current market</small><strong>${publication.observed ? escapeHTML(formatCurrency(publication.observed.price, currency)) : 'Unpriced'}</strong></span><span><small>Median</small><strong>${escapeHTML(formatCurrency(forecast.q50, currency))}</strong></span><span><small>Middle 50%</small><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></span><span class="scenario-evidence"><small>Evidence</small><strong>${escapeHTML(evidence.level)}</strong></span><i aria-hidden="true">${expanded ? '−' : '+'}</i></button>${detail}</article>`;
   }).join('');
   return `<section class="published-forecasts" aria-labelledby="published-forecasts-title"><div class="section-heading"><div><p class="eyebrow">Approved market evidence</p><h3 id="published-forecasts-title">Published Forecasts</h3><p class="muted">Visible only for exact items whose evidence and publication requirements passed review. These outputs remain separate from Scenario Lab.</p></div><span class="support-badge supported">${summary.coveredHoldings} covered</span></div><div class="scenario-item-list">${rows}</div></section>`;
 }
 
+// DCL-INS-03: when the flag is off, this section simply doesn't render.
 function publicationGateNotice() {
-  return `<section class="card intelligence-gate publication-gate" role="status"><span class="support-badge restricted">Research gate active</span><h2>Published market forecasts remain gated</h2><p>The manual scenarios above do not wait for an approved source. Separately, public market forecasts remain hidden until their source-rights, exact-mapping, validation, feature-flag, and operator-review gates pass.</p><ul class="evidence-list"><li>Local ranges are labeled modeled scenarios from your saved values.</li><li>They never become measured Track Record outcomes.</li><li>No private research output is presented as public market guidance.</li></ul></section>`;
+  return '';
 }
 
 function alertsSection(state) {
@@ -215,15 +222,20 @@ function alertCard(alert) {
   return `<article class="alert-history-card ${alert.unread ? 'unread' : 'read'} ${alert.muted ? 'muted' : ''}"><div class="alert-state"><span>${alert.unread ? 'Unread' : 'Read'}</span>${alert.muted ? '<span>Muted</span>' : ''}${alert.system ? '<span>System</span>' : '<span>Market</span>'}</div><div><p class="eyebrow">${escapeHTML(label)}</p><h3>${escapeHTML(name)}</h3><p>${escapeHTML(alert.message || 'A configured alert condition changed.')}</p><small>${escapeHTML(dateLabel(alert.triggeredAt))}</small>${alert.kind === 'forecast_change' ? '<p class="fine-print">This notification describes a model output change, not an observed price movement.</p>' : ''}</div><div class="item-actions">${alert.watched ? `<button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(alert.watchKey)}">Open item</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(alert.watchKey)}">Edit rule</button>` : ''}<button class="button ghost small" type="button" data-action="${alert.unread ? 'mark-alert-read' : 'mark-alert-unread'}" data-id="${escapeAttribute(alert.id)}">Mark ${alert.unread ? 'read' : 'unread'}</button><button class="button ghost small" type="button" data-action="toggle-alert-mute" data-id="${escapeAttribute(alert.id)}">${alert.muted ? 'Unmute notification' : 'Mute notification'}</button></div></article>`;
 }
 
+// DCL-INS-04: the gated state is one line (no badge, no card); the
+// empty-scorecard and empty-history states each collapse to one short
+// line; the surrounding governance prose (immutability, local storage
+// mechanics) is gone -- the equivalent guarantee now lives once in
+// methodologyDisclosure, rendered at the bottom of this page.
 function trackRecordSection(state) {
-  if (!state.featureFlags?.publicPriceIntelligence) return `<section class="card intelligence-gate" role="status"><span class="support-badge restricted">Publication gate active</span><h2>Track Record is unavailable</h2><p>Prediction history and accuracy claims remain hidden while public forecasting is disabled. Private research ledgers are never exposed through this screen.</p></section>`;
+  if (!state.featureFlags?.publicPriceIntelligence) return '<p class="muted">Forecast accuracy appears here once predictions mature.</p>';
   const scorecards = publishedScorecards(state.intelligence?.byVariant || {});
   const history = predictionHistoryModels(state.intelligence?.history || [], state.intelligence?.byVariant || {});
-  return `${intelligenceStatus(state)}<section class="track-record-workspace" aria-labelledby="track-record-title"><div class="section-heading"><div><p class="eyebrow">Accountable model output</p><h2 id="track-record-title">Prediction Track Record</h2><p class="muted">Open forecasts stay out of accuracy metrics. Matured records are never rewritten, and this client displays only approved evaluations.</p></div></div>
-    ${scorecards.length ? `<div class="scorecard-list">${scorecards.map(scorecardCard).join('')}</div>` : '<section class="card scorecard-unavailable" role="status"><h3>Accuracy metrics are not published yet</h3><p>No fully evaluated scorecard with the approved minimum sample is available. Percentages remain hidden instead of being calculated from open or incomplete local records.</p></section>'}
-    <div class="section-heading"><div><p class="eyebrow">Append-only local receipts</p><h2>Forecast history</h2><p class="muted">Approved public snapshots are archived under immutable keys during refresh. Importable backups remain user-owned.</p></div></div>
-    ${history.length ? `<div class="prediction-history-list">${history.map((entry) => historyCard(entry, state)).join('')}</div>` : emptyState('No forecast receipts archived', 'An immutable receipt appears after an approved public forecast is loaded for an owned or watched exact variant.', '<button class="button" type="button" data-go="portfolio" data-portfolio-target="watchlist">Open Watchlist</button>')}
-    <p class="fine-print">Local forecast receipts do not create accuracy claims. Only complete, approved scorecards built from matured evaluations can publish aggregate metrics.</p></section>`;
+  return `${intelligenceStatus(state)}<section class="track-record-workspace" aria-labelledby="track-record-title"><div class="section-heading"><div><p class="eyebrow">Accountable model output</p><h2 id="track-record-title">Prediction Track Record</h2></div></div>
+    ${scorecards.length ? `<div class="scorecard-list">${scorecards.map(scorecardCard).join('')}</div>` : '<p class="muted">Accuracy metrics aren\'t published yet.</p>'}
+    <div class="section-heading"><div><p class="eyebrow">Track Record</p><h2>Forecast history</h2></div></div>
+    ${history.length ? `<div class="prediction-history-list">${history.map((entry) => historyCard(entry, state)).join('')}</div>` : '<p class="muted">No forecast receipts yet.</p>'}
+    </section>`;
 }
 
 function scorecardCard(scorecard) {

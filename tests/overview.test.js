@@ -57,10 +57,15 @@ test('Home discloses partial pricing without duplicating Scenario Lab', () => {
     holdings: [holding('market'), holding('manual', { provider: 'custom', category: 'other', name: 'Manual item' }, { manualMarketPrice: 12 })]
   }));
   assert.match(html, /1 market · 1 manual · 0 unpriced/);
-  assert.match(html, /<h1>Home<\/h1>/);
+  // DCL-HOME-01: with holdings present, the page-header is removed
+  // entirely -- the hero card is the first element instead.
+  assert.doesNotMatch(html, /<h1>Home<\/h1>/);
+  assert.match(html, /^<section class="overview-hero"/);
   assert.match(html, /<span>Pricing coverage<\/span><strong>100%<\/strong>/);
   assert.doesNotMatch(html, /Scenario coverage|Local 90-day scenarios/);
-  assert.equal((html.match(/class="summary-stat"/g) || []).length, 4);
+  // DCL-HOME-06: Home renders exactly 3 summary stats (Cost basis,
+  // Estimated gain, Pricing coverage) -- Value concentration is gone.
+  assert.equal((html.match(/class="summary-stat"/g) || []).length, 3);
   assert.match(html, /<details class="card data-health">/);
   assert.doesNotMatch(html, /<details class="card data-health" open/);
   assert.match(html, /data-overview-range="3M" aria-pressed="true"/);
@@ -73,8 +78,11 @@ test('Home never turns an entirely unpriced collection into a zero-dollar value'
     currency: 'USD', priceSource: '', priceUpdatedAt: ''
   }, { purchasePrice: '', manualMarketPrice: '' });
   const html = renderHome(state({ holdings: [unpriced] }));
-  assert.match(html, /class="overview-value">Value not available</);
-  assert.match(html, /0 of 1 items priced/);
+  // DCL-HOME-04/RULE-5: the hero value fallback is "Unpriced"; the "X of Y
+  // items priced" support line is deleted from the hero (DCL-HOME-02) --
+  // the same count now lives only in the Pricing coverage summary stat.
+  assert.match(html, /class="overview-value">Unpriced</);
+  assert.match(html, /0 market · 0 manual · 1 unpriced/);
   assert.match(html, /1 unpriced item/);
   assert.doesNotMatch(html, /\$0\.00/);
 });
