@@ -149,8 +149,8 @@ async function configureStubs(page) {
 
 async function runSearch(page) {
   await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Card');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByPlaceholder('Search the catalog').fill('Card');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const withForecast = page.locator('.result-card', { hasText: 'History And Forecast Card' });
   const historyOnly = page.locator('.result-card', { hasText: 'History Only Card' });
   const noHistory = page.locator('.result-card', { hasText: 'No History Card' });

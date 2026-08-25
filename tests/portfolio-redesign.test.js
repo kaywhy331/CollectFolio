@@ -40,7 +40,11 @@ test('Collection presents one compact truthful summary and keeps manual and unpr
   assert.match(html, /value-source unpriced">Unpriced/);
   assert.match(html, /Alpha Set · #1 · foil · English/);
   assert.match(html, /Current value<\/dt><dd>Unpriced<\/dd>/);
-  assert.match(html, /Saved market reference is not included until source rights are approved/);
+  // DCL-COLL-05: the grouped-card value note shows one attention status
+  // only ("1 of 1 unpriced"); the provenance disclosure sentence moves to
+  // the detail page instead of repeating on every card.
+  assert.match(html, /<dd class="metric-note"><small>1 of 1 unpriced<\/small><\/dd>/);
+  assert.doesNotMatch(html, /Saved market reference is not included until source rights are approved/);
   assert.doesNotMatch(html, /portfolio-value-trend|Value trend/);
   assert.doesNotMatch(html, /class="holding-select"/);
   assert.match(html, /class="collection-overflow"/);
@@ -119,13 +123,17 @@ test('Full item detail keeps ownership actions sticky and technical mapping unde
   assert.match(html, /Your collection/);
   assert.match(html, /data-action="edit-holding"/);
   assert.match(html, /class="detail-action-bar"/);
-  assert.match(html, /Update quantity/);
+  // DCL-DET-08: single "Edit purchase" button; the duplicate "Update
+  // quantity" label under the same edit-holding action is removed.
+  assert.match(html, /data-action="edit-holding"[^>]*>Edit purchase/);
+  assert.doesNotMatch(html, /Update quantity/);
   assert.match(html, /View purchases/);
   assert.match(html, /data-action="toggle-watch"/);
   assert.match(html, /data-action="share-detail"/);
   assert.match(html, /href="#detail-market"/);
   assert.match(html, /<details class="data-details" id="detail-data"><summary><span>Data &amp; Methodology/);
-  assert.match(html, /Market pricing has not been verified yet/);
+  // DCL-DET-04: H2 shortens to "No verified pricing yet" (no period).
+  assert.match(html, /<h2>No verified pricing yet<\/h2>/);
 });
 
 test('a 1,000-holding portfolio renders a bounded first page', () => {

@@ -7,6 +7,7 @@ import { selectPublicationForCatalogItem } from '../core/market-series.js';
 import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames, catalogSetYears } from '../services/catalog-browse.js';
 import { findWatchedItem } from '../services/watchlist.js';
 import { isTrajectoryStale, trajectoryForecastEstimates, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
+import { MATCH_STATES } from '../core/copy.js';
 
 // Trajectory-v1 (T6): looks up a prefetched forecast packet for a TCGCSV
 // catalog item (see app.js's hydrateTrajectoryForecasts) and shapes it
@@ -77,14 +78,6 @@ function contextualFilters(category, filters = {}, formId = '') {
   return `<label>Set / series<input name="setName"${form} value="${value('setName')}" placeholder="Optional"></label><label>Card number<input name="number"${form} value="${value('number')}" placeholder="Optional"></label><label>Variant / finish<input name="variant"${form} value="${value('variant')}" placeholder="Foil, holofoil…"></label>`;
 }
 
-// catalog-v2 B3: Pokémon/Magic/Yu-Gi-Oh! now search the TCGCSV catalog
-// exclusively (services/catalog.js's FLAGSHIP_GAMES) -- the old
-// provider-specific "market" options never return a result for those
-// games anymore, so they're removed rather than left as dead choices.
-function providerOptions(selected) {
-  return `<option value="all" ${selected === 'all' ? 'selected' : ''}>Automatic · all enabled sources</option><option value="tcgcsv" ${selected === 'tcgcsv' ? 'selected' : ''}>Trading card games</option>`;
-}
-
 function pricingMarkup(model, item, { compact = false } = {}) {
   const labels = {
     verified: 'Market price', delayed: 'Delayed market price', manual: 'Manual value',
@@ -145,7 +138,7 @@ function resultCard(item, index, state, view, {
     ? `<span class="result-movement ${model.change30d >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${model.change30d >= 0 ? '↗' : '↘'}</span> ${escapeHTML(signedPercent(model.change30d))}</span>`
     : '';
   return `<article class="result-card ${escapeAttribute(view)}${compact ? ' catalog-tile' : ''}" data-action="open-detail" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}" tabindex="0" aria-label="Inspect ${escapeAttribute(model.name || 'catalog result')}">
-    <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}${!compact || item.productKind === 'sealed' ? `<span class="product-format-badge">${escapeHTML(format)}</span>` : ''}${matchBadge ? `<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(model.matchBucket === 'exact' ? 'Exact' : model.matchBucket === 'likely' ? 'Likely' : model.matchBucket === 'possible' ? 'Confirm variant' : 'Unresolved')}</span>` : ''}</div>
+    <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}${!compact || item.productKind === 'sealed' ? `<span class="product-format-badge">${escapeHTML(format)}</span>` : ''}${matchBadge ? `<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(MATCH_STATES[model.matchBucket] || MATCH_STATES.unmatched)}</span>` : ''}</div>
     <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model, item, { compact: listView ? false : compact })}${movementChip}</div>
     <div class="result-actions">${confirmedIdentity ? `<button class="button small" type="button" data-action="add-catalog" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Add to collection</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">${escapeHTML(watchLabel)}</button>` : ''}` : `<button class="button small" type="button" data-action="review-catalog-identity" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Confirm exact item</button>`}</div>
   </article>`;
@@ -189,21 +182,22 @@ function catalogPager({ action, page, totalPages, start, end, total, loading = f
   </nav>`;
 }
 
+// DCL-DISC-01: header is title + mode switch only -- the instructional
+// description sentence is deleted, not shortened.
 function discoverHeader(state, mode) {
-  const description = mode === 'browse'
-    ? 'Move from game to set to exact card without losing the complete catalog.'
-    : 'Find the exact printing first; add ownership details only after you select it.';
   const switcher = state.featureFlags?.setBrowsing === false ? '' : `<nav class="discover-mode-switch" aria-label="Discover mode">
     <button type="button" data-action="set-discover-mode" data-mode="search" aria-pressed="${mode === 'search'}">Search cards</button>
     <button type="button" data-action="set-discover-mode" data-mode="browse" aria-pressed="${mode === 'browse'}">Browse sets</button>
   </nav>`;
-  return `${pageHeader('Catalog', 'Discover', description)}${switcher}`;
+  return `${pageHeader('Catalog', 'Discover')}${switcher}`;
 }
 
+// DCL-DISC-10: one human sentence + Retry; raw provider strings move behind
+// a collapsed "Details" disclosure instead of rendering inline.
 function browseWarnings(browse) {
   const messages = [...(browse.warnings || []), browse.error].filter(Boolean);
   if (!messages.length) return '';
-  return `<div class="search-warning" role="status"><strong>${browse.error ? 'Catalog browsing is temporarily unavailable.' : 'Some catalogs were unavailable.'}</strong>${messages.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<button class="button ghost small" type="button" data-action="retry-browse">Retry</button></div>`;
+  return `<div class="search-warning" role="status"><strong>Some sources were unavailable.</strong><button class="button ghost small" type="button" data-action="retry-browse">Retry</button><details><summary>Details</summary>${messages.map((warning) => `<p>${escapeHTML(warning)}</p>`).join('')}</details></div>`;
 }
 
 function browseGameButton(game, browse, { directory = false } = {}) {
@@ -236,7 +230,12 @@ function categoryPickerOverlay(browse, catalogGames) {
   </div>`;
 }
 
-function gameChooser(state, browse, catalogGames) {
+// DCL-NAV-04: one landing serves both Discover entry points -- the top of
+// Browse before a game is picked, and search mode before there's any query
+// intent. These were two near-identical "pick a game" renderers
+// (gameChooser/discoverLanding); this is the single shared one both call
+// sites render now.
+function discoverLanding(browse, catalogGames) {
   // catalog-v2 B1: flagship games (Pokémon/Magic/Yu-Gi-Oh!) are provider
   // 'tcgcsv' too now, so the primary/directory split can no longer use
   // provider alone -- `flagship` marks the fixed CATALOG_GAMES entries that
@@ -251,22 +250,6 @@ function gameChooser(state, browse, catalogGames) {
     <div class="section-heading compact"><div><p class="eyebrow">Browse</p><h2 id="browse-game-heading">Popular games</h2><p class="section-detail">Choose a game, then narrow to a set and exact printing.</p></div><button class="button ghost small" type="button" data-action="open-category-picker">View All <span aria-hidden="true">·</span> ${categoryCount}</button></div>
     <div class="discover-category-grid" role="group" aria-label="Popular games">${quickGames.map((game) => browseGameTile(game, browse)).join('')}</div>
   </section>`;
-}
-
-function discoverLanding(state) {
-  const browse = { game: 'all', ...state.discover };
-  const games = mergeCatalogGames(browse.games);
-  const popular = games.filter((game) => game.flagship).slice(0, 6);
-  const recent = Array.isArray(browse.recentlyViewed) ? browse.recentlyViewed.slice(0, 4) : [];
-  const releases = [...(browse.sets || [])]
-    .filter((set) => set?.externalId && set?.gameId)
-    .sort((left, right) => String(right.releasedAt || right.year || '').localeCompare(String(left.releasedAt || left.year || '')))
-    .slice(0, 4);
-  const setShelf = (title, sets) => sets.length ? `<section class="discover-shelf"><div class="section-heading compact"><div><p class="eyebrow">Continue browsing</p><h2>${escapeHTML(title)}</h2></div></div><div class="catalog-tile-grid browse-set-grid">${sets.map((set) => setTile(set, games, browse.setCovers || {})).join('')}</div></section>` : '';
-  return `<section class="discover-landing" aria-labelledby="popular-games-title">
-    <div class="section-heading compact"><div><p class="eyebrow">Browse</p><h2 id="popular-games-title">Popular games</h2><p class="section-detail">Start with a category, then choose the exact item.</p></div><button class="button ghost small" type="button" data-action="open-category-picker">View All</button></div>
-    <div class="discover-category-grid" role="group" aria-label="Popular games">${popular.map((game) => browseGameTile(game, browse)).join('')}</div>
-  </section>${setShelf('Recently viewed', recent)}${setShelf('New releases', releases)}`;
 }
 
 function setTile(set, games, covers = {}) {
@@ -295,17 +278,20 @@ function browseYearFilter(browse) {
   </details>`;
 }
 
+// DCL-NAV-04: the breadcrumb's "Discover" crumb is the sole way back up --
+// the separate "All games" button (same data-action="browse-all-games")
+// was a redundant second control for the identical action.
 function browseGameHeader(browse, games) {
   const game = catalogGame(browse.game, games);
   const name = game?.name || browse.game;
   const eyebrow = game?.provider === 'tcgcsv' ? 'Catalog category' : 'Catalog';
   return `<nav class="browse-breadcrumbs" aria-label="Browse path"><button type="button" data-action="browse-all-games">Discover</button><span>/</span><strong>${escapeHTML(name)}</strong></nav>
-    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h2>${escapeHTML(name)}</h2></div><button class="button ghost small" type="button" data-action="browse-all-games">All games</button></div>`;
+    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h2>${escapeHTML(name)}</h2></div></div>`;
 }
 
 function renderBrowseSets(state, browse) {
   const games = mergeCatalogGames(browse.games);
-  if (browse.game === 'all') return gameChooser(state, browse, games);
+  if (browse.game === 'all') return discoverLanding(browse, games);
   const sets = filterCatalogSets(browse.sets || [], { query: browse.query, sort: browse.sort, scope: browse.scope, years: browse.years });
   const totalPages = Math.max(1, Math.ceil(sets.length / BROWSE_SETS_PAGE_SIZE));
   const page = Math.min(totalPages, Math.max(1, Number.parseInt(browse.setPage, 10) || 1));
@@ -384,8 +370,12 @@ function renderBrowseProducts(state, browse) {
   const noun = kind === 'sealed'
     ? ['sealed product', 'sealed products']
     : kind === 'cards' || !counts.sealed ? ['card', 'cards'] : ['item', 'items'];
+  // DCL-NAV-04: the breadcrumb's game-name crumb (data-action="select-browse-game"
+  // with this same game, which clears setId exactly like browse-back-sets
+  // did) is the sole way back to this game's set list -- the separate
+  // "All sets" button was a redundant second control.
   return `<nav class="browse-breadcrumbs" aria-label="Browse path"><button type="button" data-action="browse-all-games">Discover</button><span>/</span><button type="button" data-action="select-browse-game" data-game="${escapeAttribute(browse.game)}">${escapeHTML(game?.shortName || browse.game)}</button><span>/</span><strong>${escapeHTML(title)}</strong></nav>
-    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading the first products…' : declaredTotal > products.length ? `${declaredTotal.toLocaleString()} ${escapeHTML(declaredTotal === 1 ? noun[0] : noun[1])}` : `${filtered.length.toLocaleString()} ${escapeHTML(filtered.length === 1 ? noun[0] : noun[1])}`}</p></div><button class="button ghost small" type="button" data-action="browse-back-sets">All sets</button></div>
+    <div class="browse-set-heading"><div><p class="eyebrow">${escapeHTML([selectedSet?.code, selectedSet?.year].filter(Boolean).join(' · ') || game?.name || '')}</p><h2>${escapeHTML(title)}</h2><p>${browse.loading ? 'Loading the first products…' : declaredTotal > products.length ? `${declaredTotal.toLocaleString()} ${escapeHTML(declaredTotal === 1 ? noun[0] : noun[1])}` : `${filtered.length.toLocaleString()} ${escapeHTML(filtered.length === 1 ? noun[0] : noun[1])}`}</p></div></div>
     ${browseProductKindTabs({ ...browse, productKind: kind }, counts)}
     <div class="browse-controls products">
       <label class="browse-query"><span class="sr-only">Search this set</span><input type="search" data-browse-product-query value="${escapeAttribute(browse.productQuery || '')}" placeholder="Search this set…" autocomplete="off"></label>
@@ -416,21 +406,26 @@ function activeSearchFilters(search, games) {
   return active;
 }
 
+// DCL-DISC-09: the provider hidden field is removed along with the "Data
+// source" control below -- state.search.provider itself is untouched
+// (still defaults 'all'), there's just no filter-form UI to change it.
 function hiddenSearchFilters(search) {
   const fields = [
-    ['category', search.category || 'all'], ['provider', search.provider || 'all'],
+    ['category', search.category || 'all'],
     ...Object.entries(search.filters || {})
   ];
   return fields.map(([name, value]) => `<input type="hidden" name="${escapeAttribute(name)}" value="${escapeAttribute(value)}">`).join('');
 }
 
+// DCL-DISC-09: the "Data source" control is removed entirely (automatic
+// source selection needs no user-facing explanation).
 function searchFilterOverlay(search, state, count) {
   if (!state.discover?.searchFiltersOpen) return '';
   return `<div class="search-filter-layer">
     <button class="search-filter-scrim" type="button" data-action="close-search-filters" aria-label="Close filters"></button>
     <section class="search-filter-panel" role="dialog" aria-modal="true" aria-labelledby="search-filter-title">
       <header><div><p class="eyebrow">Discover</p><h2 id="search-filter-title">Filters${count ? ` · ${count} active` : ''}</h2></div><button class="icon-button" type="button" data-action="close-search-filters" aria-label="Close filters">×</button></header>
-      <div class="discover-filter-grid"><label>Category<select name="category" form="catalog-search">${categoryOptions(search.category, state.discover?.games)}</select></label>${contextualFilters(search.category, search.filters, 'catalog-search')}<details class="data-source-control"><summary>Data source</summary><label>Market source<select name="provider" form="catalog-search">${providerOptions(search.provider)}</select></label><p>Automatic selection searches every enabled source and keeps partial results if one is unavailable.</p></details></div>
+      <div class="discover-filter-grid"><label>Category<select name="category" form="catalog-search">${categoryOptions(search.category, state.discover?.games)}</select></label>${contextualFilters(search.category, search.filters, 'catalog-search')}</div>
       <footer><button class="button ghost" type="button" data-action="clear-search-filters">Clear all</button><button class="button" type="submit" form="catalog-search">Show results</button></footer>
     </section>
   </div>`;
@@ -511,11 +506,11 @@ export function renderSearch(state) {
     : `${search.results.length.toLocaleString()} result${search.results.length === 1 ? '' : 's'}`;
   return `${discoverHeader(state, 'search')}
     <form id="catalog-search" class="discover-search">
-      <div class="search-command"><button class="search-image-button" type="button" data-action="start-single-scan" aria-label="Search from an image">▣</button><label class="sr-only" for="catalog-query">Search catalog</label><input id="catalog-query" name="query" type="search" required minlength="2" value="${escapeAttribute(search.query)}" placeholder="Search cards, sets, players, products, or set codes" autocomplete="off"><button class="search-clear" type="button" data-action="clear-search" aria-label="Clear search" ${search.query ? '' : 'hidden'}>×</button><button class="button" ${search.loading ? 'disabled' : ''}>${search.loading ? 'Searching…' : 'Search'}</button></div>
+      <div class="search-command"><button class="search-image-button" type="button" data-action="start-single-scan" aria-label="Search from an image">▣</button><label class="sr-only" for="catalog-query">Search catalog</label><input id="catalog-query" name="query" type="search" required minlength="2" value="${escapeAttribute(search.query)}" placeholder="Search the catalog" autocomplete="off"><button class="search-clear" type="button" data-action="clear-search" aria-label="Clear search" ${search.query ? '' : 'hidden'}>×</button><button class="button" ${search.loading ? 'disabled' : ''}>${search.loading ? 'Searching…' : 'Search'}</button></div>
       ${recentSearches({ ...state, search })}
       ${state.discover?.searchFiltersOpen ? '' : hiddenSearchFilters(search)}
     </form>
-    ${hasIntent ? searchToolbar(search, state, view, sortContract, activeFilters) : discoverLanding(state)}
-    ${search.warnings.length ? `<div class="search-warning" role="status"><strong>Some sources were unavailable.</strong>${search.warnings.map((warning) => `<span>${escapeHTML(warning)}</span>`).join('')}<small>Your search and filters are unchanged.</small><button class="button ghost small" type="button" data-action="retry-search">Retry search</button></div>` : ''}
-    ${!hasIntent ? '' : manualCategory ? `${emptyState(`Create a precise ${search.category} record`, 'There is no universal rights-cleared catalog for this category. Add the identity and value you can verify.', `<button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create custom item</button>`)}` : `<div class="discover-results-head"><div><strong>${search.loading ? 'Searching sources…' : resultCount}</strong><span>${search.query ? `for “${escapeHTML(search.query)}”` : 'filtered catalog'}</span></div></div>${search.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching catalog sources</span></div>' : `${resultGrid(visibleResults, { ...state, search }, view)}${catalogPager({ action: 'search-results-page', page, totalPages, start, end, total: search.results.length, label: 'Discover results' })}`}`}${searchFilterOverlay(search, state, activeFilters.length)}${categoryPickerOverlay(state.discover || {}, mergeCatalogGames(state.discover?.games))}`;
+    ${hasIntent ? searchToolbar(search, state, view, sortContract, activeFilters) : discoverLanding({ game: 'all', ...state.discover }, mergeCatalogGames(state.discover?.games))}
+    ${search.warnings.length ? `<div class="search-warning" role="status"><strong>Some sources were unavailable.</strong><button class="button ghost small" type="button" data-action="retry-search">Retry search</button><details><summary>Details</summary>${search.warnings.map((warning) => `<p>${escapeHTML(warning)}</p>`).join('')}</details></div>` : ''}
+    ${!hasIntent ? '' : manualCategory ? `${emptyState(`No catalog covers ${categoryLabel(search.category, state.discover?.games)} yet.`, 'Add yours with the details you know.', `<button class="button" type="button" data-action="custom-holding" data-category="${escapeAttribute(search.category)}">Create custom item</button>`)}` : `<div class="discover-results-head"><div><strong>${search.loading ? 'Searching sources…' : resultCount}</strong><span>${search.query ? `for “${escapeHTML(search.query)}”` : 'filtered catalog'}</span></div></div>${search.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching catalog sources</span></div>' : `${resultGrid(visibleResults, { ...state, search }, view)}${catalogPager({ action: 'search-results-page', page, totalPages, start, end, total: search.results.length, label: 'Discover results' })}`}`}${searchFilterOverlay(search, state, activeFilters.length)}${categoryPickerOverlay(state.discover || {}, mergeCatalogGames(state.discover?.games))}`;
 }

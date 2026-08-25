@@ -154,11 +154,11 @@ test('signed-in settings synchronize successfully and recover their offline stat
   await page.goto('/');
   await skipOnboarding(page);
   await page.getByRole('button', { name: 'Open settings' }).click();
-  await expect(page.locator('[data-account-status="pending"]')).toContainText('Waiting to synchronize');
+  await expect(page.locator('[data-account-status="pending"]')).toContainText('Waiting to sync');
   await expect(page.getByRole('button', { name: 'Remove cloud data' })).toBeDisabled();
-  await expect(page.getByText(/Unavailable until independently recoverable cloud removal/)).toBeVisible();
-  await page.getByRole('button', { name: 'Synchronize now' }).click();
-  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
+  await expect(page.getByText(/Not available yet/)).toBeVisible();
+  await page.getByRole('button', { name: 'Sync now' }).click();
+  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synced');
   const ownedReads = cloud.requests.filter((entry) => entry.startsWith('GET ')
     && /\/(?:holdings|holding_deletions|portfolio_snapshots|watchlist_items|watchlist_deletions)\?/.test(entry));
   expect(ownedReads.length).toBeGreaterThanOrEqual(5);
@@ -166,13 +166,19 @@ test('signed-in settings synchronize successfully and recover their offline stat
     ownedReads.filter((entry) => entry.includes('user_id=eq.30000000-0000-4000-8000-000000000001')),
     ownedReads.join('\n')
   ).toHaveLength(ownedReads.length);
-  await expect(page.locator('section.settings-section').filter({ hasText: 'Synchronization history' })).toContainText('Completed');
+  // DCL-SET-05: scope by the exact heading, not hasText -- the shortened
+  // "Sync history" heading now collides case-insensitively with the
+  // unrelated "...cached images and app files, and sync history." sentence
+  // in the danger-zone card below it.
+  await expect(page.locator('section.settings-section').filter({
+    has: page.getByRole('heading', { name: 'Sync history', exact: true })
+  })).toContainText('Completed');
 
   await context.setOffline(true);
   await expect(page.locator('[data-account-status="offline"]')).toContainText('Offline');
-  await expect(page.getByRole('button', { name: 'Synchronize now' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Sync now' })).toBeDisabled();
   await context.setOffline(false);
-  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
+  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synced');
   await expectAccessible(page);
 });
 
@@ -181,8 +187,8 @@ test('a local collection cannot silently synchronize into a different account', 
   await page.goto('/');
   await skipOnboarding(page);
   await page.getByRole('button', { name: 'Open settings' }).click();
-  await page.getByRole('button', { name: 'Synchronize now' }).click();
-  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synchronized');
+  await page.getByRole('button', { name: 'Sync now' }).click();
+  await expect(page.locator('[data-account-status="synced"]')).toContainText('Synced');
   const writesAfterOwnerSync = cloud.writes.length;
 
   const userB = '30000000-0000-4000-8000-000000000002';
@@ -196,7 +202,7 @@ test('a local collection cannot silently synchronize into a different account', 
   }, { accessToken: accessTokenFor(userB), accountId: userB });
   await page.reload();
   await expect(page.locator('[data-account-status="error"]')).toContainText('linked to another cloud account');
-  await page.getByRole('button', { name: 'Synchronize now' }).click();
+  await page.getByRole('button', { name: 'Sync now' }).click();
   await expect(page.locator('[data-account-status="error"]')).toContainText('linked to another cloud account');
   expect(cloud.writes.length).toBe(writesAfterOwnerSync);
 });
@@ -206,12 +212,12 @@ test('synchronization errors preserve local data and expose a recovery reference
   await page.goto('/');
   await skipOnboarding(page);
   await page.getByRole('button', { name: 'Open settings' }).click();
-  await page.getByRole('button', { name: 'Synchronize now' }).click();
+  await page.getByRole('button', { name: 'Sync now' }).click();
   const status = page.locator('[data-account-status="error"]');
-  await expect(status).toContainText('Synchronization needs attention');
+  await expect(status).toContainText('Sync needs attention');
   await expect(status).toContainText('local collection is unchanged');
   await page.getByText('Recovery details').click();
   await expect(page.locator('.diagnostic-details code')).toContainText(/^SYNC-/);
-  await expect(page.getByRole('button', { name: 'Synchronize now' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Sync now' })).toBeEnabled();
   await expectAccessible(page);
 });

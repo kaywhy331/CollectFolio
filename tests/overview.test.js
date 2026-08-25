@@ -98,6 +98,10 @@ test('Home keeps readable refresh status inside collapsed Data Health', () => {
     }
   }));
   assert.match(html, /Prices updated recently/);
-  assert.match(html, /Last successful refresh:/);
+  // DCL-HOME-08: status detail is "Prices are up to date."; the timestamp
+  // receipt drops the "Last successful refresh:" label for "Updated <date>."
+  assert.match(html, /Prices are up to date\./);
+  assert.match(html, /Updated .+\./);
+  assert.doesNotMatch(html, /Last successful refresh:/);
   assert.doesNotMatch(html, /market data build|R2|artifact|runs\//i);
 });

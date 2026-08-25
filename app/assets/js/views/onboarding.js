@@ -20,7 +20,7 @@ export function renderOnboarding(state) {
   if (step === 'add') {
     const cloud = state.settings.onboardingStorage === 'cloud';
     const cloudConnect = cloud && !state.auth.session
-      ? `<button class="button secondary" type="button" data-action="open-auth" ${cloudAvailable ? '' : 'disabled aria-describedby="cloud-unavailable"'}>Connect cloud backup</button>${cloudAvailable ? '' : '<small id="cloud-unavailable" class="fine-print">Cloud backup is unavailable in this build. You can continue with storage on this device.</small>'}`
+      ? `<button class="button secondary" type="button" data-action="open-auth" ${cloudAvailable ? '' : 'disabled aria-describedby="cloud-unavailable"'}>Connect cloud backup</button>${cloudAvailable ? '' : "<small id=\"cloud-unavailable\" class=\"fine-print\">Cloud backup isn't available yet. You can continue with storage on this device.</small>"}`
       : '';
     return `<section class="onboarding-shell">${common}<div class="card onboarding-card"><p class="eyebrow">Step 3 of 3</p><h2>Add your first collectible</h2><p>Search a catalog, scan an image, import a backup, or create a custom item. Pricing is optional, and unsupported items remain visible.</p><div class="onboarding-choice-summary"><span>Saved ${cloud ? 'with optional cloud backup' : 'on this device'}</span><span>${escapeHTML(state.settings.currency)} collection currency</span></div><div class="button-row"><button class="button ghost" type="button" data-action="onboarding-back">Back</button><button class="button" type="button" data-action="onboarding-add">Choose how to add</button>${cloudConnect}</div></div><button class="onboarding-skip" type="button" data-action="skip-onboarding">Finish setup without adding now</button></section>`;
   }

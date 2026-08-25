@@ -7,6 +7,7 @@ import { selectPublicationForCatalogItem, selectPublicationForHolding, selectPub
 import { isTrajectoryStale, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
 import { historyKeyForItem } from '../services/history-trajectory.js';
 import { findWatchedItem } from '../services/watchlist.js';
+import { MATCH_STATES, UNKNOWN } from '../core/copy.js';
 
 // 0.8.17: compact bar chart for the drawer -- fewer bars, tighter height
 // (see core/history-chart.js's `compact` option). Same fail-closed rule
@@ -33,7 +34,10 @@ function pricingSummary(model) {
     unavailable: 'No verified market price', error: 'Pricing could not be loaded'
   };
   const valueAvailable = model.currentMarketValue !== null && !['unsupported', 'unavailable', 'error'].includes(model.pricingStatus);
-  if (!valueAvailable) return '';
+  // DCL-DET-11: one "Unpriced" stat replaces the standalone "no verified
+  // market price" line -- the stats row always carries exactly one
+  // representation of a missing price.
+  if (!valueAvailable) return `<div class="inspector-stat"><span>Current value</span><strong>${UNKNOWN.unpriced}</strong></div>`;
   return `<div class="inspector-stat"><span>Current value</span><strong>${escapeHTML(formatCurrency(model.currentMarketValue, model.currency))}</strong><small class="pricing-${model.pricingStatus}">${escapeHTML(labels[model.pricingStatus] || 'Market price')}</small></div>`;
 }
 
@@ -67,9 +71,8 @@ export function renderQuickInspector(detail, state) {
     marketCondition: detail.catalogRef?.marketCondition || detail.watched?.marketCondition
   }));
   const identity = [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.variant, model.language, model.rarity].filter(Boolean).join(' · ');
-  const confidenceLabels = { exact: 'Exact match', likely: 'Likely match', possible: 'Confirm variant', unmatched: 'Identity unresolved' };
   const identityConfirmed = detail.identityConfirmed || model.matchBucket === 'exact';
-  const confidence = detail.identityConfirmed ? 'Exact match · confirmed by you' : confidenceLabels[model.matchBucket] || 'Identity unresolved';
+  const confidence = detail.identityConfirmed ? MATCH_STATES.confirmed : MATCH_STATES[model.matchBucket] || MATCH_STATES.unmatched;
   const format = model.type || (item.productKind === 'sealed' ? 'Sealed product' : 'Card');
   const localEvidence = localScenario?.status === 'available' ? 'Moderate evidence' : 'Limited evidence';
   const stats = `${pricingSummary(model)}${movementSummary(model)}${localScenarioAvailable || publishedForecastAvailable ? `<div class="inspector-stat ${localScenarioAvailable ? 'scenario' : 'forecast'}"><span>${localScenarioAvailable ? 'Your scenario' : 'Published outlook'}</span><strong>${localScenarioAvailable ? `${escapeHTML(formatCurrency(localScenario.q25, localScenario.currency))}–${escapeHTML(formatCurrency(localScenario.q75, localScenario.currency))}` : 'Available'}</strong><small>${localScenarioAvailable ? `${localScenario.horizon}-day range · ${localEvidence}` : 'Approved outlook published'}</small></div>` : ''}`;
@@ -79,8 +82,7 @@ export function renderQuickInspector(detail, state) {
     <header><div><p class="eyebrow">Quick view</p><h2 id="quick-inspector-title">${escapeHTML(model.name || 'Item inspector')}</h2></div><button class="icon-button" type="button" data-action="close-detail" aria-label="Close item inspector">×</button></header>
     <div class="quick-inspector-body">
       <div class="inspector-art">${externalImage(item, 'inspector-image', { loading: 'eager' })}<span class="match-badge ${model.matchBucket}">${escapeHTML(confidence)}</span></div>
-      <div class="inspector-identity"><strong>${escapeHTML(identity || 'Identity details pending')}</strong><span>${escapeHTML([format, model.game || model.category].filter(Boolean).join(' · '))}</span></div>
-      ${model.currentMarketValue === null ? '<p class="inspector-unavailable">No verified market price yet</p>' : ''}
+      <div class="inspector-identity">${identity ? `<strong>${escapeHTML(identity)}</strong>` : ''}<span>${escapeHTML([format, model.game || model.category].filter(Boolean).join(' · '))}</span></div>
       ${stats ? `<div class="inspector-stats">${stats}</div>` : ''}
       ${detail.holding ? `<div class="inspector-holding"><span>In your collection</span><strong>${escapeHTML(String(detail.holding.quantity || 0))} owned · ${escapeHTML(detail.holding.condition || 'Condition not set')}</strong></div>` : ''}
       ${inspectorHistoryMarkup(item, state)}

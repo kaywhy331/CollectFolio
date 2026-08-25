@@ -223,8 +223,9 @@ test('guest shell preserves every current primary entry point', async ({ page })
   await expect(page.getByRole('button', { name: /Import collection/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Export backup/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Create custom item/ })).toBeVisible();
-  await expect(page.getByText(/Use one item or several/i)).toBeVisible();
-  await expect(page.getByText(/camera permission is denied/i)).toBeVisible();
+  // DCL-SCAN-01: the hero prose restatements are deleted -- the hero
+  // collapses to one line ("Drop or paste an image anywhere.").
+  await expect(page.getByText('Drop or paste an image anywhere.')).toBeVisible();
   await navigation.getByRole('button', { name: 'Collection' }).click();
   await expect(page).toHaveURL(/\/collection\/items$/);
   await expect(page.getByRole('heading', { name: 'Collection', exact: true })).toBeVisible();
@@ -249,7 +250,8 @@ test('foundation shell stays truthful and keyboard-operable across breakpoints',
   }
   await expect(page.locator('.portfolio-context')).toContainText('Collection');
   await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
-  await expect(page.locator('.shell-topbar').getByRole('button', { name: 'Search cards' })).toBeVisible();
+  // DCL-SET-08: shell search label shortens to "Search".
+  await expect(page.locator('.shell-topbar').getByRole('button', { name: 'Search', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /notifications/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /switch portfolio/i })).toHaveCount(0);
 
@@ -341,7 +343,10 @@ test('routes restore filters and Quick Inspector preserves context, focus, and f
   await dismissOnboarding(page, 'Discover');
   await expect(page.locator('#catalog-query')).toHaveValue('Lotus');
   await expect(page.locator('[name="category"]')).toHaveValue('magic');
-  await expect(page.locator('[name="provider"]')).toHaveValue('tcgcsv');
+  // DCL-DISC-09: the "Data source" control (and its hidden field) is
+  // removed from the filter panel -- state.search.provider is still
+  // restored from the route, surfaced only as its filter chip now.
+  await expect(page.getByRole('button', { name: /Trading card data/ })).toBeVisible();
 
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Collection' }).click();
@@ -461,7 +466,10 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' }).click();
   await page.getByRole('button', { name: /Saved scan ready/ }).click();
   await expect(page.getByRole('heading', { name: 'Review 2 detected items' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Review queue summary' })).toContainText('Unmatched1');
+  // DCL-LEX-04: match-state vocabulary sourced from the shared registry --
+  // the review summary's unmatched-count label reads "No match" (was
+  // "Unmatched").
+  await expect(page.getByRole('region', { name: 'Review queue summary' })).toContainText('No match1');
   await expect(page.getByText('Apply purchase details to all')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add 1 confirmed' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Identify this item' })).toBeVisible();
@@ -508,6 +516,9 @@ test('same-day local value corrections stay append-only in IndexedDB', async ({ 
 test('Phase 3 collection tools stay selection-scoped and Watchlist removal is confirmed', async ({ page }) => {
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Collection' }).click();
+  // DCL-COLL-06: the Grouped/Purchases toggle folds into a "Display
+  // options" popover shared with the view toggle -- open it first.
+  await page.locator('summary[aria-label="Display options"]').click();
   await page.getByRole('button', { name: 'Purchases', exact: true }).click();
   const holding = page.locator('.portfolio-holding-card[data-holding-id="10000000-0000-4000-8000-000000000001"]');
   await page.locator('summary[aria-label="More collection actions"]').click();
@@ -607,7 +618,9 @@ test('Scenario Lab keeps assumption-based output separate while published foreca
   await expect(page.getByRole('heading', { name: 'Published market forecasts remain gated' })).toHaveCount(0);
 
   await expect(page.getByText('Unchanged scenario').first()).toBeVisible();
-  await expect(page.getByText(/Scenarios are assumption-based estimates/)).toBeVisible();
+  // DCL-LEX-10/DCL-INS-02: negation-heavy sentence replaced by the shared
+  // registry clarifier (core/copy.js CLARIFIERS.scenario).
+  await expect(page.getByText(/Scenarios are estimates from your assumptions, not market data\./)).toBeVisible();
   await expect(page.locator('.scenario-item-row').first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Published Forecasts' })).toHaveCount(0);
   await expect(page.getByRole('img', { name: /Approved forecast projection/ })).toHaveCount(0);
@@ -644,7 +657,10 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await expect(alert).toContainText('Unread');
   await expect(alert).toContainText('Model-based forecast change');
   await alert.getByRole('button', { name: 'Mark read' }).click();
-  await expect(alert).toContainText('Read');
+  // DCL-INS-06: alert chips mark exceptions only (Unread, Muted, System) --
+  // the default read state carries zero chips instead of a "Read" chip.
+  await expect(alert.getByText('Unread', { exact: true })).toHaveCount(0);
+  await expect(alert.getByRole('button', { name: 'Mark unread' })).toBeVisible();
   await alert.getByRole('button', { name: 'Mute notification' }).click();
   await expect(alert).toContainText('Muted');
   await page.reload();

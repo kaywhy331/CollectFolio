@@ -85,7 +85,11 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   });
   assert.match(html, /Review queue summary/);
   assert.match(html, /Apply purchase details to all/);
-  assert.match(html, /Confirmed printing/);
+  // DCL-SCAN-06: "Confirm" becomes "Confirmed ✓" plus a separate "Undo" --
+  // "Confirmed printing" is retired match-state vocabulary.
+  assert.match(html, /approval-state" role="status">Confirmed ✓</);
+  assert.match(html, /data-action="approve-crop"[^>]*data-approved="true">Undo/);
+  assert.doesNotMatch(html, /Confirmed printing/);
   assert.match(html, /data-crop-acquisition="purchasePrice"/);
   assert.match(html, /data-crop-acquisition="purchaseCurrency"/);
   assert.match(html, /data-crop-acquisition="manualMarketCurrency"/);
@@ -94,14 +98,20 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   assert.match(html, /data-crop-acquisition="retainPhoto"/);
   assert.match(html, /\$22\.00 USD cost basis/);
   assert.match(html, /Add 1 confirmed/);
-  assert.match(html, /Unconfirmed and unmatched items are skipped/);
-  assert.match(html, /full source photo stays only in browser memory/i);
+  // DCL-SCAN-07: confirmation-bar small print shortens to one sentence.
+  assert.match(html, /Only confirmed items are added\./);
+  assert.doesNotMatch(html, /Unconfirmed and unmatched items are skipped/);
+  // DCL-SCAN-02: the shared "How photos are handled" disclosure is the one
+  // place pipeline/privacy prose lives now (data-integrity guarantee
+  // preserved: the full source photo never leaves the browser / is never
+  // saved -- only a cropped copy is used for identification).
+  assert.match(html, /full source photo never leaves this browser and is never saved/i);
+  assert.match(html, /only a cropped copy of each card is used for identification/i);
+  assert.match(html, /<details class="photo-handling-disclosure"><summary>How photos are handled<\/summary>/);
   assert.match(html, /data-action="release-source-photo"/);
   assert.match(html, /data-action="discard-scan"/);
   assert.match(html, /data-action="edit-crop"/);
   assert.match(html, /Edit crop boundary/);
-  assert.match(html, /bounded, metadata-free card crop is sent transiently to CollectCapture/i);
-  assert.match(html, /does not retain it/i);
 });
 
 test('scan review recognizes a condition-aware mapped watch', () => {
@@ -132,7 +142,9 @@ test('review labels candidates as similarity evidence and requires explicit iden
     settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }
   });
   assert.match(html, /Proposed match/);
-  assert.match(html, /Confirm this printing/);
+  // DCL-SCAN-06: approval control verb generalizes to "Confirm this item"
+  // (retiring the printing-specific label).
+  assert.match(html, /Confirm this item/);
   assert.match(html, /Strong lookup match/);
   assert.doesNotMatch(html, /100%/);
   assert.doesNotMatch(html, /Approve this exact item/);

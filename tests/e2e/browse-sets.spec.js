@@ -200,7 +200,9 @@ test('Browse Sets keeps popular games visible and opens the complete searchable 
   await expect(page.locator('.browse-breadcrumbs')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'One Piece Card Game' })).toBeVisible();
   await expect(categories).toHaveCount(0);
-  await page.getByRole('button', { name: 'All games', exact: true }).click();
+  // DCL-NAV-04: the separate "All games" button is removed -- the
+  // breadcrumb's "Discover" crumb is the sole upward nav.
+  await page.locator('.browse-breadcrumbs').getByRole('button', { name: 'Discover', exact: true }).click();
   await expect(page).toHaveURL(/\/discover\/browse$/);
   await expect(page.locator('[data-game-search-text]')).toHaveCount(0);
   await page.getByRole('button', { name: /View All/ }).click();

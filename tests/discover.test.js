@@ -77,12 +77,14 @@ test('Discover orders one ungrouped result grid by newest released set by defaul
   assert.doesNotMatch(html, /result-group/);
 });
 
-test('Discover adapts filters and keeps provider choice under Data source', () => {
+test('Discover adapts category filters and keeps custom-item creation', () => {
   const sports = renderSearch(state({ discover: { mode: 'search', searchFiltersOpen: true }, search: { query: '', category: 'sports', provider: 'all', filters: {}, view: 'list', loading: false, results: [], warnings: [] } }));
   assert.match(sports, /Player/);
   assert.match(sports, /Set \/ product/);
   assert.match(sports, /Grade/);
-  assert.match(sports, /<summary>Data source<\/summary>/);
+  // DCL-DISC-09: the "Data source" control and its explanation are removed
+  // from the filter panel entirely (Decision D-4).
+  assert.doesNotMatch(sports, /Data source/);
   assert.match(sports, /Create custom item/);
 });
 
@@ -178,7 +180,9 @@ test('Discover defers set rendering until a game is selected and keeps the compl
   assert.match(drilled, /class="browse-breadcrumbs"/);
   assert.match(drilled, /data-action="browse-all-games">Discover</);
   assert.match(drilled, /<h2>Pokémon<\/h2>/);
-  assert.match(drilled, /data-action="browse-all-games">All games</);
+  // DCL-NAV-04: the separate "All games" button is removed -- the
+  // breadcrumb's "Discover" crumb (asserted above) is the sole upward nav.
+  assert.doesNotMatch(drilled, />All games</);
   assert.doesNotMatch(drilled, /class="category-picker"/);
   assert.equal((drilled.match(/data-game-search-text=/g) || []).length, 0);
   assert.match(drilled, /data-set-id="swsh12"/);
@@ -224,7 +228,10 @@ test('Discover maps TCGCSV categories to their source game titles in browse and 
   assert.match(browse, /<h2>One Piece Card Game<\/h2>/);
   assert.match(browse, /Catalog category/);
   assert.doesNotMatch(browse, /TCGCSV category 68/);
-  assert.match(browse, /data-action="browse-all-games">All games</);
+  // DCL-NAV-04: the separate "All games" button is removed -- the
+  // breadcrumb's "Discover" crumb is the sole upward nav.
+  assert.match(browse, /data-action="browse-all-games">Discover</);
+  assert.doesNotMatch(browse, />All games</);
   assert.doesNotMatch(browse, /All games and categories/);
   assert.equal((browse.match(/data-game-search-text=/g) || []).length, 0);
   assert.match(browse, /One Piece Card Game[\s\S]*Romance Dawn/);
@@ -384,7 +391,8 @@ test('Discover landing limits recognizable categories and keeps the universal se
     search: { query: '', category: 'all', provider: 'all', filters: {}, view: 'gallery', loading: false, results: [], warnings: [] },
     discover: { mode: 'search', games: [], sets: [], products: [] }
   }));
-  assert.match(html, /placeholder="Search cards, sets, players, products, or set codes"/);
+  // DCL-DISC-05: search placeholder shortened to "Search the catalog".
+  assert.match(html, /placeholder="Search the catalog"/);
   assert.match(html, /Popular games/);
   assert.equal((html.match(/class="discover-category-tile"/g) || []).length, 3);
   assert.match(html, /data-action="open-category-picker">View All/);
@@ -458,7 +466,9 @@ test('Quick Inspector requires identity confirmation, hides empty metrics, and s
   const html = renderQuickInspector({ origin: 'search', item: { ...item, name: '<script>bad</script>' }, catalogRef }, state());
   assert.doesNotMatch(html, /<script>bad<\/script>/);
   assert.match(html, /Synthetic Alpha · #001 · foil · english · Rare/i);
-  assert.match(html, /Identity unresolved/);
+  // DCL-LEX-04: match-state vocabulary is the shared registry now --
+  // unconfirmed/no-bucket identity reads "No match" (was "Identity unresolved").
+  assert.match(html, />No match</);
   assert.match(html, /data-action="confirm-detail-identity">Confirm exact item/);
   assert.doesNotMatch(html, /No approved outlook published/);
   assert.doesNotMatch(html, /data-action="add-from-detail"/);
@@ -474,19 +484,27 @@ test('Quick Inspector requires identity confirmation, hides empty metrics, and s
   assert.match(confirmed, /data-sheet-detent="expanded"/);
 });
 
-test('Scan separates camera and upload, previews the workflow, and keeps export in Settings', () => {
+test('Scan separates camera and upload, previews the workflow, and keeps import copy terse', () => {
   const html = renderAdd(state());
   assert.match(html, /<h1>Scan<\/h1>/);
   assert.match(html, /Open Camera/);
   assert.match(html, /Upload Photo/);
   assert.match(html, /Scan or upload[\s\S]*Review detected items[\s\S]*Confirm and add/);
   assert.match(html, /data-scan-dropzone/);
-  assert.match(html, /drop an image here or paste one/);
+  // DCL-SCAN-01: hero prose collapses to one line ("Drop or paste an image
+  // anywhere."); the older "drop an image here or paste one" restatement
+  // and the separate capture-help paragraph are both gone.
+  assert.match(html, /Drop or paste an image anywhere\./);
+  assert.doesNotMatch(html, /drop an image here or paste one/);
   assert.match(html, /Import collection/);
-  assert.match(html, /Export is available in Settings under Data &amp; Backups/);
+  // DCL-SCAN-09: import card copy no longer gives Settings directions.
+  assert.match(html, /Merge a CollectFolio backup file\./);
+  assert.doesNotMatch(html, /Export is available in Settings under Data &amp; Backups/);
   assert.doesNotMatch(html, /Settings → Data &amp; Backups/);
   assert.doesNotMatch(html, /data-action="export-json"/);
   assert.doesNotMatch(html, /data-action="start-multi-scan"/);
+  // DCL-SCAN-02: the full privacy text now lives once, inside the shared
+  // "How photos are handled" disclosure.
   assert.match(html, /full source photo never leaves this browser and is never saved/i);
 });
 

@@ -21,6 +21,7 @@ import {
   syncDiagnosticReference
 } from './core/settings.js';
 import { getState, setState, subscribe } from './core/store.js';
+import { TOASTS } from './core/copy.js';
 import { closeModal, openModal, showToast } from './core/ui.js';
 import { createId, downloadFile, escapeAttribute, escapeHTML, safeImageUrl } from './core/utils.js';
 import { shellViewModel } from './core/view-models.js';
@@ -255,7 +256,7 @@ function render(state = getState()) {
   document.querySelectorAll('[data-sync-label]').forEach((element) => { element.textContent = shell.syncLabel; });
   document.querySelectorAll('[data-sync-status]').forEach((element) => { element.dataset.syncStatus = shell.syncStatus; });
   document.querySelectorAll('[data-account-label]').forEach((element) => { element.textContent = shell.accountLabel; });
-  document.querySelectorAll('[data-search-label]').forEach((element) => { element.textContent = shell.searchQuery || 'Search cards'; });
+  document.querySelectorAll('[data-search-label]').forEach((element) => { element.textContent = shell.searchQuery || 'Search'; });
   if (inspectorOpen && !inspectorWasOpen) {
     queueMicrotask(() => root.querySelector('.quick-inspector [data-action="close-detail"]')?.focus({ preventScroll: true }));
   } else if (!inspectorOpen && inspectorWasOpen && inspectorReturnTarget) {
@@ -1031,7 +1032,7 @@ function holdingForm(holding = null, { title = '', image = '', item: proposedIte
         closeModal();
         await loadLocal();
         await hydrateIntelligence();
-        showToast(holding ? 'Item updated' : `${data.name} added to your collection`);
+        showToast(holding ? TOASTS.itemUpdated : `${data.name} added to your collection`);
       } catch (error) {
         showToast(error.message || 'Could not save item', 'error');
         submit.disabled = false;
@@ -1049,13 +1050,13 @@ async function fileToPortfolioImage(file) {
 async function confirmDelete(id) {
   const holding = getState().holdings.find((entry) => entry.id === id);
   if (!holding) return;
-  openModal({ title: 'Delete item?', content: `<p><strong>${escapeHTML(holding.item?.name || 'This item')}</strong> and its purchase record will be removed. A deletion record will be saved for optional sync.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-delete>Delete item</button>', onOpen(layer) {
+  openModal({ title: 'Delete item?', content: `<p><strong>${escapeHTML(holding.item?.name || 'This item')}</strong> and its purchase record will be removed.</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-delete>Delete item</button>', onOpen(layer) {
     layer.querySelector('[data-confirm-delete]').addEventListener('click', async () => {
       await removeHolding(id);
       closeModal();
       await loadLocal();
       await hydrateIntelligence();
-      showToast('Item deleted');
+      showToast(TOASTS.itemDeleted);
     });
   }});
 }
@@ -1063,7 +1064,7 @@ async function confirmDelete(id) {
 async function exportJSON() {
   const backup = await exportBackup();
   downloadFile(`collectfolio-backup-${new Date().toISOString().slice(0, 10)}.json`, `${JSON.stringify(backup, null, 2)}\n`, 'application/json');
-  showToast('Full JSON backup exported');
+  showToast('Backup exported');
 }
 
 async function importJSON(file) {
@@ -1072,7 +1073,7 @@ async function importJSON(file) {
     await importBackup(await readBackupFile(file));
     await loadLocal();
     await hydrateIntelligence();
-    showToast('Backup merged into this device');
+    showToast(TOASTS.backupImported);
   } catch (error) {
     showToast(error.message || 'Backup import failed', 'error');
   }
@@ -1086,7 +1087,7 @@ async function exportCSV(holdingIds = null) {
 function confirmBulkDelete(ids) {
   const holdings = ids.map((id) => getState().holdings.find((entry) => entry.id === id)).filter(Boolean);
   if (!holdings.length) return;
-  openModal({ title: `Delete ${holdings.length} selected purchase${holdings.length === 1 ? '' : 's'}?`, content: '<p>Each selected purchase will be removed and a deletion record will be saved for optional sync. This cannot be undone on this device.</p>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-bulk-delete>Delete selected</button>', onOpen(layer) {
+  openModal({ title: `Delete ${holdings.length} selected purchase${holdings.length === 1 ? '' : 's'}?`, content: '<p>Each selected purchase will be removed and cannot be undone on this device.</p>', actions: '<button class="button ghost" data-close-modal>Cancel</button><button class="button danger" data-confirm-bulk-delete>Delete selected</button>', onOpen(layer) {
     layer.querySelector('[data-confirm-bulk-delete]').addEventListener('click', async () => {
       closeModal();
       for (const holding of holdings) await removeHolding(holding.id);
@@ -1187,7 +1188,7 @@ async function loadDemo() {
     await putRecord('snapshots', { id: portfolioSnapshotId(date, 'USD'), date: date.toISOString().slice(0, 10), pricingPolicyVersion: PRICING_POLICY_VERSION, currency: 'USD', marketValue: 1332 * factor, costBasis: day > 2 ? 585 : 860, uniqueItems: day > 2 ? 3 : 4, totalQuantity: day > 2 ? 3 : 4, updatedAt: date.toISOString() });
   }
   await loadLocal();
-  showToast('Demo collection loaded');
+  showToast(TOASTS.demoCollectionLoaded);
 }
 
 function filterCatalogResults(items, filters = {}) {
@@ -1272,7 +1273,7 @@ function confirmClear() {
       closeModal();
       await loadLocal();
       await hydrateIntelligence();
-      showToast('Local CollectFolio data and caches cleared');
+      showToast(TOASTS.localDataCleared);
     });
   }});
 }
@@ -1307,7 +1308,7 @@ function openAuth() {
     layer.querySelector('[data-magic-link]').addEventListener('click', async () => {
       const email = form.elements.email.value;
       if (!email) { form.elements.email.reportValidity(); return; }
-      try { await requestMagicLink(email); closeModal(); showToast('Magic link sent; check your email'); }
+      try { await requestMagicLink(email); closeModal(); showToast(TOASTS.magicLinkSent); }
       catch (error) { showToast(friendlyCloudError(error, { online: navigator.onLine !== false }), 'error'); }
     });
   }});
@@ -1402,7 +1403,7 @@ async function syncNow() {
 
 function confirmRemoveCloudData() {
   if (!runtimeFlag('ENABLE_CLOUD_DATA_REMOVAL', false)) {
-    showToast('Cloud data removal is not available in this release.', 'warning');
+    showToast("Cloud data removal isn't available yet.", 'warning');
     return;
   }
   openModal({
@@ -1477,7 +1478,7 @@ async function toggleWatchedItem(item, options = {}) {
   } else {
     const saved = await watchItem(item, options);
     recordDemandEvent(saved.canonicalVariantId, 'watch_add').catch(() => {});
-    showToast('Added to Watchlist');
+    showToast(TOASTS.addedToWatchlist);
   }
   await loadLocal();
   await hydrateIntelligence();
@@ -1498,7 +1499,7 @@ function confirmRemoveWatchedItem(watchKey) {
         closeModal();
         await loadLocal();
         await hydrateIntelligence();
-        showToast('Removed from Watchlist');
+        showToast(TOASTS.removedFromWatchlist);
       });
     }
   });
@@ -1573,7 +1574,7 @@ function watchlistPreferencesForm(entry) {
         if (anyAlertEnabled) recordDemandEvent(entry.canonicalVariantId, 'alert_create').catch(() => {});
         closeModal();
         await loadLocal();
-        showToast('Watch preferences saved');
+        showToast(TOASTS.watchPreferencesSaved);
       });
     }
   });
@@ -1645,8 +1646,7 @@ function openCompareModal() {
     ['Evidence confidence', (column) => column.confidenceLabel]
   ];
   const content = `<div class="compare-scroll"><table class="compare-table"><thead><tr><th scope="col"></th>${comparison.columns.map((column) => `<th scope="col">${escapeHTML(column.name)}<span class="fine-print">${escapeHTML(column.meta)}</span><span class="support-badge ${column.supportTier >= 4 ? 'supported' : column.supportTier >= 2 ? 'partial' : 'unsupported'}">Evidence level ${column.supportTier}</span></th>`).join('')}</tr></thead><tbody>${rows.map(([label, cell]) => `<tr><th scope="row">${escapeHTML(label)}</th>${comparison.columns.map((column) => `<td>${escapeHTML(cell(column))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-    ${comparison.confidenceDiffers ? '<p class="fine-print negative" role="status">Evidence confidence differs across these cards — the columns are not like-for-like comparisons.</p>' : ''}
-    <p class="fine-print">Unavailable values show a dash instead of an invented number.</p>`;
+    ${comparison.confidenceDiffers ? '<p class="fine-print negative" role="status">Evidence confidence differs across these cards — the columns are not like-for-like comparisons.</p>' : ''}`;
   openModal({ title: 'Compare watched cards', content, actions: '<button class="button" type="button" data-close-modal>Close</button>' });
 }
 
@@ -1670,7 +1670,7 @@ function chooseScanImage({ single = false } = {}) {
   const recognitionDisclosure = recognitionMode === 'collectcapture'
     ? 'After framing, each bounded, metadata-free card crop is sent transiently to CollectCapture over an authenticated connection. CollectCapture verifies the crop but does not retain it; its recognition provider processes it under the configured provider controls.'
     : recognitionMode === 'local'
-      ? 'The explicit scanner rollback is active, so recognition stays in this browser and no crop is uploaded.'
+      ? 'Recognition runs locally on this device; no crop is uploaded.'
       : 'Automatic identification is unavailable until CollectCapture is configured. No crop is uploaded and there is no silent local fallback.';
   openModal({ title: single ? 'Search by card image' : 'Scan or upload cards', content: `<p>${description}</p><div class="scan-source-options"><label><strong>Take photo</strong><span>Open the rear camera when this browser permits it.</span><input data-scan-source type="file" accept="image/*" capture="environment"></label><label><strong>Upload image</strong><span>Use this if camera permission is denied or the photo already exists.</span><input data-scan-source type="file" accept="image/*"></label></div><p class="fine-print">Images may be up to 25 MB. A decoder-bounded working copy is held only in memory for the active review, and the full source photo is never saved or sent. ${recognitionDisclosure}</p>`, actions: '<button class="button ghost" data-close-modal>Cancel</button>', onOpen(layer) {
     layer.querySelectorAll('[data-scan-source]').forEach((input) => input.addEventListener('change', async (event) => {
@@ -1977,6 +1977,14 @@ root.addEventListener('click', async (event) => {
   const go = event.target.closest('[data-go]');
   if (go) {
     if (go.dataset.go === 'add' && activeDraft?.status === 'complete') activeDraft = null;
+    // DCL-NAV-03: a deep-link CTA that also carries data-portfolio-pricing
+    // (Home's unpriced attention item, Insights' "Resolve pricing" row)
+    // applies that pricing filter before landing on Collection so the
+    // filter chip is visible on arrival.
+    if (go.dataset.portfolioPricing) {
+      const portfolio = getState().portfolio;
+      setState({ portfolio: { ...portfolio, filters: { ...portfolio.filters, pricing: go.dataset.portfolioPricing } } });
+    }
     navigate(go.dataset.go, {
       portfolioSection: go.dataset.portfolioTarget || (go.dataset.go === 'portfolio' ? 'holdings' : undefined)
     });

@@ -1,5 +1,6 @@
 {
   "version": "0.8.33",
+  "method": "v2-details-excluded",
   "targets": {
     "home": 40,
     "discover": 60,
@@ -8,11 +9,12 @@
     "add": 40
   },
   "surfaces": {
-    "home": 1370,
-    "discover": 414,
+    "home": 1248,
+    "discover": 498,
     "watchlist": 839,
-    "detail": 2077,
+    "detail": 1431,
     "add": 1177
   },
-  "generatedAt": "v0.8.33 pre-declutter baseline (2026-08-25)"
+  "commit": "78830fb",
+  "generatedAt": "78830fb pre-declutter baseline (2026-08-25), v2-details-excluded method"
 }

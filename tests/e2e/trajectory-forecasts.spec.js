@@ -228,8 +228,8 @@ async function configureTrajectoryStubs(page) {
 
 async function runSearch(page) {
   await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Trajectory');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByPlaceholder('Search the catalog').fill('Trajectory');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const eligibleCard = page.locator('.result-card', { hasText: 'Trajectory Eligible Card' });
   const coldStartCard = page.locator('.result-card', { hasText: 'Trajectory Cold Start Card' });
   const excludedCard = page.locator('.result-card', { hasText: 'Trajectory Excluded Card' });
@@ -291,7 +291,8 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   const coldRun = await runSearch(page);
   await coldRun.coldStartCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Attribute-based reference range' })).toBeVisible();
+  // DCL-DET-06: "Attribute-based reference range" renamed to collector-facing wording.
+  await expect(page.getByRole('heading', { name: 'Price range (reference only)' })).toBeVisible();
   await expect(page.getByText(/reference information, not forecasts/).first()).toBeVisible();
 
   // Drill into the excluded card's detail view: honest "insufficient

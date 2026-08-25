@@ -54,7 +54,7 @@ export function forecastAvailabilityForHolding(holding = {}, rawPublication = nu
 } = {}) {
   const selectedHorizon = INSIGHTS_HORIZONS.includes(Number(horizon)) ? Number(horizon) : 90;
   if (!publicEnabled) return {
-    status: 'unavailable', reason: 'Public forecasting is disabled until every publication gate passes.',
+    status: 'unavailable', reason: "Forecasts aren't available yet.",
     nextAction: 'You can still track the item and use a manual value.', selectedHorizon,
     publication: null, forecast: null, availableHorizons: []
   };
@@ -132,7 +132,7 @@ export function confidencePresentation(forecast = null, publication = null) {
   const reason = forecast.confidenceReason
     || publication?.reasonCodes?.map(customerReason).find(Boolean)
     || 'No additional confidence explanation was included in the approved publication.';
-  return { label: score === null ? `${status} · score not disclosed` : `${status} · ${Math.round(score)}/100`, reason };
+  return { label: score === null ? `${status} · score unavailable` : `${status} · ${Math.round(score)}/100`, reason };
 }
 
 export function portfolioForecastSummary(holdings = [], byVariant = {}, horizon = 90, {

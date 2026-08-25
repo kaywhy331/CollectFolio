@@ -443,7 +443,7 @@ export function historyLineChart(
     : evidenceTiers.has('range-only')
       ? '<span class="support-badge partial">Price range · no direction</span>'
       : evidenceTiers.has('relative-validated')
-        ? '<span class="support-badge partial">Estimated price · assumes flat market</span>'
+        ? '<span class="support-badge partial">Trend estimate</span>'
         : '';
   const forecastPriceSummary = forecastMarks.map((mark) => {
     const directional = ['category-validated', 'relative-validated'].includes(mark.evidenceTier);

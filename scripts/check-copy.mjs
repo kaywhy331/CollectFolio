@@ -56,10 +56,18 @@ const BANNED_PATTERNS = [
 //                      dropped for this file only; every other entry in
 //                      BANNED_PATTERNS still applies normally.
 const FILE_ALLOWLIST = {
-  // The shared copy registry from DCL-LEX-01 (P1) doesn't exist yet, but once it
-  // does it is the one legitimate home for every string on this list -- including
-  // "never rewritten" (Appendix C: "outside registry"). Fully exempt.
+  // The shared copy registry from DCL-LEX-01. It is the one legitimate home for
+  // every string on this list -- including "never rewritten" (Appendix C:
+  // "outside registry"). Fully exempt.
   'core/copy.js': { full: true },
+
+  // DCL-LEX-11: the sanctioned single home for every data-integrity guarantee
+  // (PRD Appendix B, rendered by methodologyDisclosure()). RULE-1 requires this
+  // prose to exist in exactly one place app-wide, and this is that place --
+  // policy language here ("fabricated", "never rewritten", "authoritative
+  // catalog total", etc.) is the intended destination, not a violation. Fully
+  // exempt for the same reason core/copy.js is.
+  'core/methodology.js': { full: true },
 
   // "not disclosed" is part of the Data & Methodology disclosure body rendered by
   // dataDetailsSection() in this file (Appendix C carve-out: "outside Data &

@@ -219,7 +219,10 @@ test('Scenario Lab exposes all assumptions, outputs, evidence, sorting, and one 
   // gone entirely -- the section simply doesn't render.
   assert.doesNotMatch(html, /Published market forecasts remain gated/);
   assert.doesNotMatch(html, /local-scenario-chart/);
-  const disclosure = 'Scenarios are assumption-based estimates and are not appraisals, market observations, investment recommendations, or guaranteed outcomes.';
+  // DCL-LEX-10/DCL-INS-02: the negation-heavy sentence is replaced by the
+  // shared registry clarifier (core/copy.js CLARIFIERS.scenario), rendered
+  // once for this surface class.
+  const disclosure = 'Scenarios are estimates from your assumptions, not market data.';
   assert.equal(html.split(disclosure).length - 1, 1);
 });
 

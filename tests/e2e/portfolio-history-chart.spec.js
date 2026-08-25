@@ -93,8 +93,8 @@ async function configureStubs(page) {
 
 async function addProductToCollection(page) {
   await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Retro History');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByPlaceholder('Search the catalog').fill('Retro History');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const result = page.locator('.result-card', { hasText: PRODUCT.name });
   await expect(result).toBeVisible();
   await result.getByRole('button', { name: 'Confirm exact item', exact: true }).click();

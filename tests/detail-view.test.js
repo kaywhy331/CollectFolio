@@ -61,17 +61,22 @@ test('unmapped card detail explains the mapping gap and invents no numbers', () 
   const catalogRef = catalogReferenceForItem({ ...item, name: '<script>bad</script>' });
   const html = renderPriceIntelligenceDetail({ origin: 'search', item, catalogRef }, baseState());
   assert.doesNotMatch(html, /<script>bad<\/script>/);
-  assert.match(html, /Card identified; pricing pending/);
-  assert.match(html, /exact card verification/i);
-  assert.match(html, /Nothing here is a fabricated estimate/);
+  assert.match(html, /No verified pricing yet/);
+  assert.match(html, /been price-verified yet/);
+  assert.match(html, /exact verification pending/i);
+  // DCL-DET-04: the per-surface "fabricated estimate" line is deleted; the
+  // guarantee lives once, in the Methodology disclosure (Appendix B).
+  assert.doesNotMatch(html, /Nothing here is a fabricated estimate/);
+  assert.match(html, /never fabricated/);
   assert.doesNotMatch(html, /Modeled range \(10–90%\)/);
 });
 
 test('mapped card without a publication states unavailability honestly', () => {
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef }, baseState());
-  assert.match(html, /Why intelligence is unavailable/);
-  assert.match(html, /disabled until source rights/);
+  assert.match(html, /Why there's no market data yet/);
+  assert.match(html, /Pricing for this printing hasn/);
+  assert.match(html, /been verified yet/);
 });
 
 test('detail abstains instead of choosing the first ambiguous holding series', () => {
@@ -243,7 +248,7 @@ test('tier-4 publication renders observed, trend, fair value, forecast, and driv
     }, 4) }, loading: false, error: '' }
   });
   const html = renderPriceIntelligenceDetail({ origin: 'portfolio', item, catalogRef }, state);
-  assert.match(html, /Forecast available/);
+  assert.match(html, /Forecast ready/);
   assert.match(html, /Strong rise/);
   assert.match(html, /Above modeled range/);
   assert.match(html, /365-day outlook/);

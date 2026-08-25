@@ -46,7 +46,9 @@ test('watchlist renders exact identity safely and explains unsupported intellige
     watchlistItems: [{ id: catalogRef.watchKey, watchKey: catalogRef.watchKey, catalogRef, canonicalVariantId: '', targetPrice: '', updatedAt: '2026-08-05T00:00:00.000Z' }]
   }));
   assert.doesNotMatch(html, /<script>bad<\/script>/);
-  assert.match(html, /Card identified; pricing pending/);
+  // DCL-LEX-08: badge sweep -- SUPPORT_LABELS' sentence-style tier 0 text
+  // becomes the shared registry's short badge ("Identified").
+  assert.match(html, /support-badge unsupported">Identified</);
   // DCL-COLL-02: the support-badge sentence is dropped -- the badge keeps
   // its short status text only, no appended verification-status clause.
   assert.doesNotMatch(html, /awaiting card verification/);
@@ -61,7 +63,10 @@ test('watchlist surfaces only escaped approved-intelligence alert messages', () 
     watchlistItems: [{ id: catalogRef.watchKey, watchKey: catalogRef.watchKey, catalogRef, canonicalVariantId: variantId, targetPrice: '' }],
     alerts: [{ id: 'alert', watchKey: catalogRef.watchKey, message: '<img src=x onerror=bad> Target reached', triggeredAt: '2026-08-05T00:00:00Z', readAt: '' }]
   }));
-  assert.match(html, /Approved intelligence alerts/);
+  // DCL-COLL-07: overview reads "N watched cards · M alerts" -- the
+  // "Approved intelligence alerts:" label is deleted.
+  assert.match(html, /1 alert/);
+  assert.doesNotMatch(html, /Approved intelligence alerts/);
   assert.match(html, /Target reached/);
   assert.doesNotMatch(html, /<img src=x/);
 });

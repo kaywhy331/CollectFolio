@@ -71,7 +71,7 @@ export async function fetchPublishedIntelligence(variantIds = []) {
 }
 
 function requireConfig() {
-  if (!isSupabaseConfigured()) throw new Error('Cloud backup is not available in this build.');
+  if (!isSupabaseConfigured()) throw new Error("Cloud backup isn't available yet.");
   return { url: String(config().SUPABASE_URL).replace(/\/$/, ''), key: config().SUPABASE_ANON_KEY };
 }
 

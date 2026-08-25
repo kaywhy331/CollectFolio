@@ -468,6 +468,11 @@ const netlifyDeployWorkflow = await readFile(resolve(root, '.github/workflows/ne
 if (!runtimeConfig.includes("APP_VERSION: '0.8.33-dev'")) errors.push('Local runtime config must identify the 0.8.33 development build.');
 if (!buildScript.includes("process.env.APP_VERSION || '0.8.33'")) errors.push('Production builds must default APP_VERSION to 0.8.33.');
 if (!/^\s+APP_VERSION: 0\.8\.33$/m.test(netlifyDeployWorkflow)) errors.push('Netlify production deploys must bake APP_VERSION 0.8.33.');
+// DCL-SET-07 (UX Declutter PRD, 9th version-bump-checklist spot): the Settings
+// view's own APP_VERSION fallback -- shown when runtime config never loads --
+// must track package.json's pinned version like every other spot above.
+const profileView = await readFile(resolve(app, 'assets/js/views/profile.js'), 'utf8');
+if (!profileView.includes(`|| '${packageJSON.version}'`)) errors.push(`Settings view version fallback must match the pinned ${packageJSON.version} package.json version.`);
 if (!runtimeConfig.includes("TCGCSV_REFRESH_STATUS_URL: ''") || !buildScript.includes("process.env.TCGCSV_REFRESH_STATUS_URL || ''")) {
   errors.push('TCGCSV refresh status URL must remain an explicit, fail-closed runtime setting.');
 }
