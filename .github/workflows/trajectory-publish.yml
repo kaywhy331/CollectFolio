@@ -252,7 +252,8 @@ jobs:
             --source-terms-path analytics/manifests/tcgcsv-community-free-access-derived-forecasts.json \
             --out-dir "${{ env.PUBLISH_OUT_DIR }}" \
             --receipts-dir "${{ env.RECEIPTS_DIR }}" \
-            --category-ids "$CATEGORY_IDS"
+            --category-ids "$CATEGORY_IDS" \
+            --products-cache "${{ env.STATE_DIR }}/hedonic/products_metadata.json.gz"
 
       - name: Verify the LOCAL publish output
         run: |
