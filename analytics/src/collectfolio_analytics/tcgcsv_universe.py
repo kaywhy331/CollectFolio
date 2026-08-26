@@ -29,9 +29,13 @@ AUDIT_CYCLE_DAYS = 7
 CARD_CATEGORY_EXCEPTIONS = frozenset({59, 60, 72, 73})
 # TCGplayer still labels these as card categories, but TCGCSV exposes no price
 # members for either one. Category 21 is retired and its groups endpoint returns
-# 404; category 84 has a successful, empty groups response. Keep the identities
-# in the sealed scope while allowing them to contribute zero group receipts.
-PRICE_ARCHIVE_EMPTY_CARD_CATEGORIES = frozenset({21, 84})
+# 404; category 84 has a successful, empty groups response. Categories 91
+# (Palworld OFFICIAL CARD GAME) and 92 (Cyberpunk TCG) were announced upstream
+# on 2026-08-24 with zero groups and no prices yet; once TCGCSV publishes price
+# members for them they are picked up automatically (the allowlist only
+# tolerates absence, it never excludes data). Keep the identities in the sealed
+# scope while allowing them to contribute zero group receipts.
+PRICE_ARCHIVE_EMPTY_CARD_CATEGORIES = frozenset({21, 84, 91, 92})
 
 PRICE_COLUMNS = (
     "archive_date", "source_available_at", "category_id", "group_id",
