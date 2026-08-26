@@ -228,8 +228,8 @@ async function configureTrajectoryStubs(page) {
 
 async function runSearch(page) {
   await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Trajectory');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByPlaceholder('Search the catalog').fill('Trajectory');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const eligibleCard = page.locator('.result-card', { hasText: 'Trajectory Eligible Card' });
   const coldStartCard = page.locator('.result-card', { hasText: 'Trajectory Cold Start Card' });
   const excludedCard = page.locator('.result-card', { hasText: 'Trajectory Excluded Card' });
@@ -249,18 +249,21 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
 
   const { eligibleCard, coldStartCard, excludedCard } = await runSearch(page);
 
-  // State 1 -- published/standard: the compact tile shows the modeled
-  // values without forecast disclaimer copy.
-  await expect(eligibleCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(eligibleCard.getByText('1 mo est.', { exact: true })).toBeVisible();
-  await expect(eligibleCard.getByText('3 mo est.', { exact: true })).toBeVisible();
+  // DCL-DISC-02/03: the outlook <dl> (all horizons) is deleted from result
+  // cards entirely -- gallery tiles show identity + price + match badge
+  // only, regardless of trajectory eligibility state. The fail-closed
+  // display differences below only exist on the detail page now.
+  await expect(eligibleCard.locator('.result-market-outlook')).toHaveCount(0);
+  await expect(eligibleCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
+  await expect(eligibleCard.getByText('3 mo est.', { exact: true })).toHaveCount(0);
   await expect(eligibleCard.getByText('Published outlook', { exact: true })).toHaveCount(0);
   await expect(eligibleCard.getByText('cold start estimate')).toHaveCount(0);
 
-  // State 2 -- published/cold-start: the tile remains concise; the richer
-  // confidence context is retained on the detail page below.
-  await expect(coldStartCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(coldStartCard.getByText('1 mo range', { exact: true })).toBeVisible();
+  // State 2 -- published/cold-start: the tile stays identical to every
+  // other state; the richer confidence context is retained on the detail
+  // page below.
+  await expect(coldStartCard.locator('.result-market-outlook')).toHaveCount(0);
+  await expect(coldStartCard.getByText('1 mo range', { exact: true })).toHaveCount(0);
   await expect(coldStartCard.locator('.result-outlook-note')).toHaveCount(0);
 
   // State 3 -- excluded (collapses with "unknown" per the fail-closed
@@ -288,7 +291,8 @@ test('trajectory-v1 forecasts render the three fail-closed display states from a
   const coldRun = await runSearch(page);
   await coldRun.coldStartCard.click();
   await page.getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('heading', { name: 'Attribute-based reference range' })).toBeVisible();
+  // DCL-DET-06: "Attribute-based reference range" renamed to collector-facing wording.
+  await expect(page.getByRole('heading', { name: 'Price range (reference only)' })).toBeVisible();
   await expect(page.getByText(/reference information, not forecasts/).first()).toBeVisible();
 
   // Drill into the excluded card's detail view: honest "insufficient
@@ -311,10 +315,12 @@ test('a one-horizon range packet renders only that range and never fabricates 30
 
   const { ninetyDayOnlyCard } = await runSearch(page);
 
-  await expect(ninetyDayOnlyCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(ninetyDayOnlyCard.getByText('3 mo range', { exact: true })).toBeVisible();
-  // Only a gate-passed horizon is rendered; a missing horizon does not
-  // reserve a chart/value slot that could be mistaken for an estimate.
+  // DCL-DISC-02/03: no forecast range renders on the result card at all.
+  await expect(ninetyDayOnlyCard.locator('.result-market-outlook')).toHaveCount(0);
+  await expect(ninetyDayOnlyCard.getByText('3 mo range', { exact: true })).toHaveCount(0);
+  // Only a gate-passed horizon is rendered on the detail page; a missing
+  // horizon does not reserve a chart/value slot that could be mistaken for
+  // an estimate.
   await expect(ninetyDayOnlyCard.getByText('1 mo est.', { exact: true })).toHaveCount(0);
   await expect(ninetyDayOnlyCard.getByText('2 mo est.', { exact: true })).toHaveCount(0);
   await expect(ninetyDayOnlyCard.getByText('Not enough data yet')).toHaveCount(0);
@@ -336,9 +342,10 @@ test('a low-history packet remains range-only on cards and detail', async ({ pag
 
   const { earlyEstimateCard } = await runSearch(page);
 
-  await expect(earlyEstimateCard.locator('.result-market-outlook')).toBeVisible();
-  await expect(earlyEstimateCard.getByText('1 mo range', { exact: true })).toBeVisible();
-  await expect(earlyEstimateCard.getByText('3 mo range', { exact: true })).toBeVisible();
+  // DCL-DISC-02/03: no forecast range renders on the result card at all.
+  await expect(earlyEstimateCard.locator('.result-market-outlook')).toHaveCount(0);
+  await expect(earlyEstimateCard.getByText('1 mo range', { exact: true })).toHaveCount(0);
+  await expect(earlyEstimateCard.getByText('3 mo range', { exact: true })).toHaveCount(0);
   await expect(earlyEstimateCard.getByText(/early estimate/).first()).toHaveCount(0);
   await expect(earlyEstimateCard.locator('.result-outlook-note')).toHaveCount(0);
   await expect(earlyEstimateCard.getByText('cold start estimate')).toHaveCount(0);

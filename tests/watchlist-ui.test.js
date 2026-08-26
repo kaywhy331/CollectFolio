@@ -46,8 +46,12 @@ test('watchlist renders exact identity safely and explains unsupported intellige
     watchlistItems: [{ id: catalogRef.watchKey, watchKey: catalogRef.watchKey, catalogRef, canonicalVariantId: '', targetPrice: '', updatedAt: '2026-08-05T00:00:00.000Z' }]
   }));
   assert.doesNotMatch(html, /<script>bad<\/script>/);
-  assert.match(html, /Card identified; pricing pending/);
-  assert.match(html, /awaiting card verification/);
+  // DCL-LEX-08: badge sweep -- SUPPORT_LABELS' sentence-style tier 0 text
+  // becomes the shared registry's short badge ("Identified").
+  assert.match(html, /support-badge unsupported">Identified</);
+  // DCL-COLL-02: the support-badge sentence is dropped -- the badge keeps
+  // its short status text only, no appended verification-status clause.
+  assert.doesNotMatch(html, /awaiting card verification/);
   assert.match(html, /data-action="edit-watch"/);
 });
 
@@ -59,7 +63,10 @@ test('watchlist surfaces only escaped approved-intelligence alert messages', () 
     watchlistItems: [{ id: catalogRef.watchKey, watchKey: catalogRef.watchKey, catalogRef, canonicalVariantId: variantId, targetPrice: '' }],
     alerts: [{ id: 'alert', watchKey: catalogRef.watchKey, message: '<img src=x onerror=bad> Target reached', triggeredAt: '2026-08-05T00:00:00Z', readAt: '' }]
   }));
-  assert.match(html, /Approved intelligence alerts/);
+  // DCL-COLL-07: overview reads "N watched cards · M alerts" -- the
+  // "Approved intelligence alerts:" label is deleted.
+  assert.match(html, /1 alert/);
+  assert.doesNotMatch(html, /Approved intelligence alerts/);
   assert.match(html, /Target reached/);
   assert.doesNotMatch(html, /<img src=x/);
 });
@@ -85,8 +92,11 @@ test('search shows watching state and forecast center publishes no invented numb
   assert.doesNotMatch(search, /Choose finish|\$90\.00|\$70\.00/);
 
   const forecasts = renderInsights(baseState());
-  assert.match(forecasts, /Research gate active/);
-  assert.match(forecasts, /Published market forecasts remain gated/);
+  // DCL-LEX-06/DCL-INS-03: the "Research gate active" badge and the
+  // publication-gate explainer card are both removed; with the flag off,
+  // the published-forecasts section simply doesn't render.
+  assert.doesNotMatch(forecasts, /Research gate active/);
+  assert.doesNotMatch(forecasts, /Published market forecasts remain gated/);
   assert.doesNotMatch(forecasts, /Probability of gain|\$845/);
 });
 

@@ -106,8 +106,8 @@ async function configureEnrichmentStubs(page) {
 
 async function runSearch(page) {
   await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Bridge Card');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByPlaceholder('Search the catalog').fill('Bridge Card');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const mappedCard = page.locator('.result-card', { hasText: 'Enriched Bridge Card' });
   const unmappedCard = page.locator('.result-card', { hasText: 'Unmapped Bridge Card' });
   await expect(mappedCard).toBeVisible();

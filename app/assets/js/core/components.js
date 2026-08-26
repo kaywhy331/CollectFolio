@@ -1,6 +1,7 @@
 import { escapeAttribute, escapeHTML, formatCurrency } from './utils.js';
 import { catalogImageSources } from './catalog-images.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from './pricing-policy.js';
+import { icon } from './icons.js';
 
 export function pageHeader(eyebrow, title, description = '', action = '') {
   return `<header class="page-header"><div><p class="eyebrow">${escapeHTML(eyebrow)}</p><h1>${escapeHTML(title)}</h1>${description ? `<p class="lede">${escapeHTML(description)}</p>` : ''}</div>${action}</header>`;
@@ -48,7 +49,8 @@ export function externalImage(item, className = '', { loading = 'lazy' } = {}) {
 }
 
 export function emptyState(title, detail, action = '') {
-  return `<section class="empty-state"><span class="empty-symbol" aria-hidden="true">◇</span><h2>${escapeHTML(title)}</h2><p>${escapeHTML(detail)}</p>${action}</section>`;
+  // DCL-VIS-01: the ◇ empty-state glyph is now the shared diamond icon.
+  return `<section class="empty-state"><span class="empty-symbol">${icon('diamond', { size: 24 })}</span><h2>${escapeHTML(title)}</h2><p>${escapeHTML(detail)}</p>${action}</section>`;
 }
 
 export function priceDisclosure(item, currency = 'USD') {

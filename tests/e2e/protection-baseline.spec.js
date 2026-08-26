@@ -105,7 +105,10 @@ async function seedLegacyIndexedDB(page) {
     database.close();
   }, legacyBackup);
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // DCL-HOME-01: with holdings present the page-header (and its h1) is
+  // removed -- the hero card is the first element instead, so it's the
+  // readiness signal here.
+  await expect(page.locator('.overview-hero')).toBeVisible();
 }
 
 async function configureApprovedPhase4Publication(page) {
@@ -199,7 +202,9 @@ async function seedPhase4Alert(page) {
     database.close();
   });
   await page.reload();
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // DCL-HOME-01: holdings are already present at this point, so Home has
+  // no page-header h1 -- wait on the hero card instead.
+  await expect(page.locator('.overview-hero')).toBeVisible();
 }
 
 test('guest shell preserves every current primary entry point', async ({ page }) => {
@@ -218,8 +223,9 @@ test('guest shell preserves every current primary entry point', async ({ page })
   await expect(page.getByRole('button', { name: /Import collection/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Export backup/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Create custom item/ })).toBeVisible();
-  await expect(page.getByText(/Use one item or several/i)).toBeVisible();
-  await expect(page.getByText(/camera permission is denied/i)).toBeVisible();
+  // DCL-SCAN-01: the hero prose restatements are deleted -- the hero
+  // collapses to one line ("Drop or paste an image anywhere.").
+  await expect(page.getByText('Drop or paste an image anywhere.')).toBeVisible();
   await navigation.getByRole('button', { name: 'Collection' }).click();
   await expect(page).toHaveURL(/\/collection\/items$/);
   await expect(page.getByRole('heading', { name: 'Collection', exact: true })).toBeVisible();
@@ -244,7 +250,8 @@ test('foundation shell stays truthful and keyboard-operable across breakpoints',
   }
   await expect(page.locator('.portfolio-context')).toContainText('Collection');
   await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
-  await expect(page.locator('.shell-topbar').getByRole('button', { name: 'Search cards' })).toBeVisible();
+  // DCL-SET-08: shell search label shortens to "Search".
+  await expect(page.locator('.shell-topbar').getByRole('button', { name: 'Search', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /notifications/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /switch portfolio/i })).toHaveCount(0);
 
@@ -336,7 +343,10 @@ test('routes restore filters and Quick Inspector preserves context, focus, and f
   await dismissOnboarding(page, 'Discover');
   await expect(page.locator('#catalog-query')).toHaveValue('Lotus');
   await expect(page.locator('[name="category"]')).toHaveValue('magic');
-  await expect(page.locator('[name="provider"]')).toHaveValue('tcgcsv');
+  // DCL-DISC-09: the "Data source" control (and its hidden field) is
+  // removed from the filter panel -- state.search.provider is still
+  // restored from the route, surfaced only as its filter chip now.
+  await expect(page.getByRole('button', { name: /Trading card data/ })).toBeVisible();
 
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Collection' }).click();
@@ -366,7 +376,9 @@ test('routes restore filters and Quick Inspector preserves context, focus, and f
 test('collection chart labels remain readable and unclipped across supported viewports', async ({ page }) => {
   test.slow();
   await seedLegacyIndexedDB(page);
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  // DCL-HOME-01: holdings are present, so Home's first element is the
+  // hero card, not a page-header h1.
+  await expect(page.locator('.overview-hero')).toBeVisible();
   for (const viewport of [
     { name: 'narrow mobile', width: 320, height: 720 },
     { name: 'iPhone class', width: 390, height: 844 },
@@ -436,7 +448,9 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
     expect.objectContaining({ subjectId: '10000000-0000-4000-8000-000000000001', source: 'catalog', unitPrice: 12 }),
     expect.objectContaining({ subjectId: '10000000-0000-4000-8000-000000000002', source: 'manual' })
   ]));
-  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  // DCL-HOME-01: holdings are present, so Home's first element is the
+  // hero card, not a page-header h1.
+  await expect(page.locator('.overview-hero')).toBeVisible();
   const summary = page.getByRole('region', { name: 'Collection performance' });
   await expect(summary).toContainText('$79.00');
   await expect(summary).toContainText('$89.00');
@@ -444,7 +458,7 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   await expect(page.getByRole('button', { name: /Saved scan ready/ })).toBeVisible();
 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Collection' }).click();
-  await expect(page.getByText(/3 purchases saved on this device/)).toBeVisible();
+  await expect(page.getByText(/3 purchases in your collection/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Rights Gate ex' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Unpriced Comic' })).toBeVisible();
@@ -452,7 +466,10 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' }).click();
   await page.getByRole('button', { name: /Saved scan ready/ }).click();
   await expect(page.getByRole('heading', { name: 'Review 2 detected items' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Review queue summary' })).toContainText('Unmatched1');
+  // DCL-LEX-04: match-state vocabulary sourced from the shared registry --
+  // the review summary's unmatched-count label reads "No match" (was
+  // "Unmatched").
+  await expect(page.getByRole('region', { name: 'Review queue summary' })).toContainText('No match1');
   await expect(page.getByText('Apply purchase details to all')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add 1 confirmed' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Identify this item' })).toBeVisible();
@@ -461,7 +478,7 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   await expect(page.getByRole('heading', { name: 'Items added' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
   await page.getByRole('button', { name: 'View collection' }).click();
-  await expect(page.getByText(/4 purchases saved on this device/)).toBeVisible();
+  await expect(page.getByText(/4 purchases in your collection/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Synthetic Scan Draft' })).toBeVisible();
 });
 
@@ -499,6 +516,9 @@ test('same-day local value corrections stay append-only in IndexedDB', async ({ 
 test('Phase 3 collection tools stay selection-scoped and Watchlist removal is confirmed', async ({ page }) => {
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Collection' }).click();
+  // DCL-COLL-06: the Grouped/Purchases toggle folds into a "Display
+  // options" popover shared with the view toggle -- open it first.
+  await page.locator('summary[aria-label="Display options"]').click();
   await page.getByRole('button', { name: 'Purchases', exact: true }).click();
   const holding = page.locator('.portfolio-holding-card[data-holding-id="10000000-0000-4000-8000-000000000001"]');
   await page.locator('summary[aria-label="More collection actions"]').click();
@@ -515,20 +535,35 @@ test('Phase 3 collection tools stay selection-scoped and Watchlist removal is co
   await holding.getByRole('button', { name: 'Select Synthetic Archive Mage' }).click();
   await page.getByRole('region', { name: 'Bulk purchase actions' }).getByRole('button', { name: 'Duplicate' }).click();
   await page.getByRole('dialog', { name: /Duplicate 1 purchase/ }).getByRole('button', { name: 'Create copies' }).click();
-  await expect(page.getByText(/4 purchases saved on this device/)).toBeVisible();
+  await expect(page.getByText(/4 purchases in your collection/)).toBeVisible();
 
   await page.getByRole('tab', { name: 'Watchlist' }).click();
   await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  // DCL-COLL-02: Target & alerts, Compare, and Remove moved into the
+  // watch card's overflow disclosure. A full page re-render (any state
+  // change, e.g. saving watch preferences) discards the <details> open
+  // state, so re-open it before each overflow-dependent action rather
+  // than assuming it stayed open.
+  const watchCard = page.locator('.watch-card').filter({ hasText: 'Synthetic Archive Mage' });
+  const openWatchOverflow = async () => {
+    const details = watchCard.locator('details.collection-overflow');
+    if (!(await details.evaluate((element) => element.open))) {
+      await details.locator('summary').click();
+    }
+  };
+  await openWatchOverflow();
   await page.getByRole('button', { name: 'Target & alerts' }).click();
   const preferences = page.getByRole('dialog', { name: /Watch settings/ });
   await preferences.getByRole('spinbutton', { name: 'Target price' }).fill('10');
   await preferences.getByRole('button', { name: 'Save preferences' }).click();
   await expect(page.locator('.watch-stats dd').filter({ hasText: '$10.00' })).toContainText('$2.00 above target');
   await expectNoBlockingAccessibilityViolations(page);
-  const remove = page.getByRole('button', { name: 'Remove Synthetic Archive Mage from Watchlist' });
+  const remove = page.getByRole('button', { name: 'Remove', exact: true });
+  await openWatchOverflow();
   await remove.click();
   await page.getByRole('dialog', { name: 'Remove from Watchlist?' }).getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
+  await openWatchOverflow();
   await remove.click();
   await page.getByRole('dialog', { name: 'Remove from Watchlist?' }).getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Track cards before you buy' })).toBeVisible();
@@ -568,16 +603,24 @@ test('Scenario Lab keeps assumption-based output separate while published foreca
     database.close();
   }, legacyBackup);
   await page.reload();
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // DCL-HOME-01: holdings are already present, so Home has no page-header
+  // h1 -- wait on the hero card instead.
+  await expect(page.locator('.overview-hero')).toBeVisible();
 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Insights' }).click();
   await page.getByRole('tab', { name: 'Scenario Lab' }).click();
   await expect(page).toHaveURL(/\/insights\/scenarios$/);
   await expect(page.getByRole('heading', { name: '90-day collection scenario' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Published market forecasts remain gated' })).toBeVisible();
+  // DCL-INS-03: the publication-gate explainer card is deleted -- with the
+  // flag off, the published-forecasts section simply doesn't render at
+  // all (proven below by the absent "Published Forecasts" heading), while
+  // local scenarios keep working.
+  await expect(page.getByRole('heading', { name: 'Published market forecasts remain gated' })).toHaveCount(0);
 
   await expect(page.getByText('Unchanged scenario').first()).toBeVisible();
-  await expect(page.getByText(/Scenarios are assumption-based estimates/)).toBeVisible();
+  // DCL-LEX-10/DCL-INS-02: negation-heavy sentence replaced by the shared
+  // registry clarifier (core/copy.js CLARIFIERS.scenario).
+  await expect(page.getByText(/Scenarios are estimates from your assumptions, not market data\./)).toBeVisible();
   await expect(page.locator('.scenario-item-row').first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Published Forecasts' })).toHaveCount(0);
   await expect(page.getByRole('img', { name: /Approved forecast projection/ })).toHaveCount(0);
@@ -608,20 +651,29 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await expect(page).toHaveURL(/\/insights\/scenarios\?horizon=30$/);
   await expect(page.getByRole('heading', { name: 'Published Forecasts' })).toHaveCount(0);
 
-  await page.getByRole('tab', { name: /Alerts/ }).click();
-  await expect(page).toHaveURL(/\/insights\/alerts$/);
+  // DCL-NAV-02 (decision D-1): alert review lives in Collection's Watchlist
+  // section; the old /insights/alerts deep link forwards there.
+  await page.goto('/insights/alerts');
+  await expect(page).toHaveURL(/\/collection\/watchlist$/);
+  await expect(page.locator('[data-watchlist-section="alerts"]')).toHaveAttribute('aria-pressed', 'true');
   const alert = page.locator('.alert-history-card').filter({ hasText: 'revised approved forecast' });
   await expect(alert).toContainText('Unread');
   await expect(alert).toContainText('Model-based forecast change');
   await alert.getByRole('button', { name: 'Mark read' }).click();
-  await expect(alert).toContainText('Read');
+  // DCL-INS-06: alert chips mark exceptions only (Unread, Muted, System) --
+  // the default read state carries zero chips instead of a "Read" chip.
+  await expect(alert.getByText('Unread', { exact: true })).toHaveCount(0);
+  await expect(alert.getByRole('button', { name: 'Mark unread' })).toBeVisible();
   await alert.getByRole('button', { name: 'Mute notification' }).click();
   await expect(alert).toContainText('Muted');
   await page.reload();
-  await expect(page).toHaveURL(/\/insights\/alerts$/);
+  await expect(page).toHaveURL(/\/collection\/watchlist$/);
+  // The cards/alerts switch is session state, so a reload lands on cards;
+  // the muted alert must still be there (IndexedDB persistence) one click away.
+  await page.locator('[data-watchlist-section="alerts"]').click();
   await expect(page.locator('.alert-history-card')).toContainText('Muted');
 
-  await page.getByRole('tab', { name: 'Track Record' }).click();
+  await page.goto('/insights/track-record');
   await expect(page).toHaveURL(/\/insights\/track-record$/);
   await expect(page.getByRole('heading', { name: 'Approved model scorecard' })).toBeVisible();
   await expect(page.getByText('24 matured')).toBeVisible();
@@ -630,12 +682,13 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await expect(page.getByText(/Open · not included in metrics/)).toBeVisible();
 });
 
-test('Insights alerts has no serious or critical accessibility violations', async ({ page }) => {
+test('Watchlist alerts has no serious or critical accessibility violations', async ({ page }) => {
   await configureApprovedPhase4Publication(page);
   await seedLegacyIndexedDB(page);
   await seedPhase4Alert(page);
+  // DCL-NAV-02: the legacy Insights deep link forwards to the Watchlist.
   await page.goto('/insights/alerts');
-  await expect(page.getByRole('tab', { name: /Alerts/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-watchlist-section="alerts"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.alert-history-card')).toBeVisible();
   await expectNoBlockingAccessibilityViolations(page);
 });

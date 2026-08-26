@@ -10,7 +10,7 @@ function runtimeConfig() {
 
 export function collectCaptureBaseUrl(configuration = runtimeConfig()) {
   if (configuration.ENABLE_COLLECTCAPTURE !== true) {
-    throw new Error('CollectCapture card lookup is disabled in this build.');
+    throw new Error("CollectCapture card lookup isn't available yet.");
   }
   const configured = String(configuration.COLLECTCAPTURE_API_URL || '').trim();
   if (!configured) throw new Error('CollectCapture card lookup is not configured.');

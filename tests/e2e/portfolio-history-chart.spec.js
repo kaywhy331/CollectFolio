@@ -93,8 +93,8 @@ async function configureStubs(page) {
 
 async function addProductToCollection(page) {
   await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
-  await page.getByPlaceholder('Search cards, sets, players, products, or set codes').fill('Retro History');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.getByPlaceholder('Search the catalog').fill('Retro History');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const result = page.locator('.result-card', { hasText: PRODUCT.name });
   await expect(result).toBeVisible();
   await result.getByRole('button', { name: 'Confirm exact item', exact: true }).click();
@@ -115,7 +115,9 @@ test('the overview line graph renders from retro-reconstructed TCGCSV history wh
   await addProductToCollection(page);
 
   await page.goto('/home');
-  await expect(page.getByRole('heading', { name: 'Home', exact: true })).toBeVisible();
+  // DCL-HOME-01: a holding now exists, so Home's first element is the
+  // hero card, not a page-header h1.
+  await expect(page.locator('.overview-hero')).toBeVisible();
   const chart = page.locator('.overview-performance svg.trend-chart');
   await expect(chart).toBeVisible();
   // A real reconstructed series has many points; a bare single "today"
@@ -123,7 +125,11 @@ test('the overview line graph renders from retro-reconstructed TCGCSV history wh
   // one coordinate pair, which is functionally invisible as a line.
   const marketPoints = await chart.locator('polyline.chart-market').getAttribute('points');
   expect(marketPoints.trim().split(/\s+/).length).toBeGreaterThan(2);
-  await expect(page.getByText(/history coverage/)).toBeVisible();
+  // DCL-HOME-03/07: "History coverage %" renders only inside the
+  // collapsed Data Health disclosure now, not in the hero's chart-meta
+  // row (deleted).
+  await page.locator('.data-health summary').click();
+  await expect(page.locator('.data-health-grid').getByText('History coverage')).toBeVisible();
 });
 
 test('Collection keeps reconstructed history compact instead of duplicating the Home chart', async ({ page }) => {

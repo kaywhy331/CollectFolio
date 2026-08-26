@@ -133,7 +133,7 @@ test('Browse Sets pages a flagship set in searchable 48-tile pages', async ({ pa
 
   await expect(page).toHaveURL(/\/sets\/silver-tempest-3-1102\?game=pokemon$/);
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
-  await expect(page.getByText('48 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
   await expect(page.locator('.result-card')).toHaveCount(48);
   await expect(page.locator('.result-card h3').first()).toHaveText('Card 1');
   await expect(page.locator('.result-card h3').nth(23)).toHaveText('Card 24 — A Very Long Complete Product Title With Every Collector Detail Preserved');
@@ -142,7 +142,7 @@ test('Browse Sets pages a flagship set in searchable 48-tile pages', async ({ pa
 
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.locator('.result-card')).toHaveCount(48);
-  await expect(page.getByText('96 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
   await expect(page.locator('.result-card h3').first()).toHaveText('Card 49');
   await expect(page.locator('.result-card h3').last()).toHaveText('Card 96');
   await expect(page.locator('.catalog-pagination')).toContainText('Page 2 of 3');
@@ -157,7 +157,7 @@ test('Browse Sets pages a flagship set in searchable 48-tile pages', async ({ pa
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText('48 of 121 products loaded', { exact: true })).toBeVisible();
+  await expect(page.getByText('121 cards', { exact: true })).toBeVisible();
   await expect(page.locator('.result-card')).toHaveCount(48);
   await page.getByPlaceholder('Search this set…').fill('Card 24');
   await expect(page.locator('.result-card')).toHaveCount(1);
@@ -200,7 +200,9 @@ test('Browse Sets keeps popular games visible and opens the complete searchable 
   await expect(page.locator('.browse-breadcrumbs')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'One Piece Card Game' })).toBeVisible();
   await expect(categories).toHaveCount(0);
-  await page.getByRole('button', { name: 'All games', exact: true }).click();
+  // DCL-NAV-04: the separate "All games" button is removed -- the
+  // breadcrumb's "Discover" crumb is the sole upward nav.
+  await page.locator('.browse-breadcrumbs').getByRole('button', { name: 'Discover', exact: true }).click();
   await expect(page).toHaveURL(/\/discover\/browse$/);
   await expect(page.locator('[data-game-search-text]')).toHaveCount(0);
   await page.getByRole('button', { name: /View All/ }).click();

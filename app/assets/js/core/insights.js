@@ -8,7 +8,9 @@ import {
   watchlistMarketSeriesIdentity
 } from './market-series.js';
 
-export const INSIGHTS_VIEWS = Object.freeze(['performance', 'forecasts', 'alerts', 'track-record']);
+// DCL-NAV-02 (decision D-1): alert review moved to Collection's Watchlist
+// section; Insights keeps only the unread-count deep link.
+export const INSIGHTS_VIEWS = Object.freeze(['performance', 'forecasts', 'track-record']);
 export const INSIGHTS_HORIZONS = FORECAST_HORIZONS;
 
 const finite = (value) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value))
@@ -54,7 +56,7 @@ export function forecastAvailabilityForHolding(holding = {}, rawPublication = nu
 } = {}) {
   const selectedHorizon = INSIGHTS_HORIZONS.includes(Number(horizon)) ? Number(horizon) : 90;
   if (!publicEnabled) return {
-    status: 'unavailable', reason: 'Public forecasting is disabled until every publication gate passes.',
+    status: 'unavailable', reason: "Forecasts aren't available yet.",
     nextAction: 'You can still track the item and use a manual value.', selectedHorizon,
     publication: null, forecast: null, availableHorizons: []
   };
@@ -132,7 +134,7 @@ export function confidencePresentation(forecast = null, publication = null) {
   const reason = forecast.confidenceReason
     || publication?.reasonCodes?.map(customerReason).find(Boolean)
     || 'No additional confidence explanation was included in the approved publication.';
-  return { label: score === null ? `${status} · score not disclosed` : `${status} · ${Math.round(score)}/100`, reason };
+  return { label: score === null ? `${status} · score unavailable` : `${status} · ${Math.round(score)}/100`, reason };
 }
 
 export function portfolioForecastSummary(holdings = [], byVariant = {}, horizon = 90, {

@@ -30,13 +30,21 @@ function state(overrides = {}) {
 test('Collection presents one compact truthful summary and keeps manual and unpriced items explicit', () => {
   const html = renderPortfolio(state());
   assert.match(html, /aria-label="Collection summary"/);
-  assert.match(html, /2 of 3 · 67%/);
-  assert.match(html, /1 market · 1 manual · 1 unpriced/);
+  // DCL-COLL-01: the summary compresses to a one-line strip -- value ·
+  // item count · coverage % -- so the breakdown prefix is gone.
+  assert.match(html, /<dt>Pricing coverage<\/dt><dd>67%<\/dd>/);
+  // DCL-COLL-01: the aggregate market/manual/unpriced breakdown is
+  // deleted from the summary strip; each source stays explicit per-card.
+  assert.doesNotMatch(html, /1 market · 1 manual · 1 unpriced/);
   assert.match(html, /value-source manual">Manual/);
   assert.match(html, /value-source unpriced">Unpriced/);
   assert.match(html, /Alpha Set · #1 · foil · English/);
   assert.match(html, /Current value<\/dt><dd>Unpriced<\/dd>/);
-  assert.match(html, /Saved market reference is not included until source rights are approved/);
+  // DCL-COLL-05: the grouped-card value note shows one attention status
+  // only ("1 of 1 unpriced"); the provenance disclosure sentence moves to
+  // the detail page instead of repeating on every card.
+  assert.match(html, /<dd class="metric-note"><small>1 of 1 unpriced<\/small><\/dd>/);
+  assert.doesNotMatch(html, /Saved market reference is not included until source rights are approved/);
   assert.doesNotMatch(html, /portfolio-value-trend|Value trend/);
   assert.doesNotMatch(html, /class="holding-select"/);
   assert.match(html, /class="collection-overflow"/);
@@ -53,7 +61,7 @@ test('Collection never represents unknown value or cost as zero', () => {
     portfolio: { ...state().portfolio, groupMode: 'purchases' }
   }));
   assert.match(html, /Value not available/);
-  assert.match(html, /0 of 1 · 0%/);
+  assert.match(html, /<dt>Pricing coverage<\/dt><dd>0%<\/dd>/);
   assert.match(html, /Current value<\/dt><dd>Unpriced<\/dd>/);
   assert.match(html, /Cost basis<\/dt><dd>Not recorded<\/dd>/);
   assert.doesNotMatch(html, /\$0\.00/);
@@ -115,13 +123,17 @@ test('Full item detail keeps ownership actions sticky and technical mapping unde
   assert.match(html, /Your collection/);
   assert.match(html, /data-action="edit-holding"/);
   assert.match(html, /class="detail-action-bar"/);
-  assert.match(html, /Update quantity/);
+  // DCL-DET-08: single "Edit purchase" button; the duplicate "Update
+  // quantity" label under the same edit-holding action is removed.
+  assert.match(html, /data-action="edit-holding"[^>]*>Edit purchase/);
+  assert.doesNotMatch(html, /Update quantity/);
   assert.match(html, /View purchases/);
   assert.match(html, /data-action="toggle-watch"/);
   assert.match(html, /data-action="share-detail"/);
   assert.match(html, /href="#detail-market"/);
   assert.match(html, /<details class="data-details" id="detail-data"><summary><span>Data &amp; Methodology/);
-  assert.match(html, /Market pricing has not been verified yet/);
+  // DCL-DET-04: H2 shortens to "No verified pricing yet" (no period).
+  assert.match(html, /<h2>No verified pricing yet<\/h2>/);
 });
 
 test('a 1,000-holding portfolio renders a bounded first page', () => {
@@ -153,7 +165,9 @@ test('Portfolio Sets groups local printings without inventing catalog completion
   assert.match(html, /<dt>Named sets<\/dt><dd>3<\/dd>/);
   assert.match(html, /Alpha Set/);
   assert.match(html, /1 distinct printing · 5 copies across 2 purchases/);
-  assert.match(html, /Catalog total not linked; completion percentage is intentionally unavailable/);
+  // DCL-COLL-03/Appendix C: the banned "Catalog total not linked…" fine
+  // print is deleted from the per-card and section governance copy.
+  assert.doesNotMatch(html, /Catalog total not linked/);
   assert.match(html, /data-action="view-set-holdings"/);
   assert.doesNotMatch(html, /\d+% complete/i);
   assert.match(html, /data-portfolio-section="sets"/);

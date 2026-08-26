@@ -23,28 +23,32 @@ function state(overrides = {}) {
 }
 
 test('onboarding renders persistent storage, currency, and first-add steps', () => {
+  // DCL-SET-09: step position is stated exactly once (the progress bar);
+  // per-card eyebrows now name the step's subject instead of repeating
+  // "Step N of 3".
   const storage = renderOnboarding(state());
-  assert.match(storage, /Step 1 of 3/);
+  assert.match(storage, /class="eyebrow">Storage</);
   assert.match(storage, /Save on this device/);
   assert.match(storage, /Use cloud backup/);
 
   const currency = renderOnboarding(state({ settings: { onboardingStep: 'currency', currency: 'CAD' } }));
-  assert.match(currency, /Step 2 of 3/);
+  assert.match(currency, /class="eyebrow">Currency</);
   assert.match(currency, /value="CAD" selected/);
 
   const add = renderOnboarding(state({ settings: { onboardingStep: 'add', onboardingStorage: 'cloud' } }));
-  assert.match(add, /Step 3 of 3/);
+  assert.match(add, /class="eyebrow">First item</);
   assert.match(add, /Choose how to add/);
   assert.match(add, /Connect cloud backup/);
 });
 
-test('settings distinguish local, pending, synchronized, offline, and error states textually', () => {
+test('settings distinguish local, pending, synced, offline, and error states textually', () => {
+  // DCL-SET-05: "Sync" replaces "Synchronization/Synchronize" throughout.
   const scenarios = [
     [state(), 'Saved locally'],
-    [state({ auth: { session: { user: { email: 'collector@example.test' } }, pendingChanges: 2 } }), 'Waiting to synchronize'],
-    [state({ auth: { session: { user: {} }, pendingChanges: 0 }, settings: { lastSyncedAt: '2026-08-10T12:00:00.000Z' } }), 'Synchronized'],
+    [state({ auth: { session: { user: { email: 'collector@example.test' } }, pendingChanges: 2 } }), 'Waiting to sync'],
+    [state({ auth: { session: { user: {} }, pendingChanges: 0 }, settings: { lastSyncedAt: '2026-08-10T12:00:00.000Z' } }), 'Synced'],
     [state({ auth: { session: { user: {} }, online: false, pendingChanges: 1 } }), 'Offline'],
-    [state({ auth: { session: { user: {} }, error: 'retry' }, settings: { lastSyncError: 'Local data is safe.' } }), 'Synchronization needs attention']
+    [state({ auth: { session: { user: {} }, error: 'retry' }, settings: { lastSyncError: 'Local data is safe.' } }), 'Sync needs attention']
   ];
   for (const [value, label] of scenarios) assert.match(renderProfile(value), new RegExp(label));
 });
@@ -58,7 +62,8 @@ test('ordinary settings copy contains no backend terminology and exposes require
   assert.match(html, /Private market insights/);
   assert.match(html, /at least 20 distinct collectors/);
   assert.match(html, /data-action="remove-cloud-data" disabled/);
-  assert.match(html, /Unavailable until independently recoverable cloud removal/);
+  // DCL-SET-02: disabled cloud-removal copy shortens to "Not available yet."
+  assert.match(html, /Not available yet\./);
 });
 
 test('cloud removal is enabled only by its explicit hosted qualification flag', () => {

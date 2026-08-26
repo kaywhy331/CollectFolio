@@ -231,7 +231,7 @@ test('a failed catalog image exposes a retry action and recovers in place', asyn
   await completeFirstUse(page);
   await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
   await page.locator('#catalog-query').fill('Retry Image');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const card = page.locator('.result-card', { hasText: 'Retry Image Card' });
   await expect(card).toBeVisible();
   const retry = card.getByRole('button', { name: 'Retry image' });

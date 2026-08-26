@@ -347,7 +347,7 @@ export function trajectoryProjectionChart(packet, currency = 'USD', { stale = fa
     : tiers.has('range-only')
       ? 'Price range · no direction'
       : tiers.has('relative-validated')
-      ? 'Estimated price · assumes flat market'
+      ? 'Trend estimate'
       : 'Validated checkpoint estimate';
   const horizonList = checkpoints.map((point) => point.horizon).join(', ');
   const ariaLabel = `Independent ${horizonList} day price checkpoints from ${escapeHTML(formatCurrency(lastKnownPrice, currency))}`;

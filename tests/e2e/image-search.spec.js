@@ -130,7 +130,7 @@ async function configureCollectCaptureStub(page, { respond } = {}) {
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.33-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.34-test',
       COLLECTCAPTURE_API_URL: '${COLLECTCAPTURE_ORIGIN}/', ENABLE_COLLECTCAPTURE: true,
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
       ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
@@ -152,7 +152,7 @@ async function configureDisabledCollectCapture(page, { localRollback = false } =
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.33-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.34-test',
       COLLECTCAPTURE_API_URL: '', ENABLE_COLLECTCAPTURE: false,
       ENABLE_LOCAL_SCAN_ROLLBACK: ${localRollback},
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
@@ -191,7 +191,10 @@ test('search by image starts in an invariant one-card crop workflow', async ({ p
   await expect(page).toHaveURL(/\/scan\/review$/);
   await expect(page.locator('[data-crop-id]')).toHaveCount(1);
   await expect(page.locator('.review-card [role="status"]')).toContainText(/CollectCapture found no catalog match/);
-  await expect(page.getByText(/bounded, metadata-free card crop is sent transiently to CollectCapture/i)).toBeVisible();
+  // DCL-SCAN-02/03: pipeline/service narration now lives only inside the
+  // shared "How photos are handled" disclosure (collapsed by default).
+  await page.getByText('How photos are handled').click();
+  await expect(page.getByText(/Each card crop is sent once to CollectCapture/i)).toBeVisible();
   const persisted = await page.evaluate(async () => {
     const database = await new Promise((resolve, reject) => {
       const request = indexedDB.open('collectfolio');
@@ -210,8 +213,13 @@ test('search by image starts in an invariant one-card crop workflow', async ({ p
   expect(persisted[0]).not.toHaveProperty('sourceImage');
   expect(persisted[0]).not.toHaveProperty('sourceImageRetainedAt');
   await page.reload();
-  await expect(page.getByText(/full source photo is not stored with this draft/i)).toBeVisible();
-  await expect(page.getByText(/CollectCapture.*does not retain it/i)).toBeVisible();
+  // DCL-SCAN-02: no distinct per-draft sentence remains -- the source photo
+  // not being persisted is signaled by the "Release source copy now"
+  // action being absent (nothing left to release), and the non-retention
+  // guarantee for CollectCapture stays inside the shared disclosure.
+  await expect(page.getByRole('button', { name: 'Release source copy now' })).toHaveCount(0);
+  await page.getByText('How photos are handled').click();
+  await expect(page.getByText(/It is not retained there/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Edit crop boundary' })).toHaveCount(0);
 });
 
@@ -227,7 +235,14 @@ test('unrecognizable capture shows explicit editable fallback and remains retrya
   await expect(workbench.getByText('Automatic corners were not reliable')).toBeVisible();
   await workbench.getByRole('button', { name: 'Straighten and identify' }).click();
   await expect(page).toHaveURL(/\/scan\/review$/);
-  await expect(page.getByRole('button', { name: 'Search CollectCapture' })).toBeEnabled();
+  // DCL-SCAN-03: the identify button's label collapses to a uniform
+  // Identifying…/Search/Retry ladder (no mode-specific "Search
+  // CollectCapture" text) -- the failed attempt's own recognition queries
+  // seed the query field, so this reads "Search" (matches the prior
+  // behavior's "Search CollectCapture" for the same not-yet-typed state).
+  // Scoped to the review card since the shell topbar also has a "Search"
+  // button (DCL-SET-08).
+  await expect(page.locator('.review-card').getByRole('button', { name: 'Search', exact: true })).toBeEnabled();
   await expect(page.locator('.review-card [role="status"]')).toContainText(/CollectCapture found no catalog match/);
 });
 
@@ -269,9 +284,12 @@ test('a collector-selected CollectCapture catalog printing is approvable without
 
   const candidate = page.getByRole('button', { name: /CollectCapture Identity Card/ });
   await candidate.click();
-  await expect(page.locator('.selected-match .match-state')).toHaveText('Catalog printing selected');
+  // DCL-LEX-04: a TCGCSV row is an approvable exact source identity, so the
+  // shared match-state vocabulary reads "Exact match" (was the
+  // provider-specific "Catalog printing selected").
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Exact match');
   expect(browserCatalogRequests).toEqual([]);
-  const confirm = page.getByRole('button', { name: 'Confirm this printing', exact: true });
+  const confirm = page.getByRole('button', { name: 'Confirm this item', exact: true });
   await expect(confirm).toBeEnabled();
   await confirm.click();
   await page.getByRole('button', { name: 'Add 1 confirmed', exact: true }).click();
@@ -295,7 +313,10 @@ test('manual scanner query retries through CollectCapture without invoking brows
 
   await expect(page.locator('.review-card [role="status"]')).toContainText(/CollectCapture found no catalog match/);
   await page.locator('[data-crop-query]').fill('Synthetic Dragon ex 223/197');
-  await page.getByRole('button', { name: 'Search CollectCapture' }).click();
+  // DCL-SCAN-03: with a query typed, the identify button reads "Search";
+  // scope to the review card since the shell topbar also has a "Search"
+  // button (DCL-SET-08).
+  await page.locator('.review-card').getByRole('button', { name: 'Search', exact: true }).click();
   await expect(page.getByRole('button', { name: /Synthetic Dragon ex/ })).toBeVisible();
   await expect(page.locator('[data-crop-query]')).toHaveValue('Synthetic Dragon ex 223/197');
   expect(requests).toHaveLength(2);
@@ -344,7 +365,13 @@ test('explicit rollback mode keeps browser-native recognition available without 
   await skipOnboarding(page);
   await openImageReview(page, unrecognizablePNG);
 
-  await expect(page.getByRole('button', { name: 'Retry text recognition' })).toBeEnabled();
-  await expect(page.getByText(/explicit scanner rollback is active/i)).toBeVisible();
+  // DCL-SCAN-03: identify button label is uniform across recognition
+  // modes -- "Retry" with no query typed (was mode-specific "Retry text
+  // recognition").
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
+  // DCL-SCAN-02: pipeline/service narration lives only inside the shared
+  // "How photos are handled" disclosure (collapsed by default).
+  await page.getByText('How photos are handled').click();
+  await expect(page.getByText(/Recognition runs locally on this device/i)).toBeVisible();
   expect(remoteRequests).toEqual([]);
 });

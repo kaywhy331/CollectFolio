@@ -1,14 +1,15 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
+import { icon } from '../core/icons.js';
 import { holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioAllocation, portfolioSummary, snapshotFor } from '../core/calculations.js';
 import { collectionFreshness } from '../core/data-freshness.js';
-import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
-import { localPortfolioInsights } from '../core/local-scenarios.js';
+import { normalizeIntelligencePayload } from '../core/intelligence-contract.js';
 import { trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForHolding } from '../core/market-series.js';
 import { mergeRetroSeriesWithSnapshots, reconstructPortfolioValueSeries } from '../core/portfolio-history.js';
 import { historyKeyForItem } from '../services/history-trajectory.js';
+import { UNKNOWN } from '../core/copy.js';
 
 export const OVERVIEW_RANGES = Object.freeze(['1D', '7D', '1M', '3M', '1Y', 'All']);
 
@@ -87,11 +88,21 @@ export function overviewSeries(holdings = [], snapshots = [], range = '3M', now 
 // app.js). Falls back to plain snapshot-only behavior (identical to
 // overviewSeries) when no history is resolvable for any holding --
 // fail-closed, never a regression from pre-0.8.17 behavior.
-export function overviewSeriesWithHistory(holdings = [], snapshots = [], historyPointsByHoldingId = {}, range = '3M', now = new Date(), currency = 'USD') {
+//
+// DCL-HOME-05: split out of overviewSeriesWithHistory so renderHome can
+// compute per-range point counts off the *unfiltered* merged series (to
+// decide which range buttons are even eligible to render) without a second,
+// independent recomputation of the merge. overviewSeriesWithHistory's own
+// signature/behavior is unchanged -- it now just calls this and filters.
+export function mergedOverviewSeries(holdings = [], snapshots = [], historyPointsByHoldingId = {}, now = new Date(), currency = 'USD') {
   const daily = dailySnapshotSeries(holdings, snapshots, now, currency);
   const retro = reconstructPortfolioValueSeries(holdings, historyPointsByHoldingId, { currency, now });
-  const merged = mergeRetroSeriesWithSnapshots(retro.points, daily);
-  return { points: filterByRange(merged, range), coverage: retro.coverage };
+  return { points: mergeRetroSeriesWithSnapshots(retro.points, daily), coverage: retro.coverage };
+}
+
+export function overviewSeriesWithHistory(holdings = [], snapshots = [], historyPointsByHoldingId = {}, range = '3M', now = new Date(), currency = 'USD') {
+  const { points, coverage } = mergedOverviewSeries(holdings, snapshots, historyPointsByHoldingId, now, currency);
+  return { points: filterByRange(points, range), coverage };
 }
 
 export function overviewChange(points = []) {
@@ -160,9 +171,12 @@ function movementMarkup(change, range, currency) {
 function attentionModule(state, coverage) {
   const signals = watchlistSignals(state.alerts, state.watchlistItems);
   const items = [];
-  if (coverage.unpriced) items.push(`<button class="attention-item" type="button" data-go="portfolio"><span class="attention-icon warning" aria-hidden="true">!</span><span><strong>${coverage.unpriced} unpriced item${coverage.unpriced === 1 ? '' : 's'}</strong><small>Add a manual value or review the exact printing.</small></span><span aria-hidden="true">→</span></button>`);
-  if (state.scanDraftCount) items.push(`<button class="attention-item" type="button" data-action="resume-scan"><span class="attention-icon" aria-hidden="true">↥</span><span><strong>Saved scan ready</strong><small>Continue reviewing ${state.scanDraftCount} local draft${state.scanDraftCount === 1 ? '' : 's'}.</small></span><span aria-hidden="true">→</span></button>`);
-  if (signals.length) items.push(`<button class="attention-item" type="button" data-insights-view="alerts"><span class="attention-icon positive" aria-hidden="true">◆</span><span><strong>${signals.length} Watchlist alert${signals.length === 1 ? '' : 's'}</strong><small>${escapeHTML(signals[0].message)}</small></span><span aria-hidden="true">→</span></button>`);
+  // DCL-NAV-03: the deep-link filter (pricing=unpriced) itself is wired up
+  // by app.js's data-go handler in a later stage -- this just emits the
+  // attribute the handler will read.
+  if (coverage.unpriced) items.push(`<button class="attention-item" type="button" data-go="portfolio" data-portfolio-pricing="unpriced"><span class="attention-icon warning" aria-hidden="true">!</span><span><strong>${coverage.unpriced} unpriced item${coverage.unpriced === 1 ? '' : 's'}</strong><small>Add a manual value or review the exact printing.</small></span><span aria-hidden="true">→</span></button>`);
+  if (state.scanDraftCount) items.push(`<button class="attention-item" type="button" data-action="resume-scan"><span class="attention-icon">${icon('resume', { size: 20 })}</span><span><strong>Saved scan ready</strong><small>Continue reviewing ${state.scanDraftCount} local draft${state.scanDraftCount === 1 ? '' : 's'}.</small></span><span aria-hidden="true">→</span></button>`);
+  if (signals.length) items.push(`<button class="attention-item" type="button" data-go="portfolio" data-portfolio-target="watchlist" data-watchlist-view="alerts"><span class="attention-icon positive" aria-hidden="true">◆</span><span><strong>${signals.length} Watchlist alert${signals.length === 1 ? '' : 's'}</strong><small>${escapeHTML(signals[0].message)}</small></span><span aria-hidden="true">→</span></button>`);
   if (!items.length) return '';
   return `<section class="overview-attention" aria-labelledby="attention-title"><div class="section-heading compact"><div><p class="eyebrow">Today</p><h2 id="attention-title">Needs attention</h2></div></div><div class="attention-list">${items.join('')}</div></section>`;
 }
@@ -174,7 +188,10 @@ function moversModule(state) {
     <div class="overview-card-list">${movers.map(({ holding, intelligence }) => {
       const change = intelligence.trend.return30d;
       const tone = change >= 0 ? 'positive' : 'negative';
-      return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Mapped card')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Exact item')}</small><span class="${tone}"><span aria-hidden="true">${change >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(change) * 100))} · ${escapeHTML(trendLabel(intelligence.trend.status))}</span></span><span aria-hidden="true">→</span></button>`;
+      // CENSUS GAP CLOSURE: the trend-label word ("Rise"/"Fall"/...) is
+      // dropped -- the arrow glyph + tone color + signed percent already
+      // carry direction and magnitude, so the word only restated them.
+      return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Mapped card')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Exact item')}</small><span class="${tone}"><span aria-hidden="true">${change >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(change) * 100))}</span></span><span aria-hidden="true">→</span></button>`;
     }).join('')}</div></section>`;
 }
 
@@ -211,9 +228,13 @@ function allocationModule(state, currency) {
 
 function refreshStatusMarkup(refresh = {}) {
   if (!refresh.status || refresh.status === 'disabled') return '';
+  // DCL-HOME-08: "current" detail drops the internals-flavored "refresh
+  // completed successfully" phrasing; the receipt sentence drops the
+  // "Last successful refresh:" label for a plain "Updated <date>." (the
+  // localized date/time formatting itself is unchanged).
   const labels = {
     loading: ['Checking price freshness', 'Your saved collection remains available while this finishes.'],
-    current: ['Prices updated recently', 'The latest available price refresh completed successfully.'],
+    current: ['Prices updated recently', 'Prices are up to date.'],
     in_progress: ['Prices are updating', 'Saved values remain visible during the update.'],
     update_required: ['Price update scheduled', 'Your current saved values remain available.'],
     unavailable: ['Refresh status unavailable', 'Your collection remains usable with its saved local data.']
@@ -223,58 +244,86 @@ function refreshStatusMarkup(refresh = {}) {
     ? validDate(refresh.lastSuccessfulSourceBuild)
     : null;
   const receipt = successful
-    ? ` Last successful refresh: ${successful.toLocaleString(undefined, {
+    ? ` Updated ${successful.toLocaleString(undefined, {
       dateStyle: 'medium', timeStyle: 'short'
     })}.`
     : '';
   return `<section class="source-refresh-status" data-source-refresh-status="${escapeAttribute(refresh.status)}" role="status"><span class="source-refresh-dot" aria-hidden="true"></span><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(detail + receipt)}</small></span></section>`;
 }
 
-function dataHealthModule(state, coverage, historyCoverage, freshness) {
+// DCL-HOME-10/LEX-09: the currency-scope note is owned here (Data Health)
+// only -- the in-flow hero/summary fine print that used to repeat it was
+// deleted. Renders nothing when every holding's value/cost is already in
+// the collection currency.
+function currencyScopeNote(summary, currency) {
+  if (!summary.excludedMarketItems && !summary.excludedCostItems) return '';
+  return `<p class="fine-print currency-scope-note">Amounts in ${escapeHTML(summary.excludedCurrencies.join(', '))} are shown separately from ${escapeHTML(currency)} totals.</p>`;
+}
+
+// The refresh affordance lives here (rather than a page header) for the
+// holdings-present path -- DCL-HOME-01 removes the page header once
+// holdings exist, so this row is the one place left to reach it.
+//
+// A11y fix (DCL-VER-05): the refresh button used to sit *inside*
+// <summary>, which axe flags as "nested-interactive" (a <summary> is
+// itself an interactive disclosure control, so a focusable button inside
+// it is unreachable/ambiguous for assistive tech). The button is now a
+// sibling of <summary> -- still a direct child of <details>, positioned
+// over the same row purely with CSS (see .data-health-refresh in
+// app.css) -- so no interactive control nests inside another.
+function dataHealthModule(state, coverage, historyCoverage, freshness, summary, currency) {
   const historyPercent = Number(historyCoverage?.percent) || 0;
-  return `<details class="card data-health"><summary><span><strong>Data Health</strong><small>${coverage.percent.toFixed(0)}% pricing coverage · ${freshness.stale} stale</small></span><span aria-hidden="true">⌄</span></summary><div class="data-health-grid"><div><span>Market-price coverage</span><strong>${coverage.market} of ${coverage.total}</strong></div><div><span>History coverage</span><strong>${historyPercent}%</strong></div><div><span>Stale values</span><strong>${freshness.stale}</strong></div><div><span>Manual values</span><strong>${coverage.manual}</strong></div><div><span>Last price update</span><strong>${escapeHTML(freshness.latest.label)}</strong></div></div>${refreshStatusMarkup(state.tcgcsvRefresh)}</details>`;
+  return `<details class="card data-health"><summary><span><strong>Data Health</strong><small>${coverage.percent.toFixed(0)}% pricing coverage · ${freshness.stale} stale</small></span><span aria-hidden="true">⌄</span></summary><button class="icon-button data-health-refresh" type="button" data-action="refresh-prices" aria-label="Refresh prices">${icon('refresh', { size: 20 })}</button><div class="data-health-grid"><div><span>Market-price coverage</span><strong>${coverage.market} of ${coverage.total}</strong></div><div><span>History coverage</span><strong>${historyPercent}%</strong></div><div><span>Stale values</span><strong>${freshness.stale}</strong></div><div><span>Manual values</span><strong>${coverage.manual}</strong></div><div><span>Last price update</span><strong>${escapeHTML(freshness.latest.label)}</strong></div></div>${currencyScopeNote(summary, currency)}${refreshStatusMarkup(state.tcgcsvRefresh)}</details>`;
 }
 
 export function renderHome(state) {
   const currency = state.settings.currency || 'USD';
   const summary = portfolioSummary(state.holdings, { currency });
-  const range = OVERVIEW_RANGES.includes(state.overview?.range) ? state.overview.range : '3M';
+  const now = new Date();
   const historyPoints = historyPointsByHoldingId(state.holdings, state.priceHistory);
-  const { points: series, coverage: historyCoverage } = overviewSeriesWithHistory(
-    state.holdings, state.snapshots, historyPoints, range, new Date(), currency
-  );
+  const merged = mergedOverviewSeries(state.holdings, state.snapshots, historyPoints, now, currency);
+  // DCL-HOME-05: a range is only eligible when its filtered series (from the
+  // unfiltered merged series) has >=2 points -- a single point can't draw a
+  // trend line. Ineligible buttons are hidden below; a saved selection
+  // that's gone ineligible falls back to the widest eligible range, since
+  // OVERVIEW_RANGES is already ordered narrowest to widest. A brand-new
+  // collection (only "today", no range yet has 2+ points) falls back to
+  // showing the full range set rather than an empty control -- the chart
+  // itself already renders its own insufficient-data state for one point.
+  const eligibleRanges = OVERVIEW_RANGES.filter((option) => filterByRange(merged.points, option).length >= 2);
+  const visibleRanges = eligibleRanges.length ? eligibleRanges : OVERVIEW_RANGES;
+  const widestEligible = eligibleRanges.length ? eligibleRanges[eligibleRanges.length - 1] : '3M';
+  const requestedRange = OVERVIEW_RANGES.includes(state.overview?.range) ? state.overview.range : widestEligible;
+  const range = eligibleRanges.length && !eligibleRanges.includes(requestedRange) ? widestEligible : requestedRange;
+  const series = filterByRange(merged.points, range);
+  const historyCoverage = merged.coverage;
   const change = overviewChange(series);
   const coverage = pricingCoverage(state.holdings, state.intelligence?.byVariant);
-  const localInsights = localPortfolioInsights(state.holdings, currency);
   const freshness = collectionFreshness(state.holdings);
   const chartSeries = series.map((point) => ({ ...point, costBasis: summary.costBasisItems ? point.costBasis : null }));
   const gainValid = summary.gainEligibleItems > 0 && summary.returnPercent !== null;
   const gainTone = gainValid && summary.gain < 0 ? 'negative' : 'positive';
 
-  const header = pageHeader(state.settings.collectionName || 'Personal Collection', 'Home', state.holdings.length
-    ? `${summary.uniqueItems} unique items · ${summary.totalQuantity} total quantity`
-    : 'A clear view of what you own and what needs attention', '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>');
-  const dataHealth = dataHealthModule(state, coverage, historyCoverage, freshness);
+  const dataHealth = dataHealthModule(state, coverage, historyCoverage, freshness, summary, currency);
 
+  // DCL-HOME-01: the page header only survives on the empty-state path --
+  // once holdings exist the hero card is the first element on Home.
   if (!state.holdings.length) {
-    return `${header}<div class="overview-empty">${emptyState('Build your collection', 'Scan or search for one collectible to begin tracking accepted values and collection mix.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan first item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}${dataHealth}`;
+    const header = pageHeader(state.settings.collectionName || 'Personal Collection', 'Home', 'A clear view of what you own and what needs attention', `<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">${icon('refresh', { size: 20 })}</button>`);
+    return `${header}<div class="overview-empty">${emptyState('Build your collection', 'Scan or search for your first collectible to start tracking its value.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan first item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}${dataHealth}`;
   }
 
-  return `${header}
-    <section class="overview-hero" aria-label="Collection performance">
+  return `<section class="overview-hero" aria-label="Collection performance">
       <article class="card overview-performance">
-        <div class="overview-performance-head"><div><p class="metric-label">Estimated collection value · ${escapeHTML(currency)} only</p><strong class="overview-value">${coverage.covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : 'Value not available'}</strong><p class="overview-hero-support">${coverage.covered} of ${coverage.total} items priced · ${gainValid ? `${escapeHTML(formatCurrency(summary.gain, currency))} estimated gain` : 'Gain unavailable'}</p><span class="freshness-badge" data-freshness="${escapeAttribute(freshness.latest.state)}">${escapeHTML(freshness.latest.label)}</span>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Collection chart range">${OVERVIEW_RANGES.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
+        <div class="overview-performance-head"><div><p class="metric-label">Estimated value</p><strong class="overview-value">${coverage.covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : UNKNOWN.unpriced}</strong><span class="freshness-badge" data-freshness="${escapeAttribute(freshness.latest.state)}">${escapeHTML(freshness.latest.label)}</span>${movementMarkup(change, range, currency)}</div><div class="range-control" role="group" aria-label="Collection chart range">${visibleRanges.map((option) => `<button type="button" data-overview-range="${escapeAttribute(option)}" aria-pressed="${option === range}">${escapeHTML(option)}</button>`).join('')}</div></div>
         ${trendChart(chartSeries, currency)}
-        <div class="overview-chart-meta"><span><strong>${coverage.percent.toFixed(0)}%</strong> coverage · ${coverage.covered} of ${coverage.total} priced</span>${historyCoverage.total ? `<span><strong>${historyCoverage.percent}%</strong> history coverage</span>` : ''}</div>
       </article>
       <aside class="overview-summary" aria-label="Collection summary">
-        <article class="summary-stat"><span>Cost basis</span><strong>${summary.costBasisItems ? escapeHTML(formatCurrency(summary.costBasis, currency)) : 'Unavailable'}</strong><small>${summary.costBasisItems ? `${summary.costBasisItems} of ${summary.uniqueItems} purchases include cost` : 'Add purchase details to calculate'}</small></article>
-        <article class="summary-stat"><span>Estimated gain</span><strong class="${gainValid ? gainTone : ''}">${gainValid ? `<span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}` : 'Unavailable'}</strong><small>${gainValid ? `${escapeHTML(formatPercent(summary.returnPercent))} · ${summary.gainEligibleItems} comparable purchase${summary.gainEligibleItems === 1 ? '' : 's'}` : 'Needs both current value and cost basis'}</small></article>
+        <article class="summary-stat"><span>Cost basis</span><strong>${summary.costBasisItems ? escapeHTML(formatCurrency(summary.costBasis, currency)) : UNKNOWN.notRecorded}</strong><small>${summary.costBasisItems ? `${summary.costBasisItems} of ${summary.uniqueItems} purchases include cost` : 'Add purchase details to calculate'}</small></article>
+        <article class="summary-stat"><span>Estimated gain</span><strong class="${gainValid ? gainTone : ''}">${gainValid ? `<span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}` : UNKNOWN.dash}</strong><small>${gainValid ? `${escapeHTML(formatPercent(summary.returnPercent))} · ${summary.gainEligibleItems} comparable purchase${summary.gainEligibleItems === 1 ? '' : 's'}` : 'Needs both current value and cost basis'}</small></article>
         <article class="summary-stat"><span>Pricing coverage</span><strong>${coverage.percent.toFixed(0)}%</strong><small>${coverage.market} market · ${coverage.manual} manual · ${coverage.unpriced} unpriced</small></article>
-        <article class="summary-stat"><span>Value concentration</span><strong>${escapeHTML(localInsights.concentration[0].toUpperCase() + localInsights.concentration.slice(1))}</strong><small>${localInsights.topHolding ? `${escapeHTML(localInsights.topHolding.name)} is ${(localInsights.topHolding.share * 100).toFixed(1)}%` : 'Add a value to an item'}</small></article>
       </aside>
     </section>
     ${attentionModule(state, coverage)}
-    ${summary.excludedMarketItems || summary.excludedCostItems ? `<p class="fine-print" role="status">Amounts in ${escapeHTML(summary.excludedCurrencies.join(', '))} stay in their source currency and are excluded from ${escapeHTML(currency)} totals. No exchange rate was guessed.</p>` : ''}
     <div class="overview-modules">${moversModule(state)}${recentHoldingsModule(state, currency)}${allocationModule(state, currency)}</div>${dataHealth}`;
 }

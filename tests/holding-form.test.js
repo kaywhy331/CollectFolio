@@ -21,7 +21,10 @@ test('catalog add form carries exact printing metadata and asks only for ownersh
   assert.match(html, /name="quantity"[^>]*value="1"/);
   assert.match(html, /Near Mint/);
   assert.match(html, /Marketplace condition/);
-  assert.match(html, /will not infer it from your collection condition/);
+  // DCL-SCAN-05: the "never inferred" sentence is deleted; fine print is
+  // exactly "Optional — used for price tracking."
+  assert.match(html, /Optional — used for price tracking\./);
+  assert.doesNotMatch(html, /never inferred/);
   assert.match(html, /Purchase price per item/);
   assert.match(html, /Purchase currency/);
   assert.match(html, /Manual-value currency/);

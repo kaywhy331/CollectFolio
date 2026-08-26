@@ -1,4 +1,6 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
+import { icon } from '../core/icons.js';
+import { alertHistoryModels } from '../core/insights.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { filterAndSortHoldings, holdingCostBasis, holdingCostCurrency, holdingGain, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioSummary, returnPercent } from '../core/calculations.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from '../core/pricing-policy.js';
@@ -7,27 +9,29 @@ import { forecastProjectionChart } from '../core/ui.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
 import { selectPublicationForHolding, selectPublicationForWatchlist } from '../core/market-series.js';
 import { findWatchedItem } from '../services/watchlist.js';
+import { SUPPORT_BADGES } from '../core/copy.js';
 import { historyPointsByHoldingId, overviewChange, overviewSeriesWithHistory } from './home.js';
 
 export const PORTFOLIO_VIEWS = Object.freeze(['gallery', 'list']);
 export const PORTFOLIO_SET_PAGE_SIZE = 60;
-const SUPPORT_LABELS = Object.freeze([
-  'Card identified; pricing pending', 'Current market price', 'Market history available',
-  'Modeled value available', 'Forecast available', 'Forecast fully evaluated'
-]);
 
 export function renderPortfolio(state) {
   const watchlistsEnabled = state.featureFlags?.watchlists !== false;
   const section = watchlistsEnabled ? state.portfolio.section || 'holdings' : 'holdings';
+  // DCL-LEX-09: storage/local-first messaging is shell-owned; page
+  // subtitles drop "saved on this device" and equivalents.
+  // DCL-COLL-08/DCL-NAV-01: the forecasts label is eyebrow "Collection",
+  // title "Forecasts" -- "Insights" stays the one app-wide surface with
+  // that title.
   const labels = {
-    holdings: ['Personal Collection', 'Collection', `${state.holdings.length} purchase${state.holdings.length === 1 ? '' : 's'} saved on this device.`],
+    holdings: ['Personal Collection', 'Collection', `${state.holdings.length} purchase${state.holdings.length === 1 ? '' : 's'} in your collection.`],
     sets: ['Collection map', 'Sets', 'Group the exact printings already recorded in your collection.'],
-    watchlist: ['Collection', 'Watchlist', `${state.watchlistItems.length} exact variant${state.watchlistItems.length === 1 ? '' : 's'} saved on this device.`],
-    forecasts: ['Evidence before prediction', 'Insights', 'Model output stays gated until its data rights and validation requirements pass.']
+    watchlist: ['Collection', 'Watchlist', `${state.watchlistItems.length} exact variant${state.watchlistItems.length === 1 ? '' : 's'} tracked.`],
+    forecasts: ['Collection', 'Forecasts', '']
   };
   const [eyebrow, title, subtitle] = labels[section] || labels.holdings;
   const refresh = section === 'holdings'
-    ? '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>'
+    ? `<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">${icon('refresh', { size: 20 })}</button>`
     : '';
   return `${pageHeader(eyebrow, title, subtitle, refresh)}
     ${section !== 'forecasts' ? segmentedControl(section, watchlistsEnabled) : ''}
@@ -47,7 +51,7 @@ function readableDate(value) {
 }
 
 function setValueStatus(group, currency) {
-  const value = group.pricedHoldingCount ? formatCurrency(group.marketValue, currency) : 'Unavailable';
+  const value = group.pricedHoldingCount ? formatCurrency(group.marketValue, currency) : 'Unpriced';
   const gaps = [
     group.unpricedHoldingCount ? `${group.unpricedHoldingCount} unpriced` : '',
     group.excludedCurrencyCount ? `${group.excludedCurrencyCount} other-currency excluded` : ''
@@ -55,10 +59,13 @@ function setValueStatus(group, currency) {
   return { value, gaps: gaps || `${group.pricedHoldingCount} valued purchase${group.pricedHoldingCount === 1 ? '' : 's'}` };
 }
 
+// DCL-COLL-03: the per-card catalog-total disclaimer and the "saved on
+// this device" small (shell-owned per DCL-LEX-09) are gone; the card keeps
+// only what's specific to this set.
 function portfolioSetCard(group, currency) {
   const cover = group.coverHolding || {};
   const value = setValueStatus(group, currency);
-  return `<article class="portfolio-set-card"><div class="portfolio-set-art">${externalImage({ ...(cover.item || {}), userImage: cover.userImage }, 'holding-image')}<span>${escapeHTML(group.game)}</span></div><div class="portfolio-set-main"><div><p class="eyebrow">${escapeHTML(group.game || group.category)}</p><h3>${escapeHTML(group.setName)}</h3><p>${group.uniquePrintingCount} distinct printing${group.uniquePrintingCount === 1 ? '' : 's'} · ${group.copyCount} cop${group.copyCount === 1 ? 'y' : 'ies'} across ${group.holdingCount} purchase${group.holdingCount === 1 ? '' : 's'}</p></div><dl><div><dt>Tracked value</dt><dd>${escapeHTML(value.value)}<small>${escapeHTML(value.gaps)}</small></dd></div><div><dt>Last changed</dt><dd>${escapeHTML(readableDate(group.latestUpdatedAt))}<small>Saved on this device</small></dd></div></dl><p class="fine-print">Catalog total not linked; completion percentage is intentionally unavailable.</p><button class="button secondary small" type="button" data-action="view-set-holdings" data-set-name="${escapeAttribute(group.setName)}" data-set-category="${escapeAttribute(group.category)}">View items</button></div></article>`;
+  return `<article class="portfolio-set-card"><div class="portfolio-set-art">${externalImage({ ...(cover.item || {}), userImage: cover.userImage }, 'holding-image')}<span>${escapeHTML(group.game)}</span></div><div class="portfolio-set-main"><div><p class="eyebrow">${escapeHTML(group.game || group.category)}</p><h3>${escapeHTML(group.setName)}</h3><p>${group.uniquePrintingCount} distinct printing${group.uniquePrintingCount === 1 ? '' : 's'} · ${group.copyCount} cop${group.copyCount === 1 ? 'y' : 'ies'} across ${group.holdingCount} purchase${group.holdingCount === 1 ? '' : 's'}</p></div><dl><div><dt>Tracked value</dt><dd>${escapeHTML(value.value)}<small>${escapeHTML(value.gaps)}</small></dd></div><div><dt>Last changed</dt><dd>${escapeHTML(readableDate(group.latestUpdatedAt))}</dd></div></dl><button class="button secondary small" type="button" data-action="view-set-holdings" data-set-name="${escapeAttribute(group.setName)}" data-set-category="${escapeAttribute(group.category)}">View items</button></div></article>`;
 }
 
 const DEFAULT_CATEGORY_LABELS = Object.freeze({
@@ -84,8 +91,10 @@ function categoryLabel(category, holdings = []) {
 function setsSection(state) {
   const currency = state.settings.currency || 'USD';
   const collection = groupPortfolioSets(state.holdings, { currency });
-  if (!state.holdings.length) return emptyState('Build your first set group', 'Add a catalog card or record a set name on a custom collectible. Sets are derived from items already saved on this device.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan an item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>');
-  if (!collection.totalSets) return emptyState('No set names recorded yet', `${collection.unassignedHoldings} item${collection.unassignedHoldings === 1 ? '' : 's'} cannot be grouped until a set name is recorded.`, '<button class="button" type="button" data-go="portfolio" data-portfolio-target="holdings">Review items</button>');
+  // DCL-COLL-09: both no-data variants of the Sets empty state collapse to
+  // the same one-sentence copy; each keeps its own existing actions.
+  if (!state.holdings.length) return emptyState('No sets yet', 'Add a set name to an item and it appears here.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan an item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>');
+  if (!collection.totalSets) return emptyState('No sets yet', 'Add a set name to an item and it appears here.', '<button class="button" type="button" data-go="portfolio" data-portfolio-target="holdings">Review items</button>');
   const controls = {
     query: state.portfolio.setQuery || '',
     category: state.portfolio.setCategory || 'all',
@@ -99,7 +108,7 @@ function setsSection(state) {
   const unassigned = collection.unassignedHoldings
     ? `<p class="fine-print" role="status">${collection.unassignedHoldings} item${collection.unassignedHoldings === 1 ? '' : 's'} (${collection.unassignedCopies} cop${collection.unassignedCopies === 1 ? 'y' : 'ies'}) without a set name stays in Items and is never placed in a guessed group.</p>`
     : '';
-  return `<section class="portfolio-sets-summary" aria-label="Set collection summary"><dl><div><dt>Named sets</dt><dd>${collection.totalSets}</dd></div><div><dt>Distinct printings</dt><dd>${collection.distinctPrintings}</dd></div><div><dt>Copies in named sets</dt><dd>${collection.totalCopies}</dd></div></dl><p>Counts come only from exact saved item identity. An authoritative catalog total must be linked before CollectFolio will show set completion.</p>${unassigned}</section>
+  return `<section class="portfolio-sets-summary" aria-label="Set collection summary"><dl><div><dt>Named sets</dt><dd>${collection.totalSets}</dd></div><div><dt>Distinct printings</dt><dd>${collection.distinctPrintings}</dd></div><div><dt>Copies in named sets</dt><dd>${collection.totalCopies}</dd></div></dl>${unassigned}</section>
     <section class="portfolio-set-controls" aria-label="Set controls"><label class="sr-only" for="portfolio-set-query">Search collected sets</label><input id="portfolio-set-query" type="search" value="${escapeAttribute(controls.query)}" placeholder="Search collected sets" data-portfolio-set-query><label>Category<select data-portfolio-set-category><option value="all">All categories</option>${categories.map(([category, label]) => `<option value="${escapeAttribute(category)}" ${controls.category === category ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select></label><label>Sort<select data-portfolio-set-sort>${[['recent-desc', 'Recently changed'], ['alpha', 'Set A–Z'], ['printings-desc', 'Most printings'], ['value-desc', 'Highest tracked value']].map(([value, label]) => `<option value="${value}" ${controls.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></section>
     <div class="portfolio-result-heading"><div><strong>${shown.length} set${shown.length === 1 ? '' : 's'}</strong><span>${shown.length === collection.totalSets ? 'All named sets' : `Filtered from ${collection.totalSets}`}</span></div>${controls.query || controls.category !== 'all' || controls.sort !== 'recent-desc' ? '<button class="button ghost small" type="button" data-action="clear-portfolio-set-filters">Clear filters</button>' : ''}</div>
     ${visible.length ? `<div class="portfolio-set-grid">${visible.map((group) => portfolioSetCard(group, currency)).join('')}</div>${shown.length > visible.length ? `<button class="button secondary portfolio-load-more" type="button" data-action="load-more-portfolio-sets">Show ${Math.min(PORTFOLIO_SET_PAGE_SIZE, shown.length - visible.length)} more</button>` : ''}` : emptyState('No sets match these filters', 'Clear the set search or category filter to see every named set in your collection.', '<button class="button ghost" type="button" data-action="clear-portfolio-set-filters">Clear filters</button>')}`;
@@ -147,6 +156,9 @@ function collectionSparkline(state, currency) {
   return `<svg class="collection-sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttribute(summary)}"><polyline points="${coordinates}" vector-effect="non-scaling-stroke"></polyline></svg>`;
 }
 
+// DCL-COLL-01: one strip -- value, item count, coverage % (+ sparkline).
+// Gain, last-updated, the market/manual/unpriced breakdown, and the
+// excluded-currency fine print are dropped; Home and Data Health own them.
 function portfolioSummaryBar(state, summary, currency) {
   const pricing = state.holdings.reduce((counts, holding) => {
     counts[holdingPricingStatus(holding)] += 1;
@@ -154,17 +166,7 @@ function portfolioSummaryBar(state, summary, currency) {
   }, { market: 0, manual: 0, unpriced: 0 });
   const covered = pricing.market + pricing.manual;
   const coverage = state.holdings.length ? (covered / state.holdings.length) * 100 : 0;
-  const latestValue = state.holdings.map((holding) => holding.updatedAt || holding.createdAt).filter(Boolean).sort().at(-1);
-  const latest = latestValue && !Number.isNaN(new Date(latestValue).valueOf())
-    ? new Date(latestValue).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
-    : 'No items yet';
-  const excluded = summary.excludedMarketItems || summary.excludedCostItems
-    ? `<p class="fine-print" role="status">${summary.excludedMarketItems} market value${summary.excludedMarketItems === 1 ? '' : 's'} and ${summary.excludedCostItems} cost basis entr${summary.excludedCostItems === 1 ? 'y' : 'ies'} in ${escapeHTML(summary.excludedCurrencies.join(', '))} are excluded from ${escapeHTML(currency)} totals; no exchange rate was guessed.</p>`
-    : '';
-  const gain = summary.gainEligibleItems
-    ? `<div><dt>Estimated gain or loss</dt><dd class="${summary.gain >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${summary.gain >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatCurrency(summary.gain, currency))}</dd><dd class="metric-note"><small>${escapeHTML(formatPercent(summary.returnPercent))} · ${summary.gainEligibleItems} comparable</small></dd></div>`
-    : '<div><dt>Estimated gain or loss</dt><dd>Unavailable</dd><dd class="metric-note"><small>Add both cost and current value</small></dd></div>';
-  return `<section class="portfolio-summary-bar" aria-label="Collection summary"><div class="portfolio-summary-primary"><span>Collection value · ${escapeHTML(currency)} only</span><div class="collection-value-line"><strong>${covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : 'Value not available'}</strong>${covered ? collectionSparkline(state, currency) : ''}</div><small>${summary.uniqueItems} purchase${summary.uniqueItems === 1 ? '' : 's'} · ${summary.totalQuantity} total item${summary.totalQuantity === 1 ? '' : 's'}</small></div><dl>${gain}<div><dt>Pricing coverage</dt><dd>${covered} of ${state.holdings.length} · ${coverage.toFixed(0)}%</dd><dd class="metric-note"><small>${pricing.market} market · ${pricing.manual} manual · ${pricing.unpriced} unpriced</small></dd></div><div><dt>Last updated</dt><dd>${escapeHTML(latest)}</dd><dd class="metric-note"><small>Saved on this device</small></dd></div></dl>${excluded}</section>`;
+  return `<section class="portfolio-summary-bar" aria-label="Collection summary"><div class="portfolio-summary-primary"><span>Estimated value</span><div class="collection-value-line"><strong>${covered ? escapeHTML(formatCurrency(summary.marketValue, currency)) : 'Value not available'}</strong>${covered ? collectionSparkline(state, currency) : ''}</div></div><dl><div><dt>Items</dt><dd>${state.holdings.length}</dd></div><div><dt>Pricing coverage</dt><dd>${coverage.toFixed(0)}%</dd></div></dl></section>`;
 }
 
 function options(values, selected, emptyLabel) {
@@ -184,13 +186,20 @@ function activeFilterChips(state) {
 
 function holdingsControls(state, view, groupMode, selectionMode) {
   const filters = state.portfolio.filters || {};
-  const hasFilters = state.portfolio.query || state.portfolio.category !== 'all' || Object.values(filters).some(Boolean);
   const activeCount = (state.portfolio.category !== 'all' ? 1 : 0) + Object.values(filters).filter(Boolean).length;
   const categories = new Map(Object.entries(DEFAULT_CATEGORY_LABELS));
   categoryLabels(state.holdings).forEach((label, category) => categories.set(category, label));
   const categoryOptions = [['all', 'All categories'], ...[...categories.entries()].sort((left, right) => left[1].localeCompare(right[1]))];
   const sortOptions = [['value-desc', 'Highest value'], ['gain-desc', 'Largest gain'], ['gain-asc', 'Largest loss'], ['recent-desc', 'Recently added'], ['updated-desc', 'Recently changed'], ['name-asc', 'Name A–Z'], ['set-asc', 'Set order'], ['quantity-desc', 'Highest quantity'], ['missing-desc', 'Missing information']];
-  return `<section class="portfolio-controls collection-toolbar" aria-label="Collection tools"><div class="portfolio-command"><label class="sr-only" for="portfolio-query">Search collection</label><input id="portfolio-query" type="search" value="${escapeAttribute(state.portfolio.query)}" placeholder="Search collection" data-portfolio-query><label class="collection-sort"><span class="sr-only">Sort collection</span><select data-portfolio-sort aria-label="Sort collection">${sortOptions.map(([value, label]) => `<option value="${value}" ${state.portfolio.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><div class="collection-mode-toggle" role="group" aria-label="Collection item grouping"><button type="button" data-collection-group-mode="grouped" aria-pressed="${groupMode === 'grouped'}">Grouped items</button><button type="button" data-collection-group-mode="purchases" aria-pressed="${groupMode === 'purchases'}">Purchases</button></div><div class="view-toggle" role="group" aria-label="Collection view"><button type="button" data-portfolio-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Grid view">▦</button><button type="button" data-portfolio-view="list" aria-pressed="${view === 'list'}" aria-label="List view">☷</button></div><details class="collection-overflow"><summary aria-label="More collection actions">•••</summary><div><button class="button ghost small" type="button" data-action="export-csv">Export CSV</button><button class="button ghost small" type="button" data-action="${selectionMode ? 'clear-holding-selection' : 'start-holding-selection'}">${selectionMode ? 'Exit selection' : 'Select'}</button></div></details></div><details class="portfolio-filter-panel" ${hasFilters ? 'open' : ''}><summary><span>Filters${activeCount ? ` <strong class="filter-count" aria-label="${activeCount} active">${activeCount}</strong>` : ''}</span><span>${activeCount ? `${activeCount} active` : 'All items'}</span></summary><div class="portfolio-filter-grid"><label>Category<select data-portfolio-category>${categoryOptions.map(([value, label]) => `<option value="${escapeAttribute(value)}" ${state.portfolio.category === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select></label><label>Set<select data-portfolio-filter="setName">${options(state.holdings.map((holding) => holding.item?.setName), filters.setName, 'All sets')}</select></label><label>Type<select data-portfolio-filter="ownership"><option value="">All types</option>${[['raw', 'Raw'], ['graded', 'Graded'], ['sealed', 'Sealed']].map(([value, label]) => `<option value="${value}" ${filters.ownership === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Condition<select data-portfolio-filter="condition">${options(state.holdings.map((holding) => holding.condition), filters.condition, 'All conditions')}</select></label><label>Grading company<select data-portfolio-filter="gradeCompany">${options(state.holdings.map((holding) => holding.gradeCompany), filters.gradeCompany, 'All graders')}</select></label><label>Language<select data-portfolio-filter="language">${options(state.holdings.map((holding) => holding.item?.language), filters.language, 'All languages')}</select></label><label>Tag<select data-portfolio-filter="tags">${options(state.holdings.flatMap((holding) => holding.tags || []), filters.tags, 'All tags')}</select></label><label>Pricing<select data-portfolio-filter="pricing"><option value="">All pricing states</option>${[['market', 'Market priced'], ['manual', 'Manual value'], ['unpriced', 'Unpriced']].map(([value, label]) => `<option value="${value}" ${filters.pricing === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Performance<select data-portfolio-filter="performance"><option value="">Gain and loss</option><option value="gain" ${filters.performance === 'gain' ? 'selected' : ''}>Gain</option><option value="loss" ${filters.performance === 'loss' ? 'selected' : ''}>Loss</option></select></label></div></details>${activeFilterChips(state)}</section>`;
+  // DCL-COLL-06: a filter select that can only ever show one value gives
+  // the collector nothing to choose between, so it's hidden entirely.
+  const distinctValues = (values) => [...new Set(values.filter(Boolean).map(String))];
+  const setNames = distinctValues(state.holdings.map((holding) => holding.item?.setName));
+  const conditions = distinctValues(state.holdings.map((holding) => holding.condition));
+  const graders = distinctValues(state.holdings.map((holding) => holding.gradeCompany));
+  const languages = distinctValues(state.holdings.map((holding) => holding.item?.language));
+  const tagValues = distinctValues(state.holdings.flatMap((holding) => holding.tags || []));
+  return `<section class="portfolio-controls collection-toolbar" aria-label="Collection tools"><div class="portfolio-command"><label class="sr-only" for="portfolio-query">Search collection</label><input id="portfolio-query" type="search" value="${escapeAttribute(state.portfolio.query)}" placeholder="Search collection" data-portfolio-query><label class="collection-sort"><span class="sr-only">Sort collection</span><select data-portfolio-sort aria-label="Sort collection">${sortOptions.map(([value, label]) => `<option value="${value}" ${state.portfolio.sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><details class="collection-overflow collection-display-popover"><summary aria-label="Display options">${icon(view === 'gallery' ? 'grid' : 'list', { size: 20 })}</summary><div><div class="collection-mode-toggle" role="group" aria-label="Collection item grouping"><button type="button" data-collection-group-mode="grouped" aria-pressed="${groupMode === 'grouped'}">Grouped items</button><button type="button" data-collection-group-mode="purchases" aria-pressed="${groupMode === 'purchases'}">Purchases</button></div><div class="view-toggle" role="group" aria-label="Collection view"><button type="button" data-portfolio-view="gallery" aria-pressed="${view === 'gallery'}" aria-label="Grid view">${icon('grid', { size: 20 })}</button><button type="button" data-portfolio-view="list" aria-pressed="${view === 'list'}" aria-label="List view">${icon('list', { size: 20 })}</button></div></div></details><details class="collection-overflow"><summary aria-label="More collection actions">${icon('overflow', { size: 20 })}</summary><div><button class="button ghost small" type="button" data-action="export-csv">Export CSV</button><button class="button ghost small" type="button" data-action="${selectionMode ? 'clear-holding-selection' : 'start-holding-selection'}">${selectionMode ? 'Exit selection' : 'Select'}</button></div></details></div><details class="portfolio-filter-panel"><summary>Filters${activeCount ? ` · ${activeCount}` : ''}</summary><div class="portfolio-filter-grid"><label>Category<select data-portfolio-category>${categoryOptions.map(([value, label]) => `<option value="${escapeAttribute(value)}" ${state.portfolio.category === value ? 'selected' : ''}>${escapeHTML(label)}</option>`).join('')}</select></label>${setNames.length > 1 ? `<label>Set<select data-portfolio-filter="setName">${options(state.holdings.map((holding) => holding.item?.setName), filters.setName, 'All sets')}</select></label>` : ''}<label>Type<select data-portfolio-filter="ownership"><option value="">All types</option>${[['raw', 'Raw'], ['graded', 'Graded'], ['sealed', 'Sealed']].map(([value, label]) => `<option value="${value}" ${filters.ownership === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>${conditions.length > 1 ? `<label>Condition<select data-portfolio-filter="condition">${options(state.holdings.map((holding) => holding.condition), filters.condition, 'All conditions')}</select></label>` : ''}${graders.length > 1 ? `<label>Grading company<select data-portfolio-filter="gradeCompany">${options(state.holdings.map((holding) => holding.gradeCompany), filters.gradeCompany, 'All graders')}</select></label>` : ''}${languages.length > 1 ? `<label>Language<select data-portfolio-filter="language">${options(state.holdings.map((holding) => holding.item?.language), filters.language, 'All languages')}</select></label>` : ''}${tagValues.length > 1 ? `<label>Tag<select data-portfolio-filter="tags">${options(state.holdings.flatMap((holding) => holding.tags || []), filters.tags, 'All tags')}</select></label>` : ''}<label>Pricing<select data-portfolio-filter="pricing"><option value="">All pricing states</option>${[['market', 'Market priced'], ['manual', 'Manual value'], ['unpriced', 'Unpriced']].map(([value, label]) => `<option value="${value}" ${filters.pricing === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>Performance<select data-portfolio-filter="performance"><option value="">Gain and loss</option><option value="gain" ${filters.performance === 'gain' ? 'selected' : ''}>Gain</option><option value="loss" ${filters.performance === 'loss' ? 'selected' : ''}>Loss</option></select></label></div></details>${activeFilterChips(state)}</section>`;
 }
 
 function bulkToolbar(selected, selectionMode) {
@@ -310,54 +319,110 @@ function watchlistControls(state) {
 
 function watchlistSection(state) {
   const currency = state.settings.currency || 'USD';
-  if (!state.watchlistItems.length) return `<section class="empty-state watchlist-empty"><span class="empty-symbol">☆</span><h2>Track cards before you buy</h2><p>Watch prices, set targets, and follow future outlooks.</p><button class="button" type="button" data-go="search">Find a card</button></section>`;
+  const watchlistEmpty = `<section class="empty-state watchlist-empty"><span class="empty-symbol">${icon('star', { size: 24 })}</span><h2>Track cards before you buy</h2><p>Watch prices, set targets, and follow future outlooks.</p><button class="button" type="button" data-go="search">Find a card</button></section>`;
+  if (!state.watchlistItems.length) {
+    // DCL-NAV-02: alert history stays reachable even after the last watched
+    // card is removed -- only a fully empty state collapses to the intro.
+    if (!(state.alerts || []).length) return watchlistEmpty;
+    const emptyView = state.portfolio.watchlistView === 'alerts' ? 'alerts' : 'cards';
+    const emptyUnread = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt).length;
+    return `<div class="alert-filter watchlist-view-switch" role="group" aria-label="Watchlist sections">
+      <button type="button" data-watchlist-section="cards" aria-pressed="${emptyView === 'cards'}">Watched cards</button>
+      <button type="button" data-watchlist-section="alerts" aria-pressed="${emptyView === 'alerts'}">Alerts${emptyUnread ? ` <span class="insights-tab-count" aria-label="${emptyUnread} unread">${emptyUnread}</span>` : ''}</button>
+    </div>${emptyView === 'alerts' ? alertsPanel(state) : watchlistEmpty}`;
+  }
   const controls = state.watchlist || { query: '', category: 'all', sort: 'forecast-desc' };
   const shown = filterAndSortWatchlist(state.watchlistItems, state.intelligence?.byVariant || {}, controls);
   const activeAlerts = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt && state.watchlistItems.some((item) => item.watchKey === alert.watchKey));
   const configured = state.watchlistItems.filter((entry) => watchlistCardViewModel(entry).alertsEnabled).length;
   const filtersUseful = state.watchlistItems.length > 1 || controls.query || (controls.category && controls.category !== 'all');
-  return `<section class="watchlist-overview"><div><p class="eyebrow">Purchase watch</p><strong>${state.watchlistItems.length} exact variant${state.watchlistItems.length === 1 ? '' : 's'}</strong><span>${configured} with targets or alerts · Approved intelligence alerts: ${activeAlerts.length}</span></div><button class="button secondary small" type="button" data-go="search">Find another card</button></section>
-    ${filtersUseful ? watchlistControls(state) : ''}
+  // DCL-COLL-07: "N watched cards" + "M alerts" -- drop "exact variants"
+  // and the "Approved intelligence alerts:" label.
+  // DCL-NAV-02 (decision D-1): the Watchlist surface owns alert review;
+  // a two-way switch keeps watched cards and their alert history together
+  // so the watch -> alert -> review loop completes in one destination.
+  const watchlistView = state.portfolio.watchlistView === 'alerts' ? 'alerts' : 'cards';
+  const unreadAlerts = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt).length;
+  const viewSwitch = `<div class="alert-filter watchlist-view-switch" role="group" aria-label="Watchlist sections">
+    <button type="button" data-watchlist-section="cards" aria-pressed="${watchlistView === 'cards'}">Watched cards</button>
+    <button type="button" data-watchlist-section="alerts" aria-pressed="${watchlistView === 'alerts'}">Alerts${unreadAlerts ? ` <span class="insights-tab-count" aria-label="${unreadAlerts} unread">${unreadAlerts}</span>` : ''}</button>
+  </div>`;
+  const cardsContent = `${filtersUseful ? watchlistControls(state) : ''}
     ${compareBar(state.compare || [])}
     <div class="section-heading"><div><p class="eyebrow">${shown.length} shown</p><h2>Watched cards</h2></div></div>
     ${shown.length ? `<div class="watchlist-grid">${shown.map((model) => watchlistCard(model, currency, activeAlerts.filter((alert) => alert.watchKey === model.entry.watchKey), state.compare || [])).join('')}</div>` : `<section class="empty-state"><h2>No watched cards match</h2><p>Clear the watchlist filters to see every exact variant.</p><button class="button ghost" type="button" data-action="clear-watchlist-filters">Clear filters</button></section>`}`;
+  return `<section class="watchlist-overview"><div><p class="eyebrow">Purchase watch</p><strong>${state.watchlistItems.length} watched card${state.watchlistItems.length === 1 ? '' : 's'}</strong><span>${configured} with targets or alerts · ${activeAlerts.length} alert${activeAlerts.length === 1 ? '' : 's'}</span></div><button class="button secondary small" type="button" data-go="search">Find another card</button></section>
+    ${viewSwitch}
+    ${watchlistView === 'alerts' ? alertsPanel(state) : cardsContent}`;
 }
 
+// DCL-NAV-02: alert review, moved here from Insights (decision D-1). The
+// filter state lives in state.portfolio.alertFilter now.
+function alertsPanel(state) {
+  const filter = ['all', 'unread', 'muted'].includes(state.portfolio?.alertFilter) ? state.portfolio.alertFilter : 'all';
+  const all = alertHistoryModels(state.alerts || [], state.watchlistItems || [], 'all');
+  const alerts = alertHistoryModels(state.alerts || [], state.watchlistItems || [], filter);
+  const unread = all.filter((alert) => alert.unread && !alert.muted).length;
+  const muted = all.filter((alert) => alert.muted).length;
+  return `<section class="alerts-workspace" aria-labelledby="alerts-title"><div class="alerts-summary"><div><p class="eyebrow">Notifications</p><h2 id="alerts-title">Alerts</h2><p>${all.length} recorded · ${unread} unread · ${muted} muted</p></div>${unread ? '<button class="button ghost small" type="button" data-action="mark-all-alerts-read">Mark all read</button>' : ''}</div>
+    <div class="alert-filter" role="group" aria-label="Filter alert history">${[['all', 'All'], ['unread', 'Unread'], ['muted', 'Muted']].map(([value, label]) => `<button type="button" data-alert-filter="${value}" aria-pressed="${filter === value}">${label}</button>`).join('')}</div>
+    ${alerts.length ? `<div class="alert-history-list">${alerts.map(alertCard).join('')}</div>` : all.length ? emptyState('No alerts match this filter', 'Choose another history filter to review saved notifications.', '<button class="button ghost" type="button" data-alert-filter="all">Show all alerts</button>') : emptyState('No alert history yet', 'Set a target or movement rule on a watched card. Alerts are created only from approved market changes.', '<button class="button" type="button" data-watchlist-section="cards">View watched cards</button>')}
+  </section>`;
+}
+
+function alertCard(alert) {
+  const labels = {
+    target_price: 'Price target reached',
+    percent_change: 'Price movement threshold',
+    new_catalog_price: 'New catalog price',
+    price_stale: 'Price became stale',
+    became_unpriced: 'Item became unpriced',
+    set_release: 'Set release or availability',
+    watchlist_change: 'Watchlist change',
+    forecast_change: 'Model-based forecast change',
+    trend_change: 'Market trend change',
+    range_change: 'Market range change'
+  };
+  const label = labels[alert.kind] || 'Collection alert';
+  const name = alert.item?.name || 'Watched card';
+  // DCL-INS-06: chips mark exceptions only -- Unread, Muted, System.
+  return `<article class="alert-history-card ${alert.unread ? 'unread' : 'read'} ${alert.muted ? 'muted' : ''}"><div class="alert-state">${alert.unread ? '<span>Unread</span>' : ''}${alert.muted ? '<span>Muted</span>' : ''}${alert.system ? '<span>System</span>' : ''}</div><div><p class="eyebrow">${escapeHTML(label)}</p><h3>${escapeHTML(name)}</h3><p>${escapeHTML(alert.message || 'A configured alert condition changed.')}</p><small>${escapeHTML(readableDate(alert.triggeredAt))}</small>${alert.kind === 'forecast_change' ? '<p class="fine-print">This notification describes a model output change, not an observed price movement.</p>' : ''}</div><div class="item-actions">${alert.watched ? `<button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(alert.watchKey)}">Open item</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(alert.watchKey)}">Edit rule</button>` : ''}<button class="button ghost small" type="button" data-action="${alert.unread ? 'mark-alert-read' : 'mark-alert-unread'}" data-id="${escapeAttribute(alert.id)}">Mark ${alert.unread ? 'read' : 'unread'}</button><button class="button ghost small" type="button" data-action="toggle-alert-mute" data-id="${escapeAttribute(alert.id)}">${alert.muted ? 'Unmute notification' : 'Mute notification'}</button></div></article>`;
+}
+
+// DCL-COLL-08: the gated state is one sentence -- no badge, no bullets, no
+// gate card.
 function forecastSection(state) {
   const publicEnabled = Boolean(state.featureFlags?.publicPriceIntelligence);
-  if (!publicEnabled) return `<section class="card intelligence-gate" role="status">
-    <span class="support-badge ${publicEnabled ? 'supported' : 'restricted'}">${publicEnabled ? 'Publication enabled' : 'Research gate active'}</span>
-    <h2>Forecasts are not publicly available</h2>
-    <p>Watchlists work now. Public price intelligence remains disabled until source rights, mapping, and walk-forward model gates pass.</p>
-    <ul class="evidence-list"><li>No fabricated estimates for unsupported cards.</li><li>Past predictions will remain immutable once forecasting launches.</li><li>Observed price, trend, fair value, and forecast will remain separate outputs.</li></ul>
-  </section>`;
+  if (!publicEnabled) return '<p class="muted">Forecasts aren\'t available yet. Watchlists work now.</p>';
 
   const publications = Object.values(state.intelligence?.byVariant || {}).flat()
     .map(normalizeIntelligencePayload)
     .filter((publication) => Object.keys(publication.forecasts).length);
-  const outlookCount = publications.reduce((count, publication) => count + Object.keys(publication.forecasts).length, 0);
   const status = `${state.intelligence?.loading ? '<p class="fine-print" role="status">Refreshing approved publications…</p>' : ''}${state.intelligence?.error ? `<p class="fine-print negative" role="status">${escapeHTML(state.intelligence.error)}</p>` : ''}`;
-  if (!publications.length) return `${status}<section class="card intelligence-gate" role="status"><span class="support-badge supported">Publication enabled</span><h2>No approved forecasts published yet</h2><p>Cards appear here only after a rights-cleared model run passes horizon-specific baseline, leakage, and calibration gates.</p></section>`;
-  return `${status}<div class="section-heading"><div><p class="eyebrow">${publications.length} product${publications.length === 1 ? '' : 's'} · ${outlookCount} approved horizon${outlookCount === 1 ? '' : 's'}</p><h2>Product outlooks</h2></div></div><div class="forecast-list">${publications.map((publication) => forecastCard(state, publication)).join('')}</div>`;
+  // LEX sweep: drop the governance badge and the "rights-cleared ...
+  // baseline, leakage, and calibration gates" engineering sentence
+  // (RULE-3/Appendix C) in favor of one plain absence line.
+  if (!publications.length) return `${status}<section class="card intelligence-gate" role="status"><h2>No forecasts published yet</h2><p>New outlooks appear here once one is approved.</p></section>`;
+  return `${status}<div class="section-heading"><div><p class="eyebrow">Forecasts</p><h2>Product outlooks</h2></div></div><div class="forecast-list">${publications.map((publication) => forecastCard(state, publication)).join('')}</div>`;
 }
 
 function groupedHoldingCard(group, currency, state, view) {
   const holding = group.coverHolding;
   const identity = [group.item?.game, group.item?.setName, group.item?.number ? `#${group.item.number}` : '', group.item?.variant, group.item?.language].filter(Boolean).join(' · ');
   const sourceLabel = group.pricingStatus === 'market' ? 'Market' : group.pricingStatus === 'manual' ? 'Manual' : group.pricingStatus === 'unpriced' ? 'Unpriced' : 'Mixed sources';
-  const sources = [...new Set(group.holdings.map((entry) => entry.manualMarketPrice !== '' && entry.manualMarketPrice != null
-    ? 'Manual value' : catalogPriceDisclosure(entry.item) || entry.item?.priceSource || 'No verified market price'))];
-  const valueNote = [
-    group.pricedPurchaseCount ? `${group.pricedPurchaseCount} priced purchase${group.pricedPurchaseCount === 1 ? '' : 's'}` : '',
-    group.unpricedPurchaseCount ? `${group.unpricedPurchaseCount} unpriced` : '',
-    group.excludedCurrencyCount ? `${group.excludedCurrencyCount} other-currency` : '',
-    sources.join(', ')
-  ].filter(Boolean).join(' · ') || 'No verified market price';
+  // DCL-COLL-05: one attention status only, shown only when the group
+  // actually needs one; provenance/source clauses belong on the detail
+  // page, not this card.
+  const valueNote = group.unpricedPurchaseCount
+    ? `${group.unpricedPurchaseCount} of ${group.holdings.length} unpriced`
+    : group.excludedCurrencyCount
+      ? `${group.excludedCurrencyCount} of ${group.holdings.length} other-currency`
+      : '';
   const gain = group.gainEligibleCount
     ? `<dd class="${group.gain >= 0 ? 'positive' : 'negative'}">${escapeHTML(formatCurrency(group.gain, currency))}</dd><dd class="metric-note"><small>${group.gainEligibleCount} comparable purchase${group.gainEligibleCount === 1 ? '' : 's'}</small></dd>`
-    : '<dd>Unavailable</dd><dd class="metric-note"><small>Add cost and current value</small></dd>';
+    : '<dd>—</dd><dd class="metric-note"><small>Add cost and current value</small></dd>';
   const attention = group.unpricedPurchaseCount ? `<span class="holding-attention">${group.unpricedPurchaseCount} need${group.unpricedPurchaseCount === 1 ? 's' : ''} a value</span>` : '';
-  return `<article class="portfolio-holding-card grouped ${escapeAttribute(view)}" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}" tabindex="0" aria-label="Inspect ${escapeAttribute(group.item?.name || 'item')}"><div class="holding-art">${externalImage({ ...group.item, userImage: holding.userImage }, 'holding-image')}<span class="value-source ${escapeAttribute(group.pricingStatus)}">${escapeHTML(sourceLabel)}</span></div><div class="holding-identity"><h3>${escapeHTML(group.item?.name || 'Unnamed item')}</h3><p>${escapeHTML(identity || 'Custom collection item')}</p><div class="holding-pills"><span>Qty ${escapeHTML(String(group.quantity))}</span><span>${group.holdings.length} purchase${group.holdings.length === 1 ? '' : 's'}</span>${group.item?.rarity ? `<span>${escapeHTML(group.item.rarity)}</span>` : ''}${attention}</div></div><dl class="holding-values"><div><dt>Current value</dt><dd>${group.pricedPurchaseCount ? escapeHTML(formatCurrency(group.marketValue, currency)) : 'Unpriced'}</dd><dd class="metric-note"><small>${escapeHTML(valueNote)}</small></dd></div><div><dt>Estimated gain or loss</dt>${gain}</div></dl><div class="holding-actions grouped-actions"><button class="button secondary small" type="button" data-action="show-individual-purchases">View purchases</button><button class="button ghost small" type="button" data-action="toggle-watch" data-holding-id="${escapeAttribute(holding.id)}">${findWatchedItem(state.watchlistItems, holding.item) ? 'Watching' : 'Watch'}</button></div></article>`;
+  return `<article class="portfolio-holding-card grouped ${escapeAttribute(view)}" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}" tabindex="0" aria-label="Inspect ${escapeAttribute(group.item?.name || 'item')}"><div class="holding-art">${externalImage({ ...group.item, userImage: holding.userImage }, 'holding-image')}<span class="value-source ${escapeAttribute(group.pricingStatus)}">${escapeHTML(sourceLabel)}</span></div><div class="holding-identity"><h3>${escapeHTML(group.item?.name || 'Unnamed item')}</h3><p>${escapeHTML(identity || 'Custom collection item')}</p><div class="holding-pills"><span>Qty ${escapeHTML(String(group.quantity))}</span><span>${group.holdings.length} purchase${group.holdings.length === 1 ? '' : 's'}</span>${group.item?.rarity ? `<span>${escapeHTML(group.item.rarity)}</span>` : ''}${attention}</div></div><dl class="holding-values"><div><dt>Current value</dt><dd>${group.pricedPurchaseCount ? escapeHTML(formatCurrency(group.marketValue, currency)) : 'Unpriced'}</dd>${valueNote ? `<dd class="metric-note"><small>${escapeHTML(valueNote)}</small></dd>` : ''}</div><div><dt>Estimated gain or loss</dt>${gain}</div></dl><div class="holding-actions grouped-actions"><button class="button secondary small" type="button" data-action="show-individual-purchases">View purchases</button><button class="button ghost small" type="button" data-action="toggle-watch" data-holding-id="${escapeAttribute(holding.id)}">${findWatchedItem(state.watchlistItems, holding.item) ? 'Watching' : 'Watch'}</button></div></article>`;
 }
 
 function holdingCard(holding, currency, state, view, selected, selectionMode) {
@@ -382,7 +447,7 @@ function holdingCard(holding, currency, state, view, selected, selectionMode) {
   const identity = [holding.item?.game, holding.item?.setName, holding.item?.number ? `#${holding.item.number}` : '', holding.item?.variant, holding.item?.language].filter(Boolean).join(' · ');
   const condition = holding.grade ? `${holding.gradeCompany || 'Graded'} ${holding.grade}` : holding.condition || 'Condition not set';
   const selection = selectionMode ? `<button class="holding-select" type="button" data-action="toggle-holding-selection" data-id="${escapeAttribute(holding.id)}" aria-pressed="${selected}" aria-label="${selected ? 'Deselect' : 'Select'} ${escapeAttribute(holding.item?.name || 'purchase')}"><span aria-hidden="true">${selected ? '✓' : ''}</span></button>` : '';
-  return `<article class="portfolio-holding-card ${escapeAttribute(view)}" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}" tabindex="0" aria-label="Inspect ${escapeAttribute(holding.item?.name || 'purchase')}">${selection}<div class="holding-art">${externalImage({ ...holding.item, userImage: holding.userImage }, 'holding-image')}<span class="value-source ${escapeAttribute(pricingStatus)}">${escapeHTML(pricingStatus === 'market' ? 'Market' : pricingStatus === 'manual' ? 'Manual' : 'Unpriced')}</span></div><div class="holding-identity"><h3>${escapeHTML(holding.item?.name || 'Unnamed item')}</h3><p>${escapeHTML(identity || 'Custom collection item')}</p><div class="holding-pills"><span>${escapeHTML(condition)}</span><span>Qty ${escapeHTML(String(holding.quantity || 0))}</span>${holding.item?.rarity ? `<span>${escapeHTML(holding.item.rarity)}</span>` : ''}${pricingStatus === 'unpriced' ? '<span class="holding-attention">Needs a value</span>' : ''}${(holding.tags || []).slice(0, 2).map((tag) => `<span>#${escapeHTML(tag)}</span>`).join('')}</div></div><dl class="holding-values"><div><dt>Current value</dt><dd>${pricingStatus === 'unpriced' ? 'Unpriced' : escapeHTML(formatCurrency(value, valueCurrency))}</dd><dd class="metric-note"><small>${escapeHTML(source)}${valueCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}</small></dd></div><div><dt>Cost basis</dt><dd>${hasRecordedCost ? escapeHTML(formatCurrency(cost, costCurrency)) : 'Not recorded'}</dd><dd class="metric-note"><small>${hasRecordedCost ? `Recorded purchase${costCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}` : 'Add purchase details to calculate'}</small></dd></div><div><dt>Estimated gain or loss</dt><dd class="${gain === null ? '' : gain >= 0 ? 'positive' : 'negative'}">${gain === null ? 'Unavailable' : escapeHTML(formatCurrency(gain, valueCurrency))}</dd><dd class="metric-note"><small>${gain === null ? 'Needs both cost and current value' : escapeHTML(formatPercent(returnPercent(value, cost)))}</small></dd></div></dl><div class="holding-actions"><button class="button ghost small" type="button" data-action="toggle-watch" data-holding-id="${escapeAttribute(holding.id)}">${watching ? 'Watching' : 'Watch'}</button><button class="button ghost small" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Edit</button><button class="button ghost small" type="button" data-action="delete-holding" data-id="${escapeAttribute(holding.id)}">Delete</button></div></article>`;
+  return `<article class="portfolio-holding-card ${escapeAttribute(view)}" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}" tabindex="0" aria-label="Inspect ${escapeAttribute(holding.item?.name || 'purchase')}">${selection}<div class="holding-art">${externalImage({ ...holding.item, userImage: holding.userImage }, 'holding-image')}<span class="value-source ${escapeAttribute(pricingStatus)}">${escapeHTML(pricingStatus === 'market' ? 'Market' : pricingStatus === 'manual' ? 'Manual' : 'Unpriced')}</span></div><div class="holding-identity"><h3>${escapeHTML(holding.item?.name || 'Unnamed item')}</h3><p>${escapeHTML(identity || 'Custom collection item')}</p><div class="holding-pills"><span>${escapeHTML(condition)}</span><span>Qty ${escapeHTML(String(holding.quantity || 0))}</span>${holding.item?.rarity ? `<span>${escapeHTML(holding.item.rarity)}</span>` : ''}${pricingStatus === 'unpriced' ? '<span class="holding-attention">Needs a value</span>' : ''}${(holding.tags || []).slice(0, 2).map((tag) => `<span>#${escapeHTML(tag)}</span>`).join('')}</div></div><dl class="holding-values"><div><dt>Current value</dt><dd>${pricingStatus === 'unpriced' ? 'Unpriced' : escapeHTML(formatCurrency(value, valueCurrency))}</dd><dd class="metric-note"><small>${escapeHTML(source)}${valueCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}</small></dd></div><div><dt>Cost basis</dt><dd>${hasRecordedCost ? escapeHTML(formatCurrency(cost, costCurrency)) : 'Not recorded'}</dd><dd class="metric-note"><small>${hasRecordedCost ? `Recorded purchase${costCurrency !== currency ? ` · Excluded from ${escapeHTML(currency)} total` : ''}` : 'Add purchase details to calculate'}</small></dd></div><div><dt>Estimated gain or loss</dt><dd class="${gain === null ? '' : gain >= 0 ? 'positive' : 'negative'}">${gain === null ? '—' : escapeHTML(formatCurrency(gain, valueCurrency))}</dd><dd class="metric-note"><small>${gain === null ? 'Needs both cost and current value' : escapeHTML(formatPercent(returnPercent(value, cost)))}</small></dd></div></dl><div class="holding-actions"><button class="button ghost small" type="button" data-action="toggle-watch" data-holding-id="${escapeAttribute(holding.id)}">${watching ? 'Watching' : 'Watch'}</button><button class="button ghost small" type="button" data-action="edit-holding" data-id="${escapeAttribute(holding.id)}">Edit</button></div></article>`;
 }
 
 function compareBar(selection) {
@@ -390,23 +455,23 @@ function compareBar(selection) {
   return `<div class="card compare-bar" role="status"><span>${selection.length} of 4 selected for comparison</span><div class="button-row"><button class="button small" type="button" data-action="open-compare" ${selection.length < 2 ? 'disabled' : ''}>Compare</button><button class="button ghost small" type="button" data-action="clear-compare">Clear</button></div></div>`;
 }
 
+// DCL-COLL-02: art + alert chip, name/meta, current price, 30-day move,
+// target distance, two visible actions (Details, Add to collection) plus
+// an overflow holding Target & alerts, Compare, Remove. The forecast
+// range/confidence block, the support-badge sentence, the 7-day and
+// last-update stats, the liquidity small, and the opportunity rankReason
+// paragraph are gone; alert signals are capped at one.
 function watchlistCard(model, currency, alerts = [], compareSelection = []) {
-  const { entry, ref, intelligence, observed, currentPrice, currentCurrency, targetPrice, targetCurrency, targetComparable, forecast, forecastUpside, opportunityScore, alertsEnabled, change7d, change30d } = model;
+  const { entry, ref, intelligence, observed, currentPrice, currentCurrency, targetPrice, targetCurrency, targetComparable, alertsEnabled, change30d } = model;
   const displayCurrency = currentCurrency || observed?.currency || ref.currency || currency;
-  const support = entry.canonicalVariantId ? 'Exact card verified · approved outlook not published' : ref.mappingStatus === 'source_exact' ? 'Exact source identity · awaiting card verification' : 'Card identified · exact verification required';
-  const change = (value) => value === null ? 'Unavailable' : `${value >= 0 ? '+' : ''}${formatPercent(value * 100)}`;
+  const change = (value) => value === null ? '—' : `${value >= 0 ? '+' : ''}${formatPercent(value * 100)}`;
   const distance = targetPrice === null ? 'No target set' : currentPrice === null ? 'Waiting for a current price' : !targetComparable
     ? `Target is ${targetCurrency}; current price is ${displayCurrency}` : currentPrice <= targetPrice
     ? `${formatCurrency(targetPrice - currentPrice, displayCurrency)} below target`
     : `${formatCurrency(currentPrice - targetPrice, displayCurrency)} above target`;
-  const forecastRange = forecast ? `${formatCurrency(forecast.q25, displayCurrency)}–${formatCurrency(forecast.q75, displayCurrency)}` : 'No approved outlook';
-  const forecastMeta = forecast ? `${forecast.horizon}D · ${forecast.confidence === null ? 'confidence unavailable' : `confidence ${Math.round(forecast.confidence)}/100`}` : 'Still useful for targets and identity tracking';
   const alertText = alerts.length ? `${alerts.length} new alert${alerts.length === 1 ? '' : 's'}` : alertsEnabled ? 'Alerts on' : 'Alerts off';
-  const update = observed?.observedAt || ref.priceUpdatedAt || entry.updatedAt;
-  const updated = update && !Number.isNaN(new Date(update).valueOf()) ? new Date(update).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Not available';
-  const signals = alerts.slice(0, 2).map((alert) => `<p class="watch-signal positive" role="status">● ${escapeHTML(alert.message)}</p>`).join('');
-  const rankReason = 'Opportunity ranking withheld until offer price, taxes, shipping, selling fees, and liquidity evidence are recorded. Forecast upside alone is not profit.';
-  return `<article class="watch-card"><div class="watch-card-art">${externalImage(ref, 'holding-image')}<span class="watch-alert-state ${alerts.length ? 'triggered' : alertsEnabled ? 'active' : ''}">${escapeHTML(alertText)}</span></div><div class="watch-card-main"><div class="watch-card-title"><div><h3>${escapeHTML(ref.name || 'Unnamed watched card')}</h3><p>${escapeHTML([ref.setName, ref.number, ref.rarity, ref.finish].filter(Boolean).join(' · '))}</p></div><button class="icon-button" type="button" data-action="remove-watch" data-watch-key="${escapeAttribute(entry.watchKey)}" aria-label="Remove ${escapeAttribute(ref.name || 'card')} from Watchlist">×</button></div><div class="watch-values"><div class="actual"><span>Current market</span><strong>${currentPrice === null ? 'Price unavailable' : escapeHTML(formatCurrency(currentPrice, displayCurrency))}</strong><small>${escapeHTML(observed?.source || catalogPriceDisclosure(ref) || ref.priceSource || 'No approved observed-price source')}</small></div><div class="forecast"><span>Future outlook</span><strong>${escapeHTML(forecastRange)}</strong><small>${escapeHTML(forecastMeta)}</small></div></div><dl class="watch-stats"><div><dt>7-day move</dt><dd class="${change7d === null ? '' : change7d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change7d))}</dd></div><div><dt>30-day move</dt><dd class="${change30d === null ? '' : change30d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change30d))}</dd></div><div><dt>Target</dt><dd>${targetPrice === null ? 'Not set' : escapeHTML(formatCurrency(targetPrice, targetCurrency))}<small>${escapeHTML(distance)}</small></dd></div><div><dt>Last price update</dt><dd>${escapeHTML(updated)}<small>${escapeHTML(ref.salesFrequency || 'Liquidity unavailable')}</small></dd></div></dl>${intelligence ? intelligenceSummary(intelligence, displayCurrency) : `<span class="support-badge unsupported">${escapeHTML(SUPPORT_LABELS[0])} · ${escapeHTML(support)}</span>`}<p class="opportunity-reason">${escapeHTML(rankReason)}</p>${signals}<div class="item-actions"><button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(entry.watchKey)}">Details</button><button class="button ghost small" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(entry.watchKey)}">${compareSelection.includes(entry.watchKey) ? '☑ Comparing' : '☐ Compare'}</button><button class="button secondary small" type="button" data-action="add-watched" data-watch-key="${escapeAttribute(entry.watchKey)}">Add to collection</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(entry.watchKey)}">Target &amp; alerts</button></div></div></article>`;
+  const signals = alerts.slice(0, 1).map((alert) => `<p class="watch-signal positive" role="status">● ${escapeHTML(alert.message)}</p>`).join('');
+  return `<article class="watch-card"><div class="watch-card-art">${externalImage(ref, 'holding-image')}<span class="watch-alert-state ${alerts.length ? 'triggered' : alertsEnabled ? 'active' : ''}">${escapeHTML(alertText)}</span></div><div class="watch-card-main"><div class="watch-card-title"><div><h3>${escapeHTML(ref.name || 'Unnamed watched card')}</h3><p>${escapeHTML([ref.setName, ref.number, ref.rarity, ref.finish].filter(Boolean).join(' · '))}</p></div></div><div class="watch-values"><div class="actual"><span>Current market</span><strong>${currentPrice === null ? 'Price unavailable' : escapeHTML(formatCurrency(currentPrice, displayCurrency))}</strong><small>${escapeHTML(observed?.source || catalogPriceDisclosure(ref) || ref.priceSource || 'No approved observed-price source')}</small></div></div><dl class="watch-stats"><div><dt>30-day move</dt><dd class="${change30d === null ? '' : change30d >= 0 ? 'positive' : 'negative'}">${escapeHTML(change(change30d))}</dd></div><div><dt>Target</dt><dd>${targetPrice === null ? 'Not set' : escapeHTML(formatCurrency(targetPrice, targetCurrency))}<small>${escapeHTML(distance)}</small></dd></div></dl>${intelligence ? intelligenceSummary(intelligence, displayCurrency, true) : `<span class="support-badge unsupported">${escapeHTML(SUPPORT_BADGES[0])}</span>`}${signals}<div class="item-actions"><button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(entry.watchKey)}">Details</button><button class="button secondary small" type="button" data-action="add-watched" data-watch-key="${escapeAttribute(entry.watchKey)}">Add to collection</button><details class="collection-overflow"><summary aria-label="More actions for ${escapeAttribute(ref.name || 'watched card')}">${icon('overflow', { size: 20 })}</summary><div><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(entry.watchKey)}">Target &amp; alerts</button><button class="button ghost small" type="button" data-action="toggle-compare" data-watch-key="${escapeAttribute(entry.watchKey)}">${compareSelection.includes(entry.watchKey) ? `${icon('compareCheck', { size: 15 })} Comparing` : `${icon('compareBox', { size: 15 })} Compare`}</button><button class="button ghost small" type="button" data-action="remove-watch" data-watch-key="${escapeAttribute(entry.watchKey)}">Remove</button></div></details></div></div></article>`;
 }
 
 function intelligenceSummary(intelligence, currency, compact = false) {
@@ -417,7 +482,7 @@ function intelligenceSummary(intelligence, currency, compact = false) {
   const fair = !compact && intelligence.supportTier >= 3 && intelligence.fairValue
     ? `<span class="intelligence-stat">Fair range ${escapeHTML(formatCurrency(intelligence.fairValue.q10, currency))}–${escapeHTML(formatCurrency(intelligence.fairValue.q90, currency))}</span>`
     : '';
-  return `<div class="intelligence-summary"><span class="support-badge ${tone}">${escapeHTML(SUPPORT_LABELS[intelligence.supportTier] || 'Approved market evidence')}</span>${trend}${fair}</div>`;
+  return `<div class="intelligence-summary"><span class="support-badge ${tone}">${escapeHTML(SUPPORT_BADGES[intelligence.supportTier] ?? SUPPORT_BADGES[0])}</span>${trend}${fair}</div>`;
 }
 
 function forecastCard(state, publication) {
@@ -439,5 +504,5 @@ function forecastCard(state, publication) {
     asOfDate: publication.publishedAt || publication.observed?.observedAt
   })
     || '<div class="empty-chart">An approved observed price is required before ranges can be anchored on a graph.</div>';
-  return `<article class="card forecast-card product-outlook-card"><div class="forecast-product-head">${externalImage(item, 'forecast-product-image')}<div><p class="eyebrow">Approved product outlook</p><h2>${escapeHTML(item.name || 'Verified card')}</h2><p class="item-meta">${escapeHTML([item.setName, item.number, item.finish || item.variant].filter(Boolean).join(' · '))}</p><div class="intelligence-summary"><span class="support-badge supported">${escapeHTML(SUPPORT_LABELS[publication.supportTier] || 'Forecast available')}</span>${trend}</div></div>${detail}</div>${projection}<div class="forecast-horizon-list">${forecasts.map((forecast) => `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(forecast.q50, currency))} median</h3></div>${forecast.confidence === null ? '' : `<span class="pill">Confidence ${Math.round(forecast.confidence)}/100</span>`}</div><div class="forecast-grid"><div><span>50% range</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% range</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div></div><p class="fine-print">Origin ${escapeHTML(forecast.origin || 'not disclosed')} · Matures ${escapeHTML(forecast.maturesAt || 'not disclosed')} · Model ${escapeHTML(forecast.modelVersion || 'not disclosed')}</p></section>`).join('')}</div>${source ? `<p class="price-source">Sources: ${escapeHTML(source)}</p>` : ''}</article>`;
+  return `<article class="card forecast-card product-outlook-card"><div class="forecast-product-head">${externalImage(item, 'forecast-product-image')}<div><p class="eyebrow">Product outlook</p><h2>${escapeHTML(item.name || 'Verified card')}</h2><p class="item-meta">${escapeHTML([item.setName, item.number, item.finish || item.variant].filter(Boolean).join(' · '))}</p><div class="intelligence-summary"><span class="support-badge supported">${escapeHTML(SUPPORT_BADGES[publication.supportTier] ?? SUPPORT_BADGES[0])}</span>${trend}</div></div>${detail}</div>${projection}<div class="forecast-horizon-list">${forecasts.map((forecast) => `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(forecast.q50, currency))} median</h3></div>${forecast.confidence === null ? '' : `<span class="pill">Confidence ${Math.round(forecast.confidence)}/100</span>`}</div><div class="forecast-grid"><div><span>50% range</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% range</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div></div><p class="fine-print">Origin ${escapeHTML(forecast.origin || '—')} · Matures ${escapeHTML(forecast.maturesAt || '—')} · Model ${escapeHTML(forecast.modelVersion || '—')}</p></section>`).join('')}</div>${source ? `<p class="price-source">Sources: ${escapeHTML(source)}</p>` : ''}</article>`;
 }

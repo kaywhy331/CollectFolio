@@ -3,6 +3,7 @@ import { catalogPriceForValuation, catalogPriceOptionsForDisplay } from '../core
 import { CURRENCIES } from '../core/settings.js';
 import { RAW_MARKET_CONDITIONS } from '../core/market-series.js';
 import { escapeAttribute, escapeHTML, formatCurrency } from '../core/utils.js';
+import { CLARIFIERS } from '../core/copy.js';
 
 const CATEGORIES = [
   ['pokemon', 'Pokémon'], ['magic', 'Magic'], ['yugioh', 'Yu-Gi-Oh!'],
@@ -69,7 +70,7 @@ export function renderHoldingForm(holding = null, {
       ${visiblePriceOptions.length ? `<label class="span-all">Printing / finish<select name="finish">${visiblePriceOptions.map((entry, index) => `<option value="${index}" ${index === (chosenFinish < 0 ? 0 : chosenFinish) ? 'selected' : ''}>${escapeHTML(entry.finish)} · ${entry.price === null || entry.price === undefined ? 'Price unavailable' : escapeHTML(formatCurrency(entry.price, item.currency || 'USD'))}</option>`).join('')}</select><span class="fine-print">The selected finish and available market price are saved together.</span></label>` : ''}
       <label>Quantity<input name="quantity" type="number" min="1" step="1" value="${escapeAttribute(holding?.quantity || 1)}" required></label>
       <label>Collection condition<select name="condition">${CONDITIONS.map((value) => option(value, holding?.condition || defaultCondition)).join('')}</select></label>
-      <label>Marketplace condition <span class="optional-label">For forecasting</span><select name="marketCondition"><option value="">Not confirmed</option>${RAW_MARKET_CONDITIONS.map((entry) => option(entry.value, marketCondition, entry.label)).join('')}</select><span class="fine-print">Choose the exact marketplace condition. CollectFolio will not infer it from your collection condition.</span></label>
+      <label>Marketplace condition <span class="optional-label">Optional</span><select name="marketCondition"><option value="">Not confirmed</option>${RAW_MARKET_CONDITIONS.map((entry) => option(entry.value, marketCondition, entry.label)).join('')}</select><span class="fine-print">Optional — used for price tracking.</span></label>
       <label>Purchase price per item <span class="optional-label">Optional</span><input name="purchasePrice" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.purchasePrice ?? '')}" placeholder="What you paid"></label>
       <label>Purchase currency<select name="purchaseCurrency">${CURRENCIES.map((value) => option(value, purchaseCurrency)).join('')}</select></label>
     </div></section>
@@ -83,7 +84,7 @@ export function renderHoldingForm(holding = null, {
     <details class="form-disclosure" ${detailOpen ? 'open' : ''}><summary><span><strong>Grading, value &amp; notes</strong><small>Only when you need them</small></span><span aria-hidden="true">+</span></summary><div class="form-disclosure-body field-grid">
       <label>Grade company<input name="gradeCompany" maxlength="40" value="${escapeAttribute(holding?.gradeCompany || '')}" placeholder="PSA, CGC, BGS"></label>
       <label>Grade<input name="grade" maxlength="20" value="${escapeAttribute(holding?.grade || '')}" placeholder="10"></label>
-      <label>Manual current value per item<input name="manualMarketPrice" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.manualMarketPrice ?? '')}" placeholder="Leave blank to use an available market value"><span class="fine-print">Your manual value stays distinct from market observations.</span></label>
+      <label>Manual current value per item<input name="manualMarketPrice" type="number" min="0" step="0.01" value="${escapeAttribute(holding?.manualMarketPrice ?? '')}" placeholder="Leave blank to use an available market value"><span class="fine-print">${escapeHTML(CLARIFIERS.manualValue)}</span></label>
       <label>Manual-value currency<select name="manualMarketCurrency">${CURRENCIES.map((value) => option(value, manualMarketCurrency)).join('')}</select></label>
       <label class="span-all">Notes<textarea name="notes" maxlength="2000" placeholder="Provenance, defects, storage notes…">${escapeHTML(holding?.notes || '')}</textarea></label>
       <label class="span-all">Your photo<input name="photo" type="file" accept="image/*"><span class="fine-print">Images may be up to 25 MB. The original source photo is never uploaded. This collection image stays on this device.</span></label>

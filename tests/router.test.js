@@ -18,7 +18,10 @@ test('recommended routes resolve to dedicated renderers and expose only supporte
   assert.equal(parseAppRoute('/collection/sets').portfolioSection, 'sets');
   assert.equal(parseAppRoute('/portfolio?view=sets').canonicalPath, '/collection/sets');
   assert.equal(parseAppRoute('/portfolio?view=sold').unsupported, 'portfolio-sold');
-  assert.equal(parseAppRoute('/insights/alerts').canonicalPath, '/insights/alerts');
+  // DCL-NAV-02: alert review lives with the Watchlist; the old Insights
+  // deep link forwards there with the alerts view preselected.
+  assert.equal(parseAppRoute('/insights/alerts').canonicalPath, '/collection/watchlist');
+  assert.equal(parseAppRoute('/insights/alerts').watchlistView, 'alerts');
   assert.equal(parseAppRoute('/insights/track-record').unsupported, '');
   assert.equal(parseAppRoute('/insights?view=forecasts&horizon=365').canonicalPath, '/insights/scenarios?horizon=365');
   assert.equal(parseAppRoute('/insights?view=unknown').unsupported, 'insights-unknown');
@@ -86,7 +89,8 @@ test('legacy view mappings create restorable route state', () => {
   assert.equal(appRouteForLegacyView('search', state, { detail: null }).canonicalPath, '/discover/search?q=Mew&category=pokemon&provider=pokemon');
   assert.equal(appRouteForLegacyView('portfolio', state).canonicalPath, '/collection/watchlist');
   assert.equal(appRouteForLegacyView('portfolio', { ...state, portfolio: { ...state.portfolio, section: 'sets' } }).canonicalPath, '/collection/sets');
-  assert.equal(appRouteForLegacyView('insights', { ...state, insights: { view: 'alerts', horizon: 90 } }).canonicalPath, '/insights/alerts');
+  // DCL-NAV-02: stale 'alerts' insights state falls back to Overview.
+  assert.equal(appRouteForLegacyView('insights', { ...state, insights: { view: 'alerts', horizon: 90 } }).canonicalPath, '/insights');
   assert.equal(appRouteForLegacyView('detail', state, { detail: { holding: { id: 'h 1' } } }).canonicalPath, '/holdings/h%201');
   assert.equal(appRouteForLegacyView('detail', state, { detail: {
     item: { provider: 'scryfall', externalId: 'card/id' },

@@ -82,7 +82,9 @@ test('Collection Sets restores, filters, and drills into the exact local items',
   await expect(page.getByRole('tab', { name: 'Sets' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.portfolio-set-card')).toHaveCount(3);
   await expect(page.getByText('1 distinct printing · 3 copies across 2 purchases')).toBeVisible();
-  await expect(page.getByText(/completion percentage is intentionally unavailable/).first()).toBeVisible();
+  // DCL-COLL-03/Appendix C: the banned "completion percentage is
+  // intentionally unavailable" fine print is deleted from set cards.
+  await expect(page.getByText(/completion percentage is intentionally unavailable/)).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Sets', exact: true })).toBeVisible();
