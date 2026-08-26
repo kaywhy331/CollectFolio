@@ -97,16 +97,14 @@ async function addProductToCollection(page) {
   await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
   const result = page.locator('.result-card', { hasText: PRODUCT.name });
   await expect(result).toBeVisible();
-  await result.getByRole('button', { name: 'Confirm exact item', exact: true }).click();
-  const inspector = page.getByRole('dialog', { name: PRODUCT.name });
-  await inspector.getByRole('button', { name: 'Confirm exact item', exact: true }).click();
-  await inspector.getByRole('button', { name: 'Add to collection', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add item to collection' });
+  // Decision D-5: the extracted/matched catalog result is trusted -- Add
+  // to collection is on the card itself, no confirm step and no detour
+  // through the quick view is required to add it.
+  await result.getByRole('button', { name: 'Add to collection', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add to collection' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Add to collection' }).click();
   await expect(dialog).toHaveCount(0);
-  await inspector.getByRole('button', { name: 'Close item inspector' }).click();
-  await expect(inspector).toHaveCount(0);
 }
 
 test('the overview line graph renders from retro-reconstructed TCGCSV history when no local snapshot exists', async ({ page }) => {

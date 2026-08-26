@@ -205,6 +205,16 @@ h3 { margin-bottom: .35rem; line-height: 1.2; }
 .page-header .lede { max-width: 42rem; margin: .75rem 0 0; color: var(--muted); font-size: 1.03rem; }
 
 .eyebrow { margin: 0 0 .55rem; color: var(--muted); font-size: .72rem; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
+/* Catalog breadcrumb (UX declutter directive 3): "Pokémon / ME05: Pitch
+   Black" -- core/catalog-crumb.js. Shared between the full detail page and
+   the quick-view panel; game/set segments are buttons that navigate to
+   browse, custom items get a plain-text span (crumbMarkup never emits a
+   button for those, so no extra guard is needed here). */
+.catalog-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: 0 0 .5rem; }
+.catalog-crumb-segment { padding: 0; color: var(--muted); font: inherit; font-size: .78rem; font-weight: 700; background: none; border: 0; cursor: default; }
+button.catalog-crumb-segment { color: var(--text); cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+button.catalog-crumb-segment:hover, button.catalog-crumb-segment:focus-visible { text-decoration-color: currentColor; }
+.catalog-crumb-sep { color: var(--faint); }
 .muted { color: var(--muted); }
 .fine-print { color: var(--muted); font-size: .78rem; }
 
@@ -373,23 +383,37 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .modal-content { padding: 1.25rem; overflow: auto; }
 .modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .6rem; padding: .9rem 1.25rem calc(.9rem + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
 
-.inspector-underlay { min-height: inherit; }
-.quick-inspector-layer { position: fixed; z-index: 60; inset: 0 0 calc(var(--nav-height) + env(safe-area-inset-bottom)) 0; display: grid; align-items: end; }
+/* Quick-view panel (UX declutter directive 2, Kevin 2026-08-26): a
+   persistent, non-modal side panel, not a dialog -- app.js never marks the
+   rest of the app inert while it is open (see appShell.panel-open below).
+   pointer-events:none on the fixed layer + auto on its two children is
+   what makes that possible: at tablet/desktop the layer's box spans the
+   full remaining viewport width (so the grid below can still align the
+   docked panel to the right edge), but only the scrim and the panel
+   itself should ever intercept a click -- everything else in that box
+   must fall through to the page underneath. */
+.quick-inspector-layer { position: fixed; z-index: 60; inset: 0 0 calc(var(--nav-height) + env(safe-area-inset-bottom)) 0; display: grid; align-items: end; pointer-events: none; }
+.quick-inspector-layer > * { pointer-events: auto; }
 .inspector-scrim { position: absolute; inset: 0; padding: 0; background: var(--color-overlay); border: 0; backdrop-filter: blur(4px); cursor: default; }
 .quick-inspector { position: relative; display: flex; width: 100%; max-height: min(62svh, 620px); flex-direction: column; overflow: hidden; background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-dialog) var(--radius-dialog) 0 0; box-shadow: var(--shadow-elevated); transition: max-height .2s ease; }
 .quick-inspector[data-sheet-detent="expanded"] { max-height: min(92svh, 900px); }
+@keyframes panel-slide-up { from { transform: translateY(18%); } to { transform: none; } }
+.quick-inspector-layer.entering .quick-inspector { animation: panel-slide-up .22s ease; }
+.panel-resize-handle { display: none; }
 .inspector-handle { display: grid; width: 64px; min-height: 44px; place-items: center; margin: 0 auto; padding: 0; background: transparent; border: 0; cursor: ns-resize; }
 .inspector-handle span { width: 42px; height: 4px; background: var(--border-strong); border-radius: 999px; }
 .quick-inspector > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
 .quick-inspector > header .eyebrow { margin-bottom: .25rem; }
 .quick-inspector > header h2 { margin: 0; font-size: 1.35rem; }
 .quick-inspector-body { display: grid; gap: var(--space-4); padding: var(--space-4); overflow-y: auto; overscroll-behavior: contain; }
+.quick-inspector-body > .catalog-crumb { justify-self: center; }
 .inspector-art { position: relative; width: min(62%, 240px); margin: 0 auto; }
 .inspector-image { display: block; width: 100%; height: auto; aspect-ratio: 5 / 7; object-fit: contain; background: var(--surface-2); border: 1px solid var(--border); border-radius: 15px; }
 .inspector-art > .image-placeholder { width: 100%; height: auto; aspect-ratio: 5 / 7; }
 .inspector-identity { display: grid; gap: .2rem; text-align: center; }
 .inspector-identity strong { font-size: .88rem; }
 .inspector-identity span { color: var(--muted); font-size: .7rem; }
+.inspector-history .history-bars { max-height: 180px; }
 .inspector-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--space-2); }
 .inspector-stat { display: grid; min-width: 0; align-content: start; gap: .15rem; padding: var(--space-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); }
 .inspector-stat > span { color: var(--muted); font-size: .62rem; font-weight: 800; text-transform: uppercase; }
@@ -402,8 +426,36 @@ input[type="checkbox"] { width: 1.1rem; min-height: 1.1rem; accent-color: var(--
 .inspector-holding span { color: var(--muted); font-size: .68rem; font-weight: 800; text-transform: uppercase; }
 .inspector-unavailable { margin: 0; padding: var(--space-3) var(--space-4); color: var(--muted); font-size: .78rem; text-align: center; background: var(--surface); border-radius: var(--radius-control); }
 .quick-inspector > footer { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom)); background: var(--bg-raised); border-top: 1px solid var(--border); }
-.quick-inspector > footer .inspector-full-detail, .quick-inspector > footer .inspector-confirm { grid-column: 1 / -1; }
-.app-shell.inspector-open .primary-nav, .app-shell.inspector-open .shell-topbar { opacity: .38; filter: saturate(.45); pointer-events: none; }
+.quick-inspector > footer .inspector-full-detail { grid-column: 1 / -1; }
+/* modal-open is the *actual* modal dimming (category picker / search
+   filters) -- the quick-view panel is deliberately never modal, so it no
+   longer dims/disables the nav or topbar (panel-open only ever shifts
+   layout; see the >=768px rule below). */
+.app-shell.modal-open .primary-nav, .app-shell.modal-open .shell-topbar { opacity: .38; filter: saturate(.45); pointer-events: none; }
+
+/* Tablet + desktop: right-docked, resizable, non-modal panel that shifts
+   the content area instead of overlaying it (below this breakpoint it
+   stays the mobile bottom sheet with a scrim; align-items/justify-items
+   and the left offset that account for the sidebar are set per-breakpoint
+   further down). --panel-width is only ever set by the drag handle /
+   arrow-key resize in app.js -- until then every consumer below falls
+   back to the same responsive clamp() so they can never disagree. */
+@media (min-width: 768px) {
+  .quick-inspector-layer { align-items: stretch; justify-items: end; }
+  .inspector-scrim { display: none; }
+  .quick-inspector { width: var(--panel-width, clamp(340px, 36vw, 560px)); max-height: 100svh; border-block: 0; border-right: 0; border-radius: var(--radius-dialog) 0 0 var(--radius-dialog); }
+  @keyframes panel-slide-right { from { transform: translateX(16%); } to { transform: none; } }
+  .quick-inspector-layer.entering .quick-inspector { animation: panel-slide-right .22s ease; }
+  .inspector-handle { display: none; }
+  /* Flush against the left edge (not straddling it) -- .quick-inspector
+     has overflow:hidden to clip its own rounded corners, which would clip
+     a handle positioned partly outside its box. */
+  .panel-resize-handle { position: absolute; top: 0; bottom: 0; left: 0; z-index: 2; display: block; width: 10px; cursor: ew-resize; touch-action: none; background: transparent; }
+  .panel-resize-handle::after { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; content: ""; background: var(--border-strong); }
+  .panel-resize-handle:hover::after, .panel-resize-handle:focus-visible::after { background: var(--accent); }
+  .panel-resize-handle:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .app-shell.panel-open .shell-workspace { margin-right: var(--panel-width, clamp(340px, 36vw, 560px)); transition: margin-right .2s ease; }
+}
 
 .holding-form { display: grid; gap: 1rem; }
 .selection-summary { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 1rem; padding: 1rem; background: linear-gradient(135deg, var(--surface-accent), var(--surface)); border: 1px solid var(--border); border-radius: 16px; }
@@ -538,8 +590,6 @@ i.history-forecast-dot.history-forecast-down { background: var(--danger); }
 .chart-wrap { position: relative; }
 .chart-tooltip { position: absolute; transform: translate(-50%, -100%); padding: .3rem .55rem; background: var(--surface-raised, var(--surface)); color: var(--ink, inherit); border: 1px solid var(--border-strong); border-radius: 8px; font-size: .74rem; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 14px rgb(0 0 0 / .25); z-index: 5; }
 .chart-tooltip-marker { position: absolute; width: 10px; height: 10px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--positive); border: 2px solid var(--surface); pointer-events: none; z-index: 4; }
-.inspector-history { margin-top: .75rem; }
-.inspector-history .history-bars { max-height: 180px; }
 .trajectory-insufficient h2 { margin: .3rem 0 .35rem; }
 .trajectory-insufficient p.muted { max-width: 32rem; margin: 0 auto; }
 
@@ -1394,9 +1444,9 @@ button.detail-image-frame:focus-visible { outline: 3px solid var(--color-focus);
   .shell-topbar { padding-inline: 1.5rem; }
   .view-shell { min-height: calc(100svh - 72px); padding-bottom: 3rem; }
   .toast-region { bottom: 1rem; left: 96px; }
-  .quick-inspector-layer { left: 96px; bottom: 0; align-items: stretch; justify-items: end; }
-  .quick-inspector { width: min(430px, 58vw); max-height: 100svh; border-block: 0; border-right: 0; border-radius: var(--radius-dialog) 0 0 var(--radius-dialog); }
-  .inspector-handle { display: none; }
+  /* Panel width/radius/handle-display live in the shared >=768px block
+     above -- only the sidebar-width offset differs per breakpoint. */
+  .quick-inspector-layer { left: 96px; bottom: 0; }
 }
 
 @media (min-width: 920px) {
@@ -1432,9 +1482,9 @@ button.detail-image-frame:focus-visible { outline: 3px solid var(--color-focus);
   .account-control > [data-account-label] { display: block; overflow: hidden; max-width: 105px; color: var(--muted); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
   .view-shell { min-height: calc(100svh - 72px); padding-bottom: 4rem; }
   .toast-region { bottom: 1rem; left: 224px; }
-  .quick-inspector-layer { left: 224px; align-items: stretch; justify-items: end; }
-  .quick-inspector { width: min(430px, 44vw); max-height: 100svh; border-block: 0; border-right: 0; border-radius: var(--radius-dialog) 0 0 var(--radius-dialog); }
-  .inspector-handle { display: none; }
+  /* Panel width/radius/handle-display live in the shared >=768px block
+     above -- only the sidebar-width offset differs per breakpoint. */
+  .quick-inspector-layer { left: 224px; }
   .portfolio-summary-bar { grid-template-columns: minmax(230px, .72fr) minmax(0, 1.8fr); align-items: stretch; }
   .portfolio-filter-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .review-card { grid-template-columns: minmax(0, .7fr) minmax(280px, 1.3fr); }

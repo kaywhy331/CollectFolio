@@ -1,4 +1,5 @@
 import { externalImage } from '../core/components.js';
+import { catalogCrumb, crumbMarkup } from '../core/catalog-crumb.js';
 import { icon } from '../core/icons.js';
 import { holdingCostBasis, holdingCostCurrency, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus } from '../core/calculations.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
@@ -288,6 +289,11 @@ function detailPriceModel(ref, intelligence, holding, currency) {
 
 function headerCard(detail, ref, intelligence, holding, watching, currency, state, localScenario) {
   const price = detailPriceModel(ref, intelligence, holding, currency);
+  // UX declutter directive 3: a "Pokémon / ME05: Pitch Black" catalog
+  // breadcrumb replaces the plain set-name eyebrow whenever a crumb is
+  // derivable; unmapped/custom items fall back to the original eyebrow.
+  const identityEyebrow = crumbMarkup(catalogCrumb(detail.item, ref))
+    || `<p class="eyebrow">${escapeHTML(ref.setName || 'Collectible')}</p>`;
   const identityPills = [ref.finish, (detail.item?.language || holding?.item?.language) ? ref.language?.toUpperCase() : '', ref.edition !== 'standard' ? ref.edition : '']
     .filter((value) => value && value !== 'unspecified')
     .map((value) => `<span class="pill">${escapeHTML(value)}</span>`).join('');
@@ -314,7 +320,7 @@ function headerCard(detail, ref, intelligence, holding, watching, currency, stat
   const holdingSection = holding
     ? `<section class="detail-holding"><div><span>Your collection</span><strong>${escapeHTML(String(holding.quantity || 0))} owned</strong></div><dl><div><dt>Current value</dt><dd>${pricingStatus === 'unpriced' ? 'Unpriced' : escapeHTML(formatCurrency(holdingValue, holdingValueCurrency))}${pricingStatus === 'manual' ? ' · Manual' : ''}</dd></div><div><dt>Cost basis</dt><dd>${recordedCost(holding) ? escapeHTML(formatCurrency(holdingCostBasis(holding), holdingCostCurrencyCode)) : 'Not recorded'}</dd></div></dl>${holdingValueCurrency !== holdingCostCurrencyCode ? `<p class="fine-print">${escapeHTML(holdingValueCurrency)} value and ${escapeHTML(holdingCostCurrencyCode)} cost are shown in their own currencies, kept separate.</p>` : ''}${holding.notes ? `<p>${escapeHTML(holding.notes)}</p>` : ''}</section>`
     : '<p class="detail-not-owned">Not in your collection yet. Add this exact item without leaving the page.</p>';
-  return `<section class="detail-product" id="detail-overview"><div class="detail-media">${media}</div><div class="detail-identity"><p class="eyebrow">${escapeHTML(ref.setName || 'Collectible')}</p><h1>${escapeHTML(ref.name || 'Unnamed collectible')}</h1>${ref.enrichment ? `<p class="fine-print detail-enrichment-note">Image and details enriched from ${escapeHTML(ref.enrichment.provider)}${ref.enrichment.rarity && ref.enrichment.rarity !== ref.rarity ? ` &middot; ${escapeHTML(ref.enrichment.rarity)}` : ''}</p>` : ''}<p class="detail-subtitle">${escapeHTML([ref.setName, ref.number ? `#${ref.number}` : '', ref.rarity].filter(Boolean).join(' · ') || 'Custom catalog entry')}</p>${identityPills ? `<div class="detail-identity-pills">${identityPills}</div>` : ''}<button class="button ghost small" type="button" data-action="share-detail">Share item</button></div><aside class="detail-market-panel"><div><span>${escapeHTML(price.label)}</span><strong>${escapeHTML(price.display)}</strong><small>${escapeHTML(price.status)}</small><span class="support-badge ${escapeAttribute(price.tone)}">${escapeHTML(price.confidence)}</span></div>${movement}${outlookPanel}</aside><div class="detail-secondary"><dl class="detail-metadata">${metadata}</dl>${holdingSection}</div></section>`;
+  return `<section class="detail-product" id="detail-overview"><div class="detail-media">${media}</div><div class="detail-identity">${identityEyebrow}<h1>${escapeHTML(ref.name || 'Unnamed collectible')}</h1>${ref.enrichment ? `<p class="fine-print detail-enrichment-note">Image and details enriched from ${escapeHTML(ref.enrichment.provider)}${ref.enrichment.rarity && ref.enrichment.rarity !== ref.rarity ? ` &middot; ${escapeHTML(ref.enrichment.rarity)}` : ''}</p>` : ''}<p class="detail-subtitle">${escapeHTML([ref.setName, ref.number ? `#${ref.number}` : '', ref.rarity].filter(Boolean).join(' · ') || 'Custom catalog entry')}</p>${identityPills ? `<div class="detail-identity-pills">${identityPills}</div>` : ''}<button class="button ghost small" type="button" data-action="share-detail">Share item</button></div><aside class="detail-market-panel"><div><span>${escapeHTML(price.label)}</span><strong>${escapeHTML(price.display)}</strong><small>${escapeHTML(price.status)}</small><span class="support-badge ${escapeAttribute(price.tone)}">${escapeHTML(price.confidence)}</span></div>${movement}${outlookPanel}</aside><div class="detail-secondary"><dl class="detail-metadata">${metadata}</dl>${holdingSection}</div></section>`;
 }
 
 // DCL-DET-03: the action bar is buttons only -- the price already has a
