@@ -6,15 +6,24 @@
     "discover": 60,
     "watchlist": 50,
     "detail": 50,
-    "add": 40
+    "add": 40,
+    "discover_card": 60
+  },
+  "informational": [
+    "discover"
+  ],
+  "notes": {
+    "discover_card": "DCL-VER-01's 60% Discover reduction target is measured card-level (the fixture's single .result-card element), per the requirement's own wording (\"gallery result card visible text reduced\"). This is the metric --strict enforces.",
+    "discover": "Page-level Discover total, kept for trend visibility. Includes search form/toolbar chrome that DCL-DISC-01/07 intentionally keep, so it is not expected to clear 60% and is never strict-gated."
   },
   "surfaces": {
     "home": 1248,
     "discover": 498,
     "watchlist": 839,
     "detail": 1431,
-    "add": 1177
+    "add": 1177,
+    "discover_card": 187
   },
   "commit": "78830fb",
-  "generatedAt": "78830fb pre-declutter baseline (2026-08-25), v2-details-excluded method"
+  "generatedAt": "78830fb pre-declutter baseline (2026-08-25), v2-details-excluded method + discover_card card-level metric"
 }

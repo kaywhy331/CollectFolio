@@ -243,11 +243,11 @@ export function shellViewModel(state = {}) {
             : 'synced';
   const labels = {
     local: 'Saved on this device',
-    pending: pending ? `${pending} change${pending === 1 ? '' : 's'} waiting to sync` : 'Ready to synchronize',
-    syncing: 'Synchronizing…',
-    synced: 'Synchronized',
+    pending: pending ? `${pending} change${pending === 1 ? '' : 's'} waiting to sync` : 'Ready to sync',
+    syncing: 'Syncing…',
+    synced: 'Synced',
     offline: session && pending ? `Offline · ${pending} change${pending === 1 ? '' : 's'} waiting` : 'Offline · local access available',
-    error: 'Synchronization needs attention'
+    error: 'Sync needs attention'
   };
   return {
     portfolioLabel: text(state.settings?.collectionName, 80) || 'Personal Collection',

@@ -1,4 +1,5 @@
 import { externalImage, pageHeader } from '../core/components.js';
+import { icon } from '../core/icons.js';
 import { matchBucketFor } from '../core/view-models.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { CURRENCIES, DEFAULT_LANGUAGES } from '../core/settings.js';
@@ -96,7 +97,7 @@ function selectedMatch(crop, selected, state) {
     : `<button class="button" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="false" ${approvable ? '' : `disabled aria-describedby="${escapeAttribute(helpId)}"`}>${confirmationLabel}</button>`;
   return `<section class="selected-match">
     <div><p class="eyebrow">Proposed match</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>
-    <div class="button-row">${confirmControl}${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? '★ Watching' : '☆ Watch'}</button>` : ''}</div>
+    <div class="button-row">${confirmControl}${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? `${icon('starFilled', { size: 16 })} Watching` : `${icon('star', { size: 16 })} Watch`}</button>` : ''}</div>
     ${approvable ? '' : `<p id="${escapeAttribute(helpId)}" class="fine-print">Choose a catalog printing or create a custom item. A lookup suggestion is never approved automatically.</p>`}
   </section>`;
 }
@@ -173,7 +174,7 @@ export function renderScanReview(draft, state = {}) {
     <nav class="intake-steps" aria-label="Intake progress"><span class="complete">1 · Scan or upload</span><span aria-current="step">2 · Review detected items</span><span>3 · Confirm and add</span></nav>
     ${queueSummary(summary)}
     ${draft.submissionError ? `<p class="inline-warning" role="status">${escapeHTML(draft.submissionError)}</p>` : ''}
-    <section class="scan-source-privacy"><div><span aria-hidden="true">◇</span><p><strong>Private by default.</strong> Photos stay on this device; only the card crop is sent for identification.</p></div>${sourceAvailable ? '<button class="button ghost small" type="button" data-action="release-source-photo">Release source copy now</button>' : ''}</section>
+    <section class="scan-source-privacy"><div><span>${icon('diamond', { size: 16 })}</span><p><strong>Private by default.</strong> Photos stay on this device; only the card crop is sent for identification.</p></div>${sourceAvailable ? '<button class="button ghost small" type="button" data-action="release-source-photo">Release source copy now</button>' : ''}</section>
     ${photoHandlingDisclosure()}
     ${bulkAcquisition(draft)}
     <div class="review-list">${draft.crops.map((crop, index) => cropCard(crop, index, state, sourceAvailable, recognitionMode)).join('')}</div>

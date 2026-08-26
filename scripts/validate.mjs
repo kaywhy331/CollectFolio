@@ -525,7 +525,7 @@ for (const token of ['space-1', 'space-2', 'space-3', 'space-4', 'space-6', 'spa
 const tokenValue = (token) => stylesheet.match(new RegExp(`--color-${token}:\\s*([^;]+);`))?.[1].trim();
 if (tokenValue('action') === tokenValue('positive')) errors.push('Primary action and positive movement must use distinct token values.');
 if (!stylesheet.includes('.positive { color: var(--positive); }')) errors.push('Positive movement must consume the positive semantic token.');
-if (!stylesheet.includes('.negative { color: var(--color-negative); }')) errors.push('Negative movement must consume the negative semantic token.');
+if (!stylesheet.includes('.negative { color: var(--negative); }') && !stylesheet.includes('.negative { color: var(--color-negative); }')) errors.push('Negative movement must consume the negative semantic token.');
 if ((stylesheet.match(/--color-warning-ink:\s*[^;]+;/g) || []).length < 3) errors.push('Warning ink must be defined for dark, light, and system-light themes.');
 if (!stylesheet.includes('--warning-ink: var(--color-warning-ink);')) errors.push('Warning ink must expose the shared semantic alias.');
 const warningStatusRule = stylesheet.match(/\.account-status-card\[data-account-status="pending"\]\s+\.account-status-icon,\s*\.account-status-card\[data-account-status="syncing"\]\s+\.account-status-icon\s*\{([^}]*)\}/)?.[1];

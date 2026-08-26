@@ -68,18 +68,22 @@ async function configureCloud(page, { failSync = false } = {}) {
 }
 
 test('three-step onboarding survives refresh and completes after the first collection add', async ({ page }) => {
+  // DCL-SET-09: step position is now stated exactly once (the progress
+  // bar's <ol>); the per-card eyebrow names the step's subject instead of
+  // repeating "Step N of 3", so these assertions target that eyebrow.
+  const stepEyebrow = page.locator('.onboarding-card p.eyebrow');
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Set up CollectFolio' })).toBeVisible();
-  await expect(page.getByText('Step 1 of 3')).toBeVisible();
+  await expect(stepEyebrow).toHaveText('Storage');
   await page.getByRole('button', { name: /Save on this device/ }).click();
-  await expect(page.getByText('Step 2 of 3')).toBeVisible();
+  await expect(stepEyebrow).toHaveText('Currency');
   await page.getByLabel('Display currency').selectOption('CAD');
   await page.getByRole('button', { name: 'Save and continue' }).click();
-  await expect(page.getByText('Step 3 of 3')).toBeVisible();
+  await expect(stepEyebrow).toHaveText('First item');
   await expect(page.getByText('CAD collection currency')).toBeVisible();
 
   await page.reload();
-  await expect(page.getByText('Step 3 of 3')).toBeVisible();
+  await expect(stepEyebrow).toHaveText('First item');
   await expect(page.getByText('CAD collection currency')).toBeVisible();
   await expectAccessible(page);
 

@@ -91,7 +91,10 @@ test('detail abstains instead of choosing the first ambiguous holding series', (
     baseState({ holdings })
   );
   assert.doesNotMatch(html, /Your collection/);
-  assert.match(html, /Condition<\/dt><dd>Unconfirmed/);
+  // DCL-DET-10 census gap closure: a Condition row with no real data
+  // (holding is ambiguous, so no condition can be attributed) is omitted
+  // rather than rendered as an "Unconfirmed" placeholder (RULE-2/RULE-5).
+  assert.doesNotMatch(html, /<dt>Condition<\/dt>/);
 });
 
 test('item detail prioritizes price, uses direct image zoom, and keeps methodology collapsed', () => {
@@ -115,8 +118,11 @@ test('item detail preserves a long title and labels missing identity fields with
   const catalogRef = catalogReferenceForItem(sparse, { marketCondition: '' });
   const html = renderPriceIntelligenceDetail({ origin: 'search', item: sparse, catalogRef }, baseState());
   assert.match(html, new RegExp(name));
-  assert.match(html, /Condition<\/dt><dd>Unconfirmed/);
-  assert.match(html, /Language<\/dt><dd>Not specified/);
+  // DCL-DET-10 census gap closure: Condition and Language rows with only a
+  // placeholder default value ("Unconfirmed" / "Not specified") are omitted
+  // entirely rather than rendered as invented metadata (RULE-2/RULE-5).
+  assert.doesNotMatch(html, /<dt>Condition<\/dt>/);
+  assert.doesNotMatch(html, /<dt>Language<\/dt>/);
   // DCL-DET-05: with nothing to show, no identity pill row renders at all
   // (the "Variant not specified" fallback pill is gone).
   assert.doesNotMatch(html, /detail-identity-pills/);
@@ -128,7 +134,9 @@ test('sealed item metadata names its product format and never labels it Raw', ()
   const html = renderPriceIntelligenceDetail({ origin: 'search', item: sealed, catalogRef }, baseState());
   assert.match(html, /Type<\/dt><dd>Sealed product/);
   assert.match(html, /Format<\/dt><dd>Booster Pack/);
-  assert.match(html, /Condition<\/dt><dd>Unconfirmed/);
+  // DCL-DET-10 census gap closure: no real condition data exists for this
+  // fixture, so the Condition row is omitted rather than showing "Unconfirmed".
+  assert.doesNotMatch(html, /<dt>Condition<\/dt>/);
   assert.doesNotMatch(html, />Raw</);
 });
 

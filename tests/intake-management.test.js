@@ -132,7 +132,10 @@ test('scan review recognizes a condition-aware mapped watch', () => {
       updatedAt: '2026-08-10T00:00:00.000Z'
     }]
   });
-  assert.match(html, /★ Watching/);
+  // DCL-VIS-01: the watch button's glyph is now an inline SVG icon; the
+  // accessible/visible signal is the "Watching" text alongside it.
+  assert.match(html, /Watching/);
+  assert.match(html, /<svg[^>]*aria-hidden="true"/);
 });
 
 test('review labels candidates as similarity evidence and requires explicit identity confirmation', () => {

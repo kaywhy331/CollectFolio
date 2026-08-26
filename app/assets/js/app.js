@@ -215,6 +215,48 @@ function renderRoot(html) {
   root.replaceChildren(template.content);
 }
 
+// DCL-DET-09: highlights the in-page index link in the Item Detail page's
+// `.detail-tabs` nav whose section is currently in view, by setting
+// aria-current="true" on it. The DOM under `root` is fully replaced on
+// every render (see renderRoot above), so any previous observer is torn
+// down first -- it would otherwise keep watching detached nodes and leak.
+// Deliberately no JS-driven smooth-scroll: clicking an index link is a
+// plain anchor jump, and app.css already turns `scroll-behavior: smooth`
+// off under `prefers-reduced-motion: reduce`, so this stays hands-off and
+// inherits that guard for free.
+let detailScrollSpyObserver = null;
+
+function teardownDetailScrollSpy() {
+  detailScrollSpyObserver?.disconnect();
+  detailScrollSpyObserver = null;
+}
+
+function setupDetailScrollSpy() {
+  teardownDetailScrollSpy();
+  if (typeof IntersectionObserver !== 'function') return;
+  const nav = root.querySelector('.detail-tabs');
+  if (!nav) return;
+  const links = [...nav.querySelectorAll('a[href^="#"]')];
+  const tracked = links
+    .map((link) => ({ link, section: document.getElementById(link.getAttribute('href').slice(1)) }))
+    .filter((entry) => entry.section);
+  if (!tracked.length) return;
+  const setActive = (id) => {
+    links.forEach((link) => {
+      if (link.getAttribute('href') === `#${id}`) link.setAttribute('aria-current', 'true');
+      else link.removeAttribute('aria-current');
+    });
+  };
+  setActive(tracked[0].section.id);
+  detailScrollSpyObserver = new IntersectionObserver((entries) => {
+    const visible = entries
+      .filter((entry) => entry.isIntersecting)
+      .sort((left, right) => left.boundingClientRect.top - right.boundingClientRect.top);
+    if (visible[0]) setActive(visible[0].target.id);
+  }, { rootMargin: '-96px 0px -70% 0px', threshold: 0 });
+  tracked.forEach(({ section }) => detailScrollSpyObserver.observe(section));
+}
+
 function render(state = getState()) {
   const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, insights: renderInsights, profile: renderProfile, scan: () => renderScanReview(activeDraft, { ...state, scanSourceAvailable: Boolean(sourceImageForDraft()) }), detail: () => renderPriceIntelligenceDetail(activeDetail, state) };
   const inspectorOpen = Boolean(state.ready && state.activeView === 'detail' && history.state?.inspector && activeDetail);
@@ -230,6 +272,10 @@ function render(state = getState()) {
     const underlay = activeDetail.origin === 'search' ? renderSearch(state) : activeDetail.origin === 'insights' ? renderInsights(state) : renderPortfolio(state);
     renderRoot(`<div class="inspector-underlay" inert aria-hidden="true">${underlay}</div>${renderQuickInspector(activeDetail, state)}`);
   } else renderRoot((views[state.activeView] || renderHome)(state));
+  // DCL-DET-09: scroll-spy applies only to the standalone Item Detail page,
+  // never the quick-inspector overlay (which renders different markup).
+  if (state.ready && !onboardingVisible && !inspectorOpen && state.activeView === 'detail') setupDetailScrollSpy();
+  else teardownDetailScrollSpy();
   const destination = primaryDestination(state.route || activeRoute);
   document.querySelectorAll('.primary-nav [data-nav]').forEach((button) => {
     const selected = button.dataset.nav === destination;

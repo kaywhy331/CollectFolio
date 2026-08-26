@@ -23,17 +23,20 @@ function state(overrides = {}) {
 }
 
 test('onboarding renders persistent storage, currency, and first-add steps', () => {
+  // DCL-SET-09: step position is stated exactly once (the progress bar);
+  // per-card eyebrows now name the step's subject instead of repeating
+  // "Step N of 3".
   const storage = renderOnboarding(state());
-  assert.match(storage, /Step 1 of 3/);
+  assert.match(storage, /class="eyebrow">Storage</);
   assert.match(storage, /Save on this device/);
   assert.match(storage, /Use cloud backup/);
 
   const currency = renderOnboarding(state({ settings: { onboardingStep: 'currency', currency: 'CAD' } }));
-  assert.match(currency, /Step 2 of 3/);
+  assert.match(currency, /class="eyebrow">Currency</);
   assert.match(currency, /value="CAD" selected/);
 
   const add = renderOnboarding(state({ settings: { onboardingStep: 'add', onboardingStorage: 'cloud' } }));
-  assert.match(add, /Step 3 of 3/);
+  assert.match(add, /class="eyebrow">First item</);
   assert.match(add, /Choose how to add/);
   assert.match(add, /Connect cloud backup/);
 });

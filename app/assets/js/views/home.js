@@ -1,7 +1,8 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
+import { icon } from '../core/icons.js';
 import { holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioAllocation, portfolioSummary, snapshotFor } from '../core/calculations.js';
 import { collectionFreshness } from '../core/data-freshness.js';
-import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
+import { normalizeIntelligencePayload } from '../core/intelligence-contract.js';
 import { trendChart } from '../core/ui.js';
 import { holdingViewModel } from '../core/view-models.js';
 import { escapeAttribute, escapeHTML, formatCurrency, formatPercent } from '../core/utils.js';
@@ -174,7 +175,7 @@ function attentionModule(state, coverage) {
   // by app.js's data-go handler in a later stage -- this just emits the
   // attribute the handler will read.
   if (coverage.unpriced) items.push(`<button class="attention-item" type="button" data-go="portfolio" data-portfolio-pricing="unpriced"><span class="attention-icon warning" aria-hidden="true">!</span><span><strong>${coverage.unpriced} unpriced item${coverage.unpriced === 1 ? '' : 's'}</strong><small>Add a manual value or review the exact printing.</small></span><span aria-hidden="true">→</span></button>`);
-  if (state.scanDraftCount) items.push(`<button class="attention-item" type="button" data-action="resume-scan"><span class="attention-icon" aria-hidden="true">↥</span><span><strong>Saved scan ready</strong><small>Continue reviewing ${state.scanDraftCount} local draft${state.scanDraftCount === 1 ? '' : 's'}.</small></span><span aria-hidden="true">→</span></button>`);
+  if (state.scanDraftCount) items.push(`<button class="attention-item" type="button" data-action="resume-scan"><span class="attention-icon">${icon('resume', { size: 20 })}</span><span><strong>Saved scan ready</strong><small>Continue reviewing ${state.scanDraftCount} local draft${state.scanDraftCount === 1 ? '' : 's'}.</small></span><span aria-hidden="true">→</span></button>`);
   if (signals.length) items.push(`<button class="attention-item" type="button" data-insights-view="alerts"><span class="attention-icon positive" aria-hidden="true">◆</span><span><strong>${signals.length} Watchlist alert${signals.length === 1 ? '' : 's'}</strong><small>${escapeHTML(signals[0].message)}</small></span><span aria-hidden="true">→</span></button>`);
   if (!items.length) return '';
   return `<section class="overview-attention" aria-labelledby="attention-title"><div class="section-heading compact"><div><p class="eyebrow">Today</p><h2 id="attention-title">Needs attention</h2></div></div><div class="attention-list">${items.join('')}</div></section>`;
@@ -187,7 +188,10 @@ function moversModule(state) {
     <div class="overview-card-list">${movers.map(({ holding, intelligence }) => {
       const change = intelligence.trend.return30d;
       const tone = change >= 0 ? 'positive' : 'negative';
-      return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Mapped card')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Exact item')}</small><span class="${tone}"><span aria-hidden="true">${change >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(change) * 100))} · ${escapeHTML(trendLabel(intelligence.trend.status))}</span></span><span aria-hidden="true">→</span></button>`;
+      // CENSUS GAP CLOSURE: the trend-label word ("Rise"/"Fall"/...) is
+      // dropped -- the arrow glyph + tone color + signed percent already
+      // carry direction and magnitude, so the word only restated them.
+      return `<button class="overview-card-row" type="button" data-action="open-detail" data-holding-id="${escapeAttribute(holding.id)}">${externalImage({ ...holding.item, userImage: holding.userImage }, 'card-thumbnail')}<span><strong>${escapeHTML(holding.item?.name || 'Mapped card')}</strong><small>${escapeHTML([holding.item?.setName, holding.item?.number].filter(Boolean).join(' · ') || 'Exact item')}</small><span class="${tone}"><span aria-hidden="true">${change >= 0 ? '↗' : '↘'}</span> ${escapeHTML(formatPercent(Math.abs(change) * 100))}</span></span><span aria-hidden="true">→</span></button>`;
     }).join('')}</div></section>`;
 }
 
@@ -269,7 +273,7 @@ function currencyScopeNote(summary, currency) {
 // app.css) -- so no interactive control nests inside another.
 function dataHealthModule(state, coverage, historyCoverage, freshness, summary, currency) {
   const historyPercent = Number(historyCoverage?.percent) || 0;
-  return `<details class="card data-health"><summary><span><strong>Data Health</strong><small>${coverage.percent.toFixed(0)}% pricing coverage · ${freshness.stale} stale</small></span><span aria-hidden="true">⌄</span></summary><button class="icon-button data-health-refresh" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button><div class="data-health-grid"><div><span>Market-price coverage</span><strong>${coverage.market} of ${coverage.total}</strong></div><div><span>History coverage</span><strong>${historyPercent}%</strong></div><div><span>Stale values</span><strong>${freshness.stale}</strong></div><div><span>Manual values</span><strong>${coverage.manual}</strong></div><div><span>Last price update</span><strong>${escapeHTML(freshness.latest.label)}</strong></div></div>${currencyScopeNote(summary, currency)}${refreshStatusMarkup(state.tcgcsvRefresh)}</details>`;
+  return `<details class="card data-health"><summary><span><strong>Data Health</strong><small>${coverage.percent.toFixed(0)}% pricing coverage · ${freshness.stale} stale</small></span><span aria-hidden="true">⌄</span></summary><button class="icon-button data-health-refresh" type="button" data-action="refresh-prices" aria-label="Refresh prices">${icon('refresh', { size: 20 })}</button><div class="data-health-grid"><div><span>Market-price coverage</span><strong>${coverage.market} of ${coverage.total}</strong></div><div><span>History coverage</span><strong>${historyPercent}%</strong></div><div><span>Stale values</span><strong>${freshness.stale}</strong></div><div><span>Manual values</span><strong>${coverage.manual}</strong></div><div><span>Last price update</span><strong>${escapeHTML(freshness.latest.label)}</strong></div></div>${currencyScopeNote(summary, currency)}${refreshStatusMarkup(state.tcgcsvRefresh)}</details>`;
 }
 
 export function renderHome(state) {
@@ -305,7 +309,7 @@ export function renderHome(state) {
   // DCL-HOME-01: the page header only survives on the empty-state path --
   // once holdings exist the hero card is the first element on Home.
   if (!state.holdings.length) {
-    const header = pageHeader(state.settings.collectionName || 'Personal Collection', 'Home', 'A clear view of what you own and what needs attention', '<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">↻</button>');
+    const header = pageHeader(state.settings.collectionName || 'Personal Collection', 'Home', 'A clear view of what you own and what needs attention', `<button class="icon-button" type="button" data-action="refresh-prices" aria-label="Refresh prices">${icon('refresh', { size: 20 })}</button>`);
     return `${header}<div class="overview-empty">${emptyState('Build your collection', 'Scan or search for your first collectible to start tracking its value.', '<div class="button-row centered"><button class="button" type="button" data-go="add">Scan first item</button><button class="button ghost" type="button" data-go="search">Search catalog</button></div>')}</div>${state.scanDraftCount ? `<button class="button secondary" type="button" data-action="resume-scan">Resume saved scan (${state.scanDraftCount})</button>` : ''}${dataHealth}`;
   }
 

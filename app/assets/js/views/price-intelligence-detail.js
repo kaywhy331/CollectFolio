@@ -1,4 +1,5 @@
 import { externalImage } from '../core/components.js';
+import { icon } from '../core/icons.js';
 import { holdingCostBasis, holdingCostCurrency, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus } from '../core/calculations.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
@@ -145,9 +146,9 @@ function uniqueHoldingForReference(holdings = [], ref = {}, currency = 'USD') {
 
 export function renderPriceIntelligenceDetail(detail, state) {
   if (!detail?.catalogRef) {
-    if (detail?.loading) return '<section class="empty-state" role="status"><span class="empty-symbol">◇</span><h2>Opening shared card…</h2><p>Checking the linked catalog provider.</p></section>';
+    if (detail?.loading) return `<section class="empty-state" role="status"><span class="empty-symbol">${icon('diamond', { size: 24 })}</span><h2>Opening shared card…</h2><p>Checking the linked catalog provider.</p></section>`;
     const message = detail?.error || 'Open an item from Discover, Collection, or Watchlist.';
-    return `<section class="empty-state"><span class="empty-symbol">◇</span><h2>${detail?.error ? 'Shared item unavailable' : 'No item selected'}</h2><p>${escapeHTML(message)}</p><button class="button" type="button" data-go="${detail?.error ? 'search' : 'portfolio'}">${detail?.error ? 'Find an item' : 'Back to Collection'}</button></section>`;
+    return `<section class="empty-state"><span class="empty-symbol">${icon('diamond', { size: 24 })}</span><h2>${detail?.error ? 'Shared item unavailable' : 'No item selected'}</h2><p>${escapeHTML(message)}</p><button class="button" type="button" data-go="${detail?.error ? 'search' : 'portfolio'}">${detail?.error ? 'Find an item' : 'Back to Collection'}</button></section>`;
   }
   const ref = detail.catalogRef;
   const currency = ref.currency || state.settings.currency || 'USD';
@@ -174,10 +175,16 @@ export function renderPriceIntelligenceDetail(detail, state) {
   // published forecast to defer to (see forecastSection/unsupportedSection
   // above, which only use this when their own "no forecast" branch fires).
   const trajectoryItem = holding?.item || detail.item || null;
-  const trajectorySectionId = localScenario && ['early', 'limited', 'available'].includes(localScenario.status)
-    ? 'detail-published-forecast'
-    : 'detail-forecast';
-  const trajectoryMarkup = trajectorySection(trajectoryItem, state, trajectorySectionId);
+  // DCL-DET-09: the outlook section keeps ONE stable anchor id
+  // ("detail-outlook") no matter which branch ends up rendering it. The
+  // local-scenario card owns the anchor whenever one renders (hasLocalScenario);
+  // otherwise whichever of forecastSection/trajectorySection/unsupportedSection's
+  // placeholder renders owns it instead. All three thread this same boolean so
+  // the id can never diverge between branches (previously trajectorySectionId
+  // used a different usability check than forecastSection/unsupportedSection,
+  // which could produce duplicate or mismatched ids).
+  const hasLocalScenario = Boolean(localScenario);
+  const trajectoryMarkup = trajectorySection(trajectoryItem, state, hasLocalScenario);
   const historyMarkup = historySection(trajectoryItem, state);
   const trajectoryKey = trajectoryKeyForItem(trajectoryItem || {});
   const trajectoryEntry = trajectoryKey ? state.trajectoryForecasts?.byKey?.[trajectoryKey] : null;
@@ -195,7 +202,7 @@ export function renderPriceIntelligenceDetail(detail, state) {
   if (intelligence) {
     const intelCurrency = intelligence.observed?.currency || currency;
     const trendMarkup = trendSection(intelligence);
-    const forecastMarkup = forecastSection(intelligence, intelCurrency, Boolean(localScenario), trajectoryMarkup);
+    const forecastMarkup = forecastSection(intelligence, intelCurrency, hasLocalScenario, trajectoryMarkup);
     const fairValueMarkup = fairValueSection(intelligence, intelCurrency);
     const scorecardMarkup = scorecardSection(intelligence);
     const driverMarkup = driverSection(intelligence);
@@ -205,14 +212,14 @@ export function renderPriceIntelligenceDetail(detail, state) {
     marketTabRendered = Boolean(trendMarkup);
     outlookTabRendered = Boolean(forecastMarkup) || Boolean(localScenarioMarkup);
   } else {
-    marketBlockMarkup = unsupportedSection(ref, state, Boolean(localScenario), trajectoryMarkup);
+    marketBlockMarkup = unsupportedSection(ref, state, hasLocalScenario, trajectoryMarkup);
     marketTabRendered = true;
     outlookTabRendered = true;
   }
 
   const navLinks = ['<a href="#detail-overview">Overview</a>'];
   if (marketTabRendered) navLinks.push('<a href="#detail-market">Market</a>');
-  if (outlookTabRendered) navLinks.push('<a href="#detail-forecast">Outlook</a>');
+  if (outlookTabRendered) navLinks.push('<a href="#detail-outlook">Outlook</a>');
   navLinks.push('<a href="#detail-data">Data</a>');
 
   return `<div class="detail-back"><button class="button ghost small" type="button" data-action="close-detail">← Back</button><span>Item detail</span></div>
@@ -221,7 +228,7 @@ export function renderPriceIntelligenceDetail(detail, state) {
     <nav class="detail-tabs" aria-label="Item detail sections">${navLinks.join('')}</nav>
     <div class="detail-sections">${localScenarioMarkup}${marketBlockMarkup}
     ${historyMarkup}
-    ${dataDetailsSection(ref, intelligence, trajectoryEntry)}
+    ${dataDetailsSection(ref, intelligence, trajectoryEntry, localScenario)}
     ${allAttributesSection(detail.item, ref, currency)}
     ${methodologyDisclosure()}
     ${intelligence ? attributionFootnote(intelligence) : ''}</div>`;
@@ -246,10 +253,14 @@ function typeAwareMetadata(item, ref, holding) {
     ? (/sealed/i.test(holding?.condition || item?.condition || '') ? 'Factory sealed' : 'Unconfirmed')
     : graded ? (holding?.grade ? `${holding.gradeCompany || 'Graded'} ${holding.grade}` : 'Graded')
       : holding?.condition || ref.marketCondition || 'Unconfirmed';
+  // CENSUS GAP CLOSURE / RULE-2 + RULE-5: a metadata row whose only content
+  // is one of these three defaults carries no real data -- omit it instead
+  // of rendering an "unknown" placeholder as if it were informative.
+  const NO_DATA_DEFAULTS = new Set(['Not specified', 'Unconfirmed', 'Standard']);
   return [
     ['Type', type], ['Format', format], ['Condition', condition], ['Language', item?.language || holding?.item?.language || 'Not specified'],
     ['Edition', humanizeType(ref.edition, 'Standard')], ['Set', ref.setName || 'Not specified']
-  ];
+  ].filter(([, value]) => !NO_DATA_DEFAULTS.has(value));
 }
 
 function detailPriceModel(ref, intelligence, holding, currency) {
@@ -364,7 +375,9 @@ function fairValueSection(intelligence, currency) {
 // dataDetailsSection, and "a forecast is never rewritten" is a Methodology
 // guarantee (methodologyDisclosure), not a repeated per-card sentence.
 function forecastSection(intelligence, currency, hasLocalScenario = false, trajectoryMarkup = '') {
-  const sectionId = hasLocalScenario ? 'detail-published-forecast' : 'detail-forecast';
+  // DCL-DET-09: one stable "detail-outlook" anchor id -- the local scenario
+  // card owns it instead whenever one renders above, so the two never collide.
+  const idAttr = hasLocalScenario ? '' : ' id="detail-outlook"';
   const forecasts = Object.values(intelligence.forecasts).sort((left, right) => left.horizon - right.horizon);
   if (intelligence.supportTier < 4 || !forecasts.length) return trajectoryMarkup;
   const projection = forecastProjectionChart(intelligence.observed?.price, forecasts, currency, {
@@ -377,7 +390,7 @@ function forecastSection(intelligence, currency, hasLocalScenario = false, traje
     const confidence = forecast.confidence === null ? 'score not disclosed' : `${Math.round(forecast.confidence)}/100`;
     return `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${forecast.horizon}-day outlook</p><h3>${escapeHTML(formatCurrency(forecast.q50, currency))} median</h3></div><span class="pill">${status} · ${confidence}</span></div><div class="forecast-grid"><div><span>50% range</span><strong>${escapeHTML(formatCurrency(forecast.q25, currency))}–${escapeHTML(formatCurrency(forecast.q75, currency))}</strong></div><div><span>80% range</span><strong>${escapeHTML(formatCurrency(forecast.q10, currency))}–${escapeHTML(formatCurrency(forecast.q90, currency))}</strong></div><div><span>Probability of gain</span><strong>${forecast.probabilityUp === null ? '—' : `${Math.round(forecast.probabilityUp * 100)}%`}</strong></div></div></section>`;
   }).join('');
-  return `<section class="card forecast-card product-outlook-card" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Approved outlook</p><h2>Observed price to modeled range</h2><p class="muted">Historical trend evidence and approved forecasts stay separate; this graph connects only published observations and model outputs.</p></div></div>${projection}<div class="forecast-horizon-list">${horizons}</div></section>`;
+  return `<section class="card forecast-card product-outlook-card"${idAttr}><div class="section-heading"><div><p class="eyebrow">Approved outlook</p><h2>Observed price to modeled range</h2><p class="muted">Historical trend evidence and approved forecasts stay separate; this graph connects only published observations and model outputs.</p></div></div>${projection}<div class="forecast-horizon-list">${horizons}</div></section>`;
 }
 
 // Trajectory-v1 (T6): the detail-page analog of forecastSection, but for
@@ -386,17 +399,20 @@ function forecastSection(intelligence, currency, hasLocalScenario = false, traje
 // with a resolved packet ever produces the full chart; "excluded" and
 // "unknown" both collapse to the same honest "insufficient evidence"
 // state (never a fabricated band, never local-scenario-v1 standing in).
-function trajectorySection(item, state, sectionId) {
+function trajectorySection(item, state, hasLocalScenario = false) {
   const key = trajectoryKeyForItem(item || {});
   if (!key) return '';
   const entry = state.trajectoryForecasts?.byKey?.[key];
   if (!entry) return '';
+  // DCL-DET-09: one stable "detail-outlook" anchor id -- the local scenario
+  // card owns it instead whenever one renders above, so the two never collide.
+  const idAttr = hasLocalScenario ? '' : ' id="detail-outlook"';
   if (entry.eligibility !== 'published' || !entry.packet) {
-    return `<section class="card trajectory-insufficient" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>Insufficient evidence for a price forecast</h2><p class="muted">This printing does not yet have enough published price history to support a modeled trajectory.</p></section>`;
+    return `<section class="card trajectory-insufficient"${idAttr}><p class="eyebrow">Published market forecast</p><h2>Insufficient evidence for a price forecast</h2><p class="muted">This printing does not yet have enough published price history to support a modeled trajectory.</p></section>`;
   }
   const packet = entry.packet;
   if (isTrajectoryStale(packet, entry.manifest?.asOf || entry.groupAsOf)) {
-    return `<section class="card trajectory-insufficient" id="${sectionId}"><p class="eyebrow">Published market forecast</p><h2>A fresher market observation is required</h2><p class="muted">The last price behind this forecast is too old relative to its publication. CollectFolio withholds the modeled values instead of presenting a stale baseline as current.</p></section>`;
+    return `<section class="card trajectory-insufficient"${idAttr}><p class="eyebrow">Published market forecast</p><h2>A fresher market observation is required</h2><p class="muted">The last price behind this forecast is too old relative to its publication. CollectFolio withholds the modeled values instead of presenting a stale baseline as current.</p></section>`;
   }
   const bands = [30, 60, 90]
     .map((horizon) => [horizon, packet.horizons?.[String(horizon)]])
@@ -429,7 +445,7 @@ function trajectorySection(item, state, sectionId) {
           : 'No directional estimate';
     return `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day ${directional ? 'checkpoint' : 'price range'}</p><h3>${escapeHTML(title)}</h3></div><span class="pill">${escapeHTML(label)}</span></div><div class="forecast-grid"><div><span>80% range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div></section>`;
   };
-  return `<section class="card forecast-card product-outlook-card trajectory-section" id="${sectionId}"><div class="section-heading"><div><p class="eyebrow">Published market outlook</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${bands.map(([horizon, band]) => horizonBlock(horizon, band)).join('')}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
+  return `<section class="card forecast-card product-outlook-card trajectory-section"${idAttr}><div class="section-heading"><div><p class="eyebrow">Published market outlook</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${bands.map(([horizon, band]) => horizonBlock(horizon, band)).join('')}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
 }
 
 // Observed weekly price history, with the latest published trajectory-v1
@@ -475,15 +491,19 @@ function historySection(item, state) {
 function localScenarioSection(holding, scenario) {
   if (!holding || !scenario) return '';
   const usable = ['early', 'limited', 'available'].includes(scenario.status);
-  if (!usable) return `<section class="card forecast-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Your scenario</p><h2>${scenario.status === 'stale' ? 'Update the saved value' : 'Add a value to start'}</h2><p class="muted">${escapeHTML(scenario.reason || 'No usable value is saved for this item.')}</p></div><span class="support-badge unsupported">Unavailable</span></div><p>${escapeHTML(scenario.nextAction || 'Edit this item to add a catalog or manual unit value.')}</p></section>`;
+  // DCL-DET-09: one stable "detail-outlook" anchor id, regardless of branch.
+  if (!usable) return `<section class="card forecast-card local-scenario-card" id="detail-outlook"><div class="section-heading"><div><p class="eyebrow">Your scenario</p><h2>${scenario.status === 'stale' ? 'Update the saved value' : 'Add a value to start'}</h2><p class="muted">${escapeHTML(scenario.reason || 'No usable value is saved for this item.')}</p></div><span class="support-badge unsupported">Unavailable</span></div><p>${escapeHTML(scenario.nextAction || 'Edit this item to add a catalog or manual unit value.')}</p></section>`;
   const history = (scenario.history || []).filter((entry) => entry.source === scenario.source && entry.currency === scenario.currency);
   const projection = forecastProjectionChart(scenario.observed, [scenario], scenario.currency, {
     mode: 'local-scenario', history, asOfDate: scenario.observedAt
   });
-  return `<section class="card forecast-card product-outlook-card local-scenario-card" id="detail-forecast"><div class="section-heading"><div><p class="eyebrow">Your scenario</p><h2>${scenario.horizon}-day range from your saved value</h2><p class="muted">Available without a published market forecast. This is a modeled scenario, not an appraisal.</p></div><span class="support-badge modeled">${scenario.status === 'available' ? 'Moderate evidence' : 'Limited evidence'}</span></div>
+  // CENSUS GAP CLOSURE / LEX-10: consolidated to the single registry
+  // clarifier line. The confidence-detail sentence and model version moved
+  // into dataDetailsSection (DCL-DET-02) instead of repeating here.
+  return `<section class="card forecast-card product-outlook-card local-scenario-card" id="detail-outlook"><div class="section-heading"><div><p class="eyebrow">Your scenario</p><h2>${scenario.horizon}-day range from your saved value</h2><p class="muted">Available without a published market forecast. This is a modeled scenario, not an appraisal.</p></div><span class="support-badge modeled">${scenario.status === 'available' ? 'Moderate evidence' : 'Limited evidence'}</span></div>
     <div class="actual-forecast-split"><div class="actual"><span>Saved unit value</span><strong>${escapeHTML(formatCurrency(scenario.observed, scenario.currency))}</strong><small>${escapeHTML(scenario.source === 'manual' ? 'Your estimate' : scenario.sourceLabel || 'Catalog price')} · value date ${escapeHTML((scenario.valueAsOf || scenario.observedAt).slice(0, 10))}</small></div><div class="forecast"><span>Middle 50% scenario</span><strong>${escapeHTML(formatCurrency(scenario.q25, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q75, scenario.currency))}</strong><small>Midpoint ${escapeHTML(formatCurrency(scenario.q50, scenario.currency))}</small></div></div>${projection}
     <div class="forecast-grid"><div><span>Broad 80% range</span><strong>${escapeHTML(formatCurrency(scenario.q10, scenario.currency))}–${escapeHTML(formatCurrency(scenario.q90, scenario.currency))}</strong></div><div><span>Local history</span><strong>${scenario.observationCount} same-source check${scenario.observationCount === 1 ? '' : 's'}</strong></div></div>
-    <p class="fine-print">${escapeHTML(scenario.confidence.detail)} Manual and catalog values never create cross-source returns. Model ${escapeHTML(scenario.modelVersion)}.</p><p class="forecast-warning">${escapeHTML(CLARIFIERS.scenario)}</p></section>`;
+    <p class="forecast-warning">${escapeHTML(CLARIFIERS.scenario)}</p></section>`;
 }
 
 // DCL-DET-06: "Why this estimate? / Recorded drivers" collapses to one
@@ -502,18 +522,21 @@ function driverSection(intelligence) {
 }
 
 // DCL-DET-04: H2 drops its period ("No verified pricing yet"); the
-// disclosure collapses to exactly one collector-facing reason (no-canonical
-// vs. everything else, instead of three separately-worded branches); the
-// "Nothing here is a fabricated estimate." line is deleted (Appendix A).
+// disclosure collapses to exactly one collector-facing reason (no mapped
+// catalog identity vs. everything else, instead of three separately-worded
+// branches); the "Nothing here is a fabricated estimate." line is deleted
+// (Appendix A).
 function unsupportedSection(ref, state, hasLocalScenario = false, trajectoryMarkup = '') {
   const reason = !ref.canonicalVariantId
     ? "This exact printing hasn't been price-verified yet."
     : "Pricing for this printing hasn't been verified yet.";
-  const forecastBlock = trajectoryMarkup || `<section class="card" id="${hasLocalScenario ? 'detail-published-forecast' : 'detail-forecast'}"><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">${hasLocalScenario ? 'Your scenario above explains whether a modeled range is available; it remains separate from published forecasts.' : 'An unavailable published forecast never prevents collection tracking.'}</p></section>`;
+  // DCL-DET-09: one stable "detail-outlook" anchor id -- the local scenario
+  // card owns it instead whenever one renders above, so the two never collide.
+  const forecastBlock = trajectoryMarkup || `<section class="card"${hasLocalScenario ? '' : ' id="detail-outlook"'}><p class="eyebrow">Published market forecast</p><h2>No forecast published</h2><p class="muted">${hasLocalScenario ? 'Your scenario above explains whether a modeled range is available; it remains separate from published forecasts.' : 'An unavailable published forecast never prevents collection tracking.'}</p></section>`;
   return `<section class="card pricing-unavailable" id="detail-market" role="status"><p class="eyebrow">Item identified</p><h2>No verified pricing yet</h2><p class="muted">You can add this item, enter a manual value, or watch it for pricing.</p><details><summary>Why there's no market data yet</summary><ul class="evidence-list"><li>${escapeHTML(reason)}</li></ul></details></section>${forecastBlock}`;
 }
 
-function dataDetailsSection(ref, intelligence, trajectoryEntry = null) {
+function dataDetailsSection(ref, intelligence, trajectoryEntry = null, localScenario = null) {
   const tier = intelligence?.supportTier || 0;
   const tone = tier >= 4 ? 'supported' : tier >= 2 ? 'partial' : 'unsupported';
   const verification = ref.canonicalVariantId
@@ -546,7 +569,14 @@ function dataDetailsSection(ref, intelligence, trajectoryEntry = null) {
       .join(', ')
     : '';
   const forecastHorizonsText = maturities || trajectoryHorizons || 'No active forecast';
-  return `<details class="data-details" id="detail-data"><summary><span>Data &amp; Methodology</span><span>Sources, checks, identifiers, and calculations</span></summary><div><span class="support-badge ${tone}">${escapeHTML(SUPPORT_BADGES[tier])}</span><dl><div><dt>Market source</dt><dd>${escapeHTML(ref.provider || 'Custom entry')}</dd></div><div><dt>Source reference</dt><dd>${escapeHTML(ref.externalId || 'Not available')}</dd></div><div><dt>Verification status</dt><dd>${escapeHTML(verification)}</dd></div><div><dt>Internal catalog reference</dt><dd>${escapeHTML(ref.canonicalVariantId || 'Not assigned')}</dd></div><div><dt>Model version</dt><dd>${escapeHTML(modelVersions.join(', ') || 'No model applied')}</dd></div><div><dt>Forecast horizons</dt><dd>${escapeHTML(forecastHorizonsText)}</dd></div><div><dt>Source checks</dt><dd>${sourceCount ? `${sourceCount} approved source${sourceCount === 1 ? '' : 's'}` : 'No approved modeled source coverage'}</dd></div><div><dt>Data quality</dt><dd>${observationCount} verified observation${observationCount === 1 ? '' : 's'}</dd></div><div><dt>Calculation time</dt><dd>${escapeHTML(intelligence?.publishedAt || 'No modeled calculation')}</dd></div><div><dt>Calculation method</dt><dd>Current values remain separate from manual scenarios and published forecasts. Ranges render only when their supporting evidence contract passes validation.</dd></div><div><dt>Price drivers</dt><dd>Drivers reflect recorded model feature contributions, shown in collector-friendly language.</dd></div></dl></div></details>`;
+  // CENSUS GAP CLOSURE / DCL-DET-02: the local-scenario confidence sentence
+  // and model version used to repeat as fine print under the scenario card;
+  // they render here once instead, only when a usable scenario exists.
+  const scenarioUsable = localScenario && ['early', 'limited', 'available'].includes(localScenario.status);
+  const scenarioRows = scenarioUsable
+    ? `<div><dt>Scenario model</dt><dd>${escapeHTML(localScenario.modelVersion)}</dd></div><div><dt>Scenario confidence</dt><dd>${escapeHTML(localScenario.confidence.detail)}</dd></div>`
+    : '';
+  return `<details class="data-details" id="detail-data"><summary><span>Data &amp; Methodology</span><span>Sources, checks, identifiers, and calculations</span></summary><div><span class="support-badge ${tone}">${escapeHTML(SUPPORT_BADGES[tier])}</span><dl><div><dt>Market source</dt><dd>${escapeHTML(ref.provider || 'Custom entry')}</dd></div><div><dt>Source ID</dt><dd>${escapeHTML(ref.externalId || 'Not available')}</dd></div><div><dt>Verification status</dt><dd>${escapeHTML(verification)}</dd></div><div><dt>Catalog ID</dt><dd>${escapeHTML(ref.canonicalVariantId || 'Not assigned')}</dd></div><div><dt>Model version</dt><dd>${escapeHTML(modelVersions.join(', ') || 'No model applied')}</dd></div><div><dt>Forecast horizons</dt><dd>${escapeHTML(forecastHorizonsText)}</dd></div>${scenarioRows}<div><dt>Source checks</dt><dd>${sourceCount ? `${sourceCount} approved source${sourceCount === 1 ? '' : 's'}` : 'No approved modeled source coverage'}</dd></div><div><dt>Data quality</dt><dd>${observationCount} verified observation${observationCount === 1 ? '' : 's'}</dd></div><div><dt>Calculation time</dt><dd>${escapeHTML(intelligence?.publishedAt || 'No modeled calculation')}</dd></div><div><dt>Calculation method</dt><dd>Current values remain separate from manual scenarios and published forecasts. Ranges render only when their supporting evidence contract passes validation.</dd></div><div><dt>Price drivers</dt><dd>Drivers reflect recorded model feature contributions, shown in collector-friendly language.</dd></div></dl></div></details>`;
 }
 
 function attributionFootnote(intelligence) {
