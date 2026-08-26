@@ -130,7 +130,7 @@ async function configureCollectCaptureStub(page, { respond } = {}) {
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.34-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.35-test',
       COLLECTCAPTURE_API_URL: '${COLLECTCAPTURE_ORIGIN}/', ENABLE_COLLECTCAPTURE: true,
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
       ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
@@ -152,7 +152,7 @@ async function configureDisabledCollectCapture(page, { localRollback = false } =
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.34-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.35-test',
       COLLECTCAPTURE_API_URL: '', ENABLE_COLLECTCAPTURE: false,
       ENABLE_LOCAL_SCAN_ROLLBACK: ${localRollback},
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
