@@ -1,0 +1,459 @@
+# Trajectory-v1 forecast publication pipeline (forecast audit FA-01 / FA-08).
+#
+# Reconstructs the manual `trajectory_cli.py` publish procedure documented in
+# docs/FORECAST_TRAJECTORY_V1_PRD.md T5 and run by hand for the 2026-08-17/
+# 2026-08-18 live publishes (docs/receipts/trajectory-v1/live-verification.md)
+# as a repeatable, scheduled GitHub Actions job.
+#
+# GOVERNANCE (hard, do not relax): this job REPRODUCES the already-approved
+# trajectory-v1.1 evidence-tier gate under the current publisher code -- it
+# never re-qualifies eligibility and never fabricates or promotes a claim.
+# `run-category` and `publish-forecasts` are wired to read ONLY the
+# checked-in docs/receipts/trajectory-v1/component-weights.json and
+# evaluation-summary.json (T4's committed, human-reviewed gate output). This
+# workflow never calls `eval-component-weights` / `render-eval-summary`,
+# which would recompute and overwrite that gate -- doing so here would be a
+# silent re-qualification, exactly what governance forbids.
+#
+# INPUT PLUMBING (verified against the repo, 2026-08-26 -- do not assume the
+# tcgcsv-r2-refresh.yml R2-restore pattern applies here, it does not):
+#   - The trajectory panel (analytics/data/panel/category-<id>/<date>.jsonl.gz,
+#     consumed by `build-indices`) is built by tcgcsv_panel_cli.py directly
+#     from tcgcsv.com's own public weekly archives. It has NO R2 copy
+#     anywhere in this repo -- it is not part of the private
+#     collectfolio-tcgcsv-current 2-slot "current" rotation that
+#     tcgcsv-r2-refresh.yml restores (that rotation feeds a completely
+#     different, unrelated pipeline: tcgcsv_universe_io.py's DuckDB/Postgres
+#     market-universe plane). Grep evidence: indices.py's own module
+#     docstring names tcgcsv_panel.py as the panel's sole source; no
+#     `TCGCSV_CURRENT`/coordinator reference exists anywhere in indices.py,
+#     lifecycle.py, hedonic_features.py, or trajectory_cli.py.
+#   - build-indices' groups metadata and fetch-products' product metadata
+#     are both direct, bounded, resumable community-free-access HTTP calls
+#     to tcgcsv.com (see lifecycle.py / hedonic_features.py) -- not R2 reads
+#     either.
+#   - Because a full panel backfill (currently 80 weekly dates, ~22M rows,
+#     ~287MB of archives) cannot be redone from scratch inside a bounded CI
+#     run every time, this job caches analytics/data/panel and the
+#     build-indices/fetch-products caches under analytics/data/trajectory
+#     across runs (actions/cache) and re-invokes the already-resumable
+#     `backfill` / `build-indices` / `fetch-products` each run -- a warm
+#     cache only fetches the handful of new dates/groups since last run,
+#     matching the "safe to re-invoke, resumes without refetching" contract
+#     each of those subcommands already documents.
+#
+# UPLOAD BLOCKER (verified, load-bearing -- read before touching `mode:
+# publish`): there is currently NO authenticated route anywhere that can
+# accept a PUT for an arbitrary `forecasts/<categoryId>/<groupId>[.partN
+# ].json.gz` object key or `forecasts/manifest.json`. See the "Upload
+# forecast objects to R2" step below for the full verification trail. Until
+# that route exists (out of this workflow's ownership -- it would live in
+# cloudflare/tcgcsv-refresh/src, not here), `mode: publish` builds and
+# locally verifies the exact same objects a real publish would ship, then
+# fails loudly at the upload step instead of silently no-op'ing or guessing
+# at an unverified endpoint. `mode: dry-run` (the default, and the only mode
+# that can currently succeed end-to-end) stops cleanly right before upload.
+
+name: Trajectory forecast publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'publish uploads to R2 (see UPLOAD BLOCKER above -- currently fails loud at the upload step); dry-run builds and verifies locally only'
+        type: choice
+        options: [dry-run, publish]
+        default: dry-run
+      category_ids:
+        description: 'Comma-separated TCGCSV category ids to process this run'
+        type: string
+        default: '1,2,3,85'
+  schedule:
+    # Weekly, matching the panel's own 7-day archive interval. Runs in
+    # `publish` mode with the full default category set (see the mode-
+    # resolution step) so this automation starts closing FA-01 the moment
+    # the upload route above exists -- no workflow edit required then. Until
+    # it exists, every scheduled run fails loudly at the upload step, which
+    # is the correct, visible signal (not a bug) for a still-missing piece
+    # of infrastructure; forecast-freshness.yml is the calmer, dependency-
+    # free daily alarm for the same gap in the meantime.
+    - cron: '30 9 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trajectory-publish
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: analytics/src
+  TCGCSV_CATALOG_URL: https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev
+  PANEL_DIR: analytics/data/panel
+  STATE_DIR: analytics/data/trajectory
+  RECEIPTS_DIR: .trajectory-run/receipts
+  PUBLISH_OUT_DIR: .trajectory-run/publish
+  COMMITTED_RECEIPTS_DIR: docs/receipts/trajectory-v1
+  PANEL_START_DATE: '2025-02-01'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install 7z (panel archive extraction)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+
+      - name: Resolve run parameters
+        id: params
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_CATEGORY_IDS: ${{ inputs.category_ids }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          mode="$INPUT_MODE"
+          category_ids="$INPUT_CATEGORY_IDS"
+          if [[ -z "$mode" ]]; then
+            if [[ "$EVENT_NAME" == 'schedule' ]]; then mode=publish; else mode=dry-run; fi
+          fi
+          if [[ -z "$category_ids" ]]; then category_ids='1,2,3,85'; fi
+          default_category_ids="$(python3 -c 'from collectfolio_analytics.tcgcsv_panel import DEFAULT_CATEGORY_IDS; print(",".join(str(c) for c in DEFAULT_CATEGORY_IDS))')"
+          model_version="$(python3 -c 'from collectfolio_analytics.trajectory import MODEL_VERSION; print(MODEL_VERSION)')"
+          {
+            echo "mode=$mode"
+            echo "category_ids=$category_ids"
+            echo "default_category_ids=$default_category_ids"
+            echo "model_version=$model_version"
+          } >> "$GITHUB_OUTPUT"
+          echo "resolved mode=$mode category_ids=$category_ids (panel default set: $default_category_ids, model version: $model_version)"
+
+      - name: Guard -- publish mode requires the full default category set
+        if: steps.params.outputs.mode == 'publish'
+        env:
+          REQUESTED_CATEGORY_IDS: ${{ steps.params.outputs.category_ids }}
+          DEFAULT_CATEGORY_IDS: ${{ steps.params.outputs.default_category_ids }}
+        run: |
+          set -euo pipefail
+          # publish-forecasts REPLACES forecasts/manifest.json wholesale for
+          # exactly the category ids it is given (see forecast_publisher.py
+          # publish_forecasts). Publishing a narrower category set than the
+          # live manifest already covers would silently drop the other
+          # categories from the app's view of what's servable even though
+          # their R2 objects are still sitting there -- an orphaning
+          # regression, not a valid partial republish. dry-run has no live
+          # effect, so a narrower set there is fine for targeted debugging.
+          requested="$(python3 -c "import os; print(','.join(sorted(os.environ['REQUESTED_CATEGORY_IDS'].split(','))))")"
+          expected="$(python3 -c "import os; print(','.join(sorted(os.environ['DEFAULT_CATEGORY_IDS'].split(','))))")"
+          if [[ "$requested" != "$expected" ]]; then
+            echo "::error::mode=publish requires category_ids to be the full default set ($expected); got ($requested). Use mode=dry-run to test a narrower set, or widen category_ids for a real publish."
+            exit 1
+          fi
+
+      - name: Restore panel + trajectory state cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.PANEL_DIR }}
+            ${{ env.STATE_DIR }}/indices.json.gz
+            ${{ env.STATE_DIR }}/lifecycle_curve.json.gz
+            ${{ env.STATE_DIR }}/groups_metadata.json.gz
+            ${{ env.STATE_DIR }}/hedonic
+          key: trajectory-publish-panel-v1-${{ github.run_id }}
+          restore-keys: |
+            trajectory-publish-panel-v1-
+
+      - name: Compute this run's weekly-aligned panel end date
+        id: panel_date
+        run: |
+          set -euo pipefail
+          end_date="$(python3 -c 'import datetime, os; start = datetime.date.fromisoformat(os.environ["PANEL_START_DATE"]); today = datetime.date.today(); weeks = max(0, (today - start).days // 7); print((start + datetime.timedelta(days=7 * weeks)).isoformat())')"
+          echo "end_date=$end_date" >> "$GITHUB_OUTPUT"
+          echo "panel target end date: $end_date"
+
+      - name: Extend the weekly archive panel (resumable, community-free-access tcgcsv.com fetch)
+        run: |
+          set -euo pipefail
+          python3 -m collectfolio_analytics.tcgcsv_panel_cli backfill \
+            --start-date "${{ env.PANEL_START_DATE }}" \
+            --end-date "${{ steps.panel_date.outputs.end_date }}" \
+            --category-id 1 --category-id 2 --category-id 3 --category-id 85 \
+            --panel-dir "${{ env.PANEL_DIR }}" \
+            --receipts-dir "${{ env.RECEIPTS_DIR }}"
+
+      - name: build-indices (shared market/game/set indices + lifecycle curve)
+        run: |
+          set -euo pipefail
+          python3 -m collectfolio_analytics.trajectory_cli build-indices \
+            --category-id 1 --category-id 2 --category-id 3 --category-id 85 \
+            --panel-dir "${{ env.PANEL_DIR }}" \
+            --state-dir "${{ env.STATE_DIR }}" \
+            --receipts-dir "${{ env.RECEIPTS_DIR }}"
+
+      - name: fetch-products (resumable, community-free-access tcgcsv.com fetch)
+        run: |
+          set -euo pipefail
+          python3 -m collectfolio_analytics.trajectory_cli fetch-products \
+            --category-id 1 --category-id 2 --category-id 3 --category-id 85 \
+            --state-dir "${{ env.STATE_DIR }}" \
+            --receipts-dir "${{ env.RECEIPTS_DIR }}"
+
+      - name: fit-hedonic + run-category per requested category
+        env:
+          CATEGORY_IDS: ${{ steps.params.outputs.category_ids }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra ids <<< "$CATEGORY_IDS"
+          for cid in "${ids[@]}"; do
+            echo "=== category $cid: fit-hedonic ==="
+            python3 -m collectfolio_analytics.trajectory_cli fit-hedonic \
+              --category-id "$cid" \
+              --panel-dir "${{ env.PANEL_DIR }}" \
+              --state-dir "${{ env.STATE_DIR }}" \
+              --receipts-dir "${{ env.RECEIPTS_DIR }}"
+            echo "=== category $cid: run-category (checked-in component-weights.json) ==="
+            python3 -m collectfolio_analytics.trajectory_cli run-category \
+              --category-id "$cid" \
+              --panel-dir "${{ env.PANEL_DIR }}" \
+              --state-dir "${{ env.STATE_DIR }}" \
+              --packets-dir "${{ env.STATE_DIR }}/packets" \
+              --receipts-dir "${{ env.RECEIPTS_DIR }}" \
+              --component-weights-path "${{ env.COMMITTED_RECEIPTS_DIR }}/component-weights.json"
+          done
+
+      - name: report (aggregate this run's per-category receipts)
+        run: |
+          set -euo pipefail
+          python3 -m collectfolio_analytics.trajectory_cli report \
+            --receipts-dir "${{ env.RECEIPTS_DIR }}"
+
+      - name: publish-forecasts (checked-in evaluation-summary.json; local objects only)
+        env:
+          CATEGORY_IDS: ${{ steps.params.outputs.category_ids }}
+        run: |
+          set -euo pipefail
+          python3 -m collectfolio_analytics.trajectory_cli publish-forecasts \
+            --packets-dir "${{ env.STATE_DIR }}/packets" \
+            --evaluation-summary-path "${{ env.COMMITTED_RECEIPTS_DIR }}/evaluation-summary.json" \
+            --source-terms-path analytics/manifests/tcgcsv-community-free-access-derived-forecasts.json \
+            --out-dir "${{ env.PUBLISH_OUT_DIR }}" \
+            --receipts-dir "${{ env.RECEIPTS_DIR }}" \
+            --category-ids "$CATEGORY_IDS"
+
+      - name: Verify the LOCAL publish output
+        run: |
+          set -euo pipefail
+          python3 - "${{ env.PUBLISH_OUT_DIR }}" <<'PY'
+          import datetime
+          import gzip
+          import json
+          import sys
+          from pathlib import Path
+
+          out_dir = Path(sys.argv[1])
+          manifest_path = out_dir / "forecasts" / "manifest.json"
+          if not manifest_path.is_file():
+              print(f"::error::local manifest not found at {manifest_path}")
+              sys.exit(1)
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+          generated_at = datetime.datetime.fromisoformat(str(manifest["generatedAt"]).replace("Z", "+00:00"))
+          today = datetime.datetime.now(datetime.timezone.utc).date()
+          print(f"local manifest generatedAt={manifest['generatedAt']} modelVersion={manifest['modelVersion']}")
+          failures = []
+          if generated_at.astimezone(datetime.timezone.utc).date() != today:
+              failures.append(f"local manifest generatedAt date {generated_at.date()} is not today ({today})")
+
+          categories = manifest.get("categories", {})
+          if not categories:
+              failures.append("local manifest has no categories")
+
+          sampled = 0
+          for category_id, row in sorted(categories.items(), key=lambda kv: int(kv[0])):
+              groups = row.get("groups", {})
+              published = next(
+                  (gid for gid, g in sorted(groups.items(), key=lambda kv: int(kv[0]))
+                   if g.get("status") == "published"),
+                  None,
+              )
+              if published is None:
+                  continue
+              parts = groups[published].get("parts", [])
+              if not parts:
+                  failures.append(f"category {category_id} group {published} is published with zero parts")
+                  continue
+              object_path = out_dir / parts[0]["objectKey"]
+              if not object_path.is_file():
+                  failures.append(f"category {category_id} group {published}: object file missing at {object_path}")
+                  continue
+              payload = json.loads(gzip.decompress(object_path.read_bytes()).decode("utf-8"))
+              sampled += 1
+              for variant in payload.get("variants", []):
+                  last_known_price = variant.get("lastKnownPrice")
+                  for horizon_days, band in variant.get("horizons", {}).items():
+                      if "evidenceTier" not in band:
+                          failures.append(
+                              f"category {category_id} group {published} variant "
+                              f"{variant.get('productId')}/{variant.get('subTypeName')} horizon {horizon_days} "
+                              "band is missing evidenceTier"
+                          )
+                          continue
+                      if band["evidenceTier"] == "range-only":
+                          if last_known_price is None:
+                              failures.append(
+                                  f"category {category_id} group {published} variant "
+                                  f"{variant.get('productId')}/{variant.get('subTypeName')} horizon {horizon_days} "
+                                  "is range-only but carries no lastKnownPrice"
+                              )
+                          else:
+                              q50 = float(band["q50"])
+                              lkp = float(last_known_price)
+                              if abs(q50 - lkp) > 1e-6 * max(1.0, abs(lkp)):
+                                  failures.append(
+                                      f"category {category_id} group {published} variant "
+                                      f"{variant.get('productId')}/{variant.get('subTypeName')} horizon {horizon_days} "
+                                      f"is range-only but q50={q50} != lastKnownPrice={lkp}"
+                                  )
+
+          print(f"sampled {sampled} local group object(s) across {len(categories)} requested categor(y/ies)")
+          if sampled == 0:
+              failures.append("no published group could be sampled locally")
+
+          if failures:
+              for message in failures:
+                  print(f"::error::{message}")
+              sys.exit(1)
+          print("local publish output verification passed")
+          PY
+
+      - name: Upload forecast objects to R2 (BLOCKED -- see UPLOAD BLOCKER header comment)
+        if: steps.params.outputs.mode == 'publish'
+        run: |
+          set -euo pipefail
+          echo "::error title=No authenticated forecast-object upload route exists::trajectory-publish cannot upload to R2 today. Verified against the repo (see this file's header comment and Arm O's report for the full trail): cloudflare/tcgcsv-refresh/src/index.js's ARTIFACTS PUT route is a fixed set of 6 single-file, claim/slot-gated raw-archive artifacts (requireActiveClaim); catalog.js's /v1/catalog/assets/<file> PUT route is scoped to the <=512-file numbered web-catalog manifest contract; no CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID secret or wrangler-based direct-R2-write path exists in any workflow in this repo. None of these can accept an arbitrary forecasts/<categoryId>/<groupId>[.partN].json.gz key or forecasts/manifest.json. Building that route is out of this workflow's ownership (cloudflare/tcgcsv-refresh/src). This job already built and locally verified (previous step) the exact objects a real publish would upload; once an authenticated route + a matching additive verb in scripts/tcgcsv-r2-refresh-client.mjs exist, replace this step with: upload every object under $PUBLISH_OUT_DIR/forecasts/**/*.json.gz, THEN forecasts/manifest.json last (manifest-last ordering per docs/receipts/trajectory-v1/live-verification.md's own publish history) -- never the reverse, so a reader never sees a manifest pointing at an object that is not there yet."
+          exit 1
+
+      - name: Live verification against production
+        # Only meaningful once the upload step above actually ships objects.
+        # In dry-run mode there is nothing of this run's to verify live --
+        # production reflects whatever the last real publish was, unrelated
+        # to this run's local-only output. Today this step is additionally
+        # unreachable in mode=publish too, because the upload step above
+        # always fails first (see UPLOAD BLOCKER); it activates automatically
+        # once that step can actually succeed.
+        if: steps.params.outputs.mode == 'publish'
+        run: |
+          set -euo pipefail
+          python3 - "${{ env.TCGCSV_CATALOG_URL }}" "${{ steps.params.outputs.model_version }}" <<'PY'
+          import datetime
+          import gzip
+          import json
+          import sys
+          import urllib.request
+
+          base_url, expected_model_version = sys.argv[1], sys.argv[2]
+
+          def fetch(path, *, gzipped=False):
+              request = urllib.request.Request(
+                  f"{base_url}{path}", headers={"user-agent": "CollectFolio-trajectory-publish/1"}
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  raw = response.read()
+              return json.loads(gzip.decompress(raw).decode("utf-8") if gzipped else raw.decode("utf-8"))
+
+          manifest = fetch("/catalog/forecasts/manifest")
+          generated_at = datetime.datetime.fromisoformat(str(manifest["generatedAt"]).replace("Z", "+00:00"))
+          today = datetime.datetime.now(datetime.timezone.utc).date()
+          print(f"live manifest generatedAt={manifest['generatedAt']} modelVersion={manifest['modelVersion']}")
+          failures = []
+          if generated_at.astimezone(datetime.timezone.utc).date() != today:
+              failures.append(f"live manifest generatedAt date {generated_at.date()} is not today ({today})")
+          if manifest.get("modelVersion") != expected_model_version:
+              failures.append(f"live manifest modelVersion {manifest.get('modelVersion')!r} != expected {expected_model_version!r}")
+
+          categories = manifest.get("categories", {})
+          sampled = 0
+          for category_id, row in sorted(categories.items(), key=lambda kv: int(kv[0])):
+              groups = row.get("groups", {})
+              published = next(
+                  (gid for gid, g in sorted(groups.items(), key=lambda kv: int(kv[0]))
+                   if g.get("status") == "published"),
+                  None,
+              )
+              if published is None:
+                  continue
+              parts = groups[published].get("parts", [])
+              if not parts:
+                  failures.append(f"category {category_id} group {published} is published with zero parts")
+                  continue
+              object_id = parts[0]["objectKey"].rsplit("/", 1)[-1].removesuffix(".json.gz")
+              try:
+                  payload = fetch(f"/catalog/forecasts/{category_id}/{object_id}", gzipped=True)
+              except Exception as exc:  # noqa: BLE001 - report and continue sampling other categories
+                  failures.append(f"category {category_id} group {published}: fetch failed: {exc}")
+                  continue
+              sampled += 1
+              for variant in payload.get("variants", []):
+                  last_known_price = variant.get("lastKnownPrice")
+                  for horizon_days, band in variant.get("horizons", {}).items():
+                      if "evidenceTier" not in band:
+                          failures.append(
+                              f"category {category_id} group {published} variant "
+                              f"{variant.get('productId')}/{variant.get('subTypeName')} horizon {horizon_days} "
+                              "band is missing evidenceTier"
+                          )
+                      elif band["evidenceTier"] == "range-only" and last_known_price is not None:
+                          q50, lkp = float(band["q50"]), float(last_known_price)
+                          if abs(q50 - lkp) > 1e-6 * max(1.0, abs(lkp)):
+                              failures.append(
+                                  f"category {category_id} group {published} variant "
+                                  f"{variant.get('productId')}/{variant.get('subTypeName')} horizon {horizon_days} "
+                                  f"is range-only but q50={q50} != lastKnownPrice={lkp}"
+                              )
+
+          print(f"sampled {sampled} live group object(s) across {len(categories)} categor(y/ies)")
+          if sampled == 0:
+              failures.append("no published group could be sampled live")
+
+          if failures:
+              for message in failures:
+                  print(f"::error::{message}")
+              sys.exit(1)
+          print("live verification passed")
+          PY
+
+      - name: npm ci
+        if: always()
+        run: npm ci
+
+      - name: Repo sanity gate (validate.mjs + check-copy.mjs --strict)
+        if: always()
+        run: |
+          set -euo pipefail
+          node scripts/validate.mjs
+          node scripts/check-copy.mjs --strict
+
+      - name: Upload run receipts + manifest as a build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trajectory-publish-${{ github.run_id }}
+          path: |
+            ${{ env.RECEIPTS_DIR }}/**
+            ${{ env.PUBLISH_OUT_DIR }}/forecasts/manifest.json
+          if-no-files-found: warn
+          retention-days: 30

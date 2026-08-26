@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 from uuid import UUID
 
+from .hedonic_features import product_kind
 from .market_pipeline import SourceTerms
 from .tcgcsv import assert_tcgcsv_community_free_access_terms
 from .trajectory import HORIZONS_DAYS, MODEL_VERSION, content_sha256, horizon_actual_days_for
@@ -65,6 +66,23 @@ EVIDENCE_TIERS: frozenset[str] = frozenset({
     "range-only",
     "attribute-reference",
 })
+
+# FA-03 serving contract: the two directional tiers a cell can be
+# evidence-qualified into. Only a "single" productKind may ever be served
+# one of these; sealed and unknown are always downgraded to "range-only"
+# (see the kind gate in ``publish_category``).
+DIRECTIONAL_EVIDENCE_TIERS: frozenset[str] = frozenset({"category-validated", "relative-validated"})
+
+# productKind values that must never serve a directional tier. "unknown"
+# (no --products-cache, or this productId absent from the cache) is
+# included deliberately: the safe default when a variant's kind cannot be
+# determined is to withhold direction, never to assume "single".
+NON_DIRECTIONAL_PRODUCT_KINDS: frozenset[str] = frozenset({"sealed", "unknown"})
+
+# FA-05 MSRP plausibility gate: how far below a sealed, in-print product's
+# MSRP a served q50 may fall before it is withheld outright. Never used to
+# clamp a band upward -- only to withhold it.
+MSRP_FLOOR_FRACTION = 0.8
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +281,87 @@ def eligible_horizons(
 
 
 # ---------------------------------------------------------------------------
+# FA-03: serving-contract productKind classification and the per-kind
+# directional gate.
+# ---------------------------------------------------------------------------
+
+
+def classify_product_kind(
+    category_id: int,
+    product_id: int,
+    products_metadata: Mapping[tuple[int, int], Mapping[str, object]] | None,
+) -> str:
+    """Classify one packet's ``productKind`` from a products-metadata
+    mapping ``{(categoryId, productId): {"card_number": ..., "rarity":
+    ...}}`` -- the same shape ``hedonic_features.load_or_fetch_products_metadata``
+    returns and ``hedonic_features.build_category_feature_rows`` consumes
+    (see ``trajectory_cli._load_products_metadata_readonly`` for the
+    read-only cache loader the publish wiring reuses to build this
+    mapping, so this module never fetches or mutates the cache itself).
+
+    ``None`` (no ``--products-cache`` supplied) and "this productId has no
+    entry in the cache" are both "unknown" -- the documented safe default:
+    when a variant's kind cannot be determined, the serving gate treats it
+    as non-directional rather than assuming "single".
+    """
+
+    if not products_metadata:
+        return "unknown"
+    meta = products_metadata.get((category_id, product_id))
+    if meta is None:
+        return "unknown"
+    return product_kind(meta.get("card_number"), meta.get("rarity"))
+
+
+# ---------------------------------------------------------------------------
+# FA-05: sealed-product MSRP plausibility gate.
+# ---------------------------------------------------------------------------
+
+
+def load_msrp_table(msrp_path: Path) -> dict[int, tuple[float, bool]]:
+    """Load the optional curated ``{productId: {msrp, inPrint}}`` table
+    (see ``analytics/manifests/sealed-msrp.json`` for the seed/schema) into
+    ``{productId: (msrp, inPrint)}``.
+
+    Top-level keys starting with ``_`` are documentation-only and ignored
+    (matches the ``_rationale``-style convention the SourceTerms manifests
+    this module already loads use). A malformed row is skipped rather than
+    aborting the whole load -- one bad curation entry must not break a
+    publish run.
+    """
+
+    payload = json.loads(Path(msrp_path).read_text(encoding="utf-8"))
+    table: dict[int, tuple[float, bool]] = {}
+    if not isinstance(payload, Mapping):
+        return table
+    for key, value in payload.items():
+        if not isinstance(key, str) or key.startswith("_") or not isinstance(value, Mapping):
+            continue
+        try:
+            product_id = int(key)
+            msrp = float(value["msrp"])
+            in_print = bool(value["inPrint"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not isfinite(msrp) or msrp <= 0:
+            continue
+        table[product_id] = (msrp, in_print)
+    return table
+
+
+def load_msrp_table_if_present(msrp_path: Path | None) -> dict[int, tuple[float, bool]]:
+    """``load_msrp_table`` with the "absent file => exact no-op" contract
+    applied: a ``None`` path or a path that does not exist on disk yields
+    an empty table (the gate never triggers), rather than an error --
+    the MSRP gate is purely additive.
+    """
+
+    if msrp_path is None or not Path(msrp_path).is_file():
+        return {}
+    return load_msrp_table(Path(msrp_path))
+
+
+# ---------------------------------------------------------------------------
 # Deterministic size-bounded slicing.
 # ---------------------------------------------------------------------------
 
@@ -353,6 +452,12 @@ def _group_object_payload(
                 "productId": v["productId"],
                 "subTypeName": v["subTypeName"],
                 "confidence": v["confidence"],
+                # FA-03: serving-contract classification (single/sealed/
+                # unknown) driving the directional-tier gate applied above,
+                # in ``publish_category``. Defaults to "unknown" (the safe
+                # default) for any caller that predates this field, e.g. a
+                # raw variant dict built directly for a slicing-only test.
+                "productKind": v.get("productKind", "unknown"),
                 "sampleSize": v["sampleSize"],
                 "volatilityBucket": v["volatilityBucket"],
                 "lastKnownDate": v["lastKnownDate"],
@@ -518,6 +623,8 @@ def publish_category(
     max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES,
     serving_eligibility_by_horizon: Mapping[int, Mapping[str, Mapping[int, bool]]] | None = None,
     evidence_tiers_by_horizon: Mapping[int, Mapping[str, Mapping[int, str]]] | None = None,
+    products_metadata: Mapping[tuple[int, int], Mapping[str, object]] | None = None,
+    msrp_table: Mapping[int, tuple[float, bool]] | None = None,
 ) -> dict:
     """Stream one category's packets.jsonl.gz, apply the evidence policy,
     group recognized packets by groupId, slice each group into
@@ -530,14 +637,39 @@ def publish_category(
     Every recognized packet is retained in publish-all mode, but each
     horizon is transformed according to its evidence tier. Failed horizons
     become current-price-centered ranges; they are never upgraded by an
-    allowlist or hidden behind a directional median."""
+    allowlist or hidden behind a directional median.
+
+    Three additional fail-closed withhold/downgrade gates run per packet,
+    in order, none of which may ever fabricate or promote a claim:
+
+    - FA-02: a packet whose ``anchorClampSaturated`` flag is set (see
+      ``trajectory.hedonic_anchor_clamp_saturated``) is withheld entirely
+      -- every horizon -- counted under ``excludedByReason``. An
+      implausible clamp-saturated anchor is evidence of a bad anchor, not
+      a forecast; this runs before eligibility/tiering so no band is ever
+      built from it.
+    - FA-03: ``productKind`` is classified per packet (``products_metadata``
+      optional; absent or unmatched => "unknown") and served on the
+      packet. A "sealed" or "unknown" variant may never serve a
+      directional (``category-validated``/``relative-validated``) tier --
+      it is downgraded to ``range-only``, counted under
+      ``directionalDowngradesByKind``. Singles keep the evidence-tier
+      map's tier unchanged.
+    - FA-05: when ``msrp_table`` has an in-print entry for a *sealed*
+      packet's productId, a horizon whose (possibly already-downgraded)
+      q50 falls below ``MSRP_FLOOR_FRACTION`` of MSRP is withheld (not
+      clamped upward), counted under ``excludedByReason``.
+    """
 
     serving_eligibility_by_horizon = serving_eligibility_by_horizon or {}
     evidence_tiers_by_horizon = evidence_tiers_by_horizon or {}
+    msrp_table = msrp_table or {}
     by_group: dict[int, list[Mapping[str, object]]] = {}
     all_group_ids: set[int] = set()
     total_variants = 0
     excluded_by_cohort: dict[str, int] = {}
+    excluded_by_reason: dict[str, int] = {}
+    directional_downgrades_by_kind: dict[str, int] = {}
     last_known_dates: list[str] = []
     served_horizons_by_cohort: dict[str, set[int]] = {}
 
@@ -546,6 +678,17 @@ def publish_category(
         group_id = int(packet["groupId"])
         all_group_ids.add(group_id)
         confidence = str(packet["confidence"])
+        product_id = int(packet["productId"])
+        kind = classify_product_kind(category_id, product_id, products_metadata)
+
+        if bool(packet.get("anchorClampSaturated", False)):
+            # FA-02: withhold outright -- never serve any band, directional
+            # or range-only, centered on a clamp-saturated anchor.
+            excluded_by_reason["anchor_clamp_saturated"] = (
+                excluded_by_reason.get("anchor_clamp_saturated", 0) + 1
+            )
+            continue
+
         allowed_horizons = eligible_horizons(
             category_id, confidence, serving_eligibility, serving_eligibility_by_horizon
         )
@@ -553,45 +696,83 @@ def publish_category(
         horizons = tuple(
             horizon for horizon in allowed_horizons if str(horizon) in packet_horizons
         )
-        if horizons:
-            served_horizons_by_cohort.setdefault(confidence, set()).update(horizons)
-            tiered_horizons: dict[str, Mapping[str, object]] = {}
-            for horizon in horizons:
-                if confidence == COLD_START_CONFIDENCE:
-                    tier = "attribute-reference"
-                elif confidence != "standard":
-                    tier = "range-only"
-                else:
-                    tier = evidence_tiers_by_horizon.get(category_id, {}).get(confidence, {}).get(
-                        horizon, "range-only"
-                    )
-                if tier not in EVIDENCE_TIERS:
-                    tier = "range-only"
-                tiered_horizons[str(horizon)] = _tiered_band(
-                    packet_horizons[str(horizon)],
-                    horizon_days=horizon,
-                    evidence_tier=tier,
-                    current_price=(
-                        float(packet["lastKnownPrice"])
-                        if isinstance(packet.get("lastKnownPrice"), (int, float))
-                        else None
-                    ),
-                )
-            served_packet = {
-                **packet,
-                "horizons": tiered_horizons,
-            }
-            served_packet["medianPath"] = _checkpoint_path(served_packet, tiered_horizons)
-            by_group.setdefault(group_id, []).append(served_packet)
-            last_known_date = packet["lastKnownDate"]
-            if last_known_date is not None:
-                # cold-start packets carry no observed price history, so
-                # lastKnownDate is legitimately null -- exclude, don't
-                # coerce to the string "None" (which would sort ahead of
-                # real ISO dates and corrupt the staleness-rule range).
-                last_known_dates.append(str(last_known_date))
-        else:
+        if not horizons:
             excluded_by_cohort[confidence] = excluded_by_cohort.get(confidence, 0) + 1
+            continue
+
+        current_price = (
+            float(packet["lastKnownPrice"])
+            if isinstance(packet.get("lastKnownPrice"), (int, float))
+            else None
+        )
+        # FA-05 only ever applies to a kind-classified-sealed packet with a
+        # curated, in-print MSRP entry.
+        msrp_entry = msrp_table.get(product_id) if kind == "sealed" else None
+
+        tiered_horizons: dict[str, Mapping[str, object]] = {}
+        kept_horizons: list[int] = []
+        for horizon in horizons:
+            if confidence == COLD_START_CONFIDENCE:
+                tier = "attribute-reference"
+            elif confidence != "standard":
+                tier = "range-only"
+            else:
+                tier = evidence_tiers_by_horizon.get(category_id, {}).get(confidence, {}).get(
+                    horizon, "range-only"
+                )
+            if tier not in EVIDENCE_TIERS:
+                tier = "range-only"
+
+            if kind in NON_DIRECTIONAL_PRODUCT_KINDS and tier in DIRECTIONAL_EVIDENCE_TIERS:
+                # FA-03 kind gate: never serve direction to a sealed or
+                # unknown-kind variant, no matter what the evidence-tier
+                # map says for this (category, cohort, horizon).
+                directional_downgrades_by_kind[kind] = directional_downgrades_by_kind.get(kind, 0) + 1
+                tier = "range-only"
+
+            band = _tiered_band(
+                packet_horizons[str(horizon)],
+                horizon_days=horizon,
+                evidence_tier=tier,
+                current_price=current_price,
+            )
+
+            if msrp_entry is not None:
+                msrp_value, in_print = msrp_entry
+                if in_print and float(band["q50"]) < MSRP_FLOOR_FRACTION * msrp_value:
+                    # FA-05: withheld, never clamped upward toward MSRP.
+                    excluded_by_reason["below_msrp_floor"] = (
+                        excluded_by_reason.get("below_msrp_floor", 0) + 1
+                    )
+                    continue
+
+            tiered_horizons[str(horizon)] = band
+            kept_horizons.append(horizon)
+
+        if not tiered_horizons:
+            # Every horizon this packet was otherwise eligible for was
+            # withheld by the MSRP floor above; the per-horizon reason
+            # counters already fully attribute this, so it is not
+            # double-counted under excludedByCohort (that bucket is
+            # reserved for "no eligible cohort", which is not what
+            # happened here).
+            continue
+
+        served_horizons_by_cohort.setdefault(confidence, set()).update(kept_horizons)
+        served_packet = {
+            **packet,
+            "productKind": kind,
+            "horizons": tiered_horizons,
+        }
+        served_packet["medianPath"] = _checkpoint_path(served_packet, tiered_horizons)
+        by_group.setdefault(group_id, []).append(served_packet)
+        last_known_date = packet["lastKnownDate"]
+        if last_known_date is not None:
+            # cold-start packets carry no observed price history, so
+            # lastKnownDate is legitimately null -- exclude, don't
+            # coerce to the string "None" (which would sort ahead of
+            # real ISO dates and corrupt the staleness-rule range).
+            last_known_dates.append(str(last_known_date))
 
     groups_manifest: dict[str, object] = {}
     objects_written = 0
@@ -638,6 +819,13 @@ def publish_category(
         "publishedGroups": sum(1 for g in groups_manifest.values() if g["status"] == "published"),
         "excludedGroups": sum(1 for g in groups_manifest.values() if g["status"] == "excluded"),
         "excludedByCohort": excluded_by_cohort,
+        # FA-02 (anchor_clamp_saturated) + FA-05 (below_msrp_floor) withhold
+        # counts -- distinct root causes from "no eligible cohort", so
+        # tracked separately from excludedByCohort above.
+        "excludedByReason": excluded_by_reason,
+        # FA-03: a directional tier the evidence map assigned was
+        # downgraded to range-only because of this packet's productKind.
+        "directionalDowngradesByKind": directional_downgrades_by_kind,
         "objectsWritten": objects_written,
         "lastKnownDateRange": {
             "earliest": min(last_known_dates) if last_known_dates else None,
@@ -659,6 +847,8 @@ def publish_forecasts(
     category_ids: Sequence[int] | None = None,
     max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES,
     at: datetime | None = None,
+    products_metadata: Mapping[tuple[int, int], Mapping[str, object]] | None = None,
+    msrp_path: Path | None = None,
 ) -> dict:
     """Full T5 publish run: assert community-free-access publication
     rights, load T4's per-horizon evidence labels, then slice every requested
@@ -666,7 +856,16 @@ def publish_forecasts(
     (and writes to staging_root/forecasts/manifest.json) the combined
     manifest: per-category+group counts, the eligibility policy that drove
     inclusion, asOf/modelVersion, per-object contentHash, and this
-    generation's receipt."""
+    generation's receipt.
+
+    ``products_metadata`` (FA-03) is the same ``{(categoryId, productId):
+    {"card_number", "rarity"}}`` mapping ``classify_product_kind`` consumes
+    -- ``None`` (the default; e.g. no ``--products-cache`` at the CLI)
+    means every packet classifies "unknown", the safe default under which
+    the kind gate withholds direction everywhere. ``msrp_path`` (FA-05) is
+    optional and loaded via ``load_msrp_table_if_present`` -- a missing
+    path is an exact no-op, never an error, since the MSRP gate is purely
+    additive."""
 
     instant = at or datetime.now(timezone.utc)
     terms = load_source_terms(Path(source_terms_path))
@@ -675,6 +874,7 @@ def publish_forecasts(
     serving_eligibility = load_serving_eligibility(Path(evaluation_summary_path))
     serving_eligibility_by_horizon = load_serving_eligibility_by_horizon(Path(evaluation_summary_path))
     evidence_tiers_by_horizon = load_evidence_tiers_by_horizon(Path(evaluation_summary_path))
+    msrp_table = load_msrp_table_if_present(msrp_path)
 
     packets_dir = Path(packets_dir)
     if category_ids is None:
@@ -697,6 +897,8 @@ def publish_forecasts(
                 max_object_bytes=max_object_bytes,
                 serving_eligibility_by_horizon=serving_eligibility_by_horizon,
                 evidence_tiers_by_horizon=evidence_tiers_by_horizon,
+                products_metadata=products_metadata,
+                msrp_table=msrp_table,
             )
         )
 

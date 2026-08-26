@@ -689,13 +689,56 @@ def hedonic_blend_anchor_log(
     number.
     """
 
-    if n_i >= MIN_HISTORY_FOR_STANDARD:
+    raw_shift = _hedonic_blend_raw_shift(own_log, hedonic_pred, n_i)
+    if raw_shift is None:
         return own_log
-
-    weight = hedonic_level_weight(n_i)
-    raw_shift = (1.0 - weight) * (hedonic_pred - own_log)
     clamped_shift = max(-max_abs_shift, min(max_abs_shift, raw_shift))
     return own_log + clamped_shift
+
+
+def _hedonic_blend_raw_shift(own_log: float, hedonic_pred: float, n_i: int) -> float | None:
+    """The unclamped log-space shift ``hedonic_blend_anchor_log`` would
+    apply, or ``None`` at/above ``MIN_HISTORY_FOR_STANDARD`` (no blend runs
+    at all there -- see that function's docstring). Factored out so the
+    clamp itself and the FA-02 saturation check
+    (``hedonic_anchor_clamp_saturated``) share one formula instead of two
+    copies that could silently drift apart.
+    """
+
+    if n_i >= MIN_HISTORY_FOR_STANDARD:
+        return None
+    weight = hedonic_level_weight(n_i)
+    return (1.0 - weight) * (hedonic_pred - own_log)
+
+
+def hedonic_anchor_clamp_saturated(
+    own_log: float,
+    hedonic_pred: float,
+    n_i: int,
+    *,
+    max_abs_shift: float = MAX_HEDONIC_BLEND_LOG_SHIFT,
+) -> bool:
+    """FA-02 (forecast audit): True when ``hedonic_blend_anchor_log``'s raw
+    (unclamped) shift for this input exceeds ``max_abs_shift`` -- i.e. the
+    ln(3) clamp actually bound the anchor rather than passing it through
+    untouched. Always False at/above ``MIN_HISTORY_FOR_STANDARD``, where no
+    blend runs at all.
+
+    A saturated shift means the empirical-Bayes weighted blend *wanted* to
+    move the anchor by more than 3x the card's own last-known price before
+    the clamp intervened -- an implausible level jump is evidence the
+    blended anchor itself is untrustworthy, not evidence of a real price
+    move. This function only flags the condition; ``process_category``
+    records the result on the packet row as ``anchorClampSaturated`` (see
+    that field in the emitted row), and ``forecast_publisher.py`` is the
+    fail-closed consumer: a packet flagged here is withheld outright
+    (every horizon), never served with a band centered on this anchor.
+    """
+
+    raw_shift = _hedonic_blend_raw_shift(own_log, hedonic_pred, n_i)
+    if raw_shift is None:
+        return False
+    return abs(raw_shift) > max_abs_shift
 
 
 # ---------------------------------------------------------------------------
@@ -996,6 +1039,11 @@ def process_category(
                 confidence = "cold-start"
                 last_known_date_out: str | None = None
                 last_known_price_out: float | None = None
+                # Cold start never goes through hedonic_blend_anchor_log
+                # (there is no own_log to blend against -- the hedonic
+                # prediction *is* the anchor), so the FA-02 clamp never
+                # applies here.
+                anchor_clamp_saturated = False
             else:
                 origin_index = li
                 origin_date = dates[li]
@@ -1018,8 +1066,17 @@ def process_category(
                     # the blend only ever runs below that threshold, where
                     # packets are cold-start/low-history only.
                     anchor_log = hedonic_blend_anchor_log(own_log, hedonic_pred, n_i)
+                    # FA-02: flag when the clamp above actually bound the
+                    # blend (the unclamped shift wanted to move the anchor
+                    # by more than the ln(3) cap) -- see
+                    # hedonic_anchor_clamp_saturated's docstring.
+                    # forecast_publisher.py withholds any packet carrying
+                    # this flag rather than serve a band centered on an
+                    # anchor that saturated the plausibility clamp.
+                    anchor_clamp_saturated = hedonic_anchor_clamp_saturated(own_log, hedonic_pred, n_i)
                 else:
                     anchor_log = own_log
+                    anchor_clamp_saturated = False
                 mad_for_band = mad_i if (not isnan(mad_i) and mad_i >= VOLATILITY_FLOOR) else fallback_mad
                 bucket = volatility_bucket(mad_i, low_cut, high_cut)
                 band_widen = 1.0
@@ -1106,6 +1163,11 @@ def process_category(
                 "confidence": confidence,
                 "volatilityBucket": bucket,
                 "sampleSize": n_i,
+                # FA-02: True when the hedonic level-blend anchor's raw
+                # shift saturated the ln(3) plausibility clamp (see
+                # hedonic_anchor_clamp_saturated). forecast_publisher.py
+                # withholds every horizon on a packet carrying this flag.
+                "anchorClampSaturated": anchor_clamp_saturated,
                 "horizons": horizons_out,
                 "medianPath": path_points,
             }

@@ -165,6 +165,108 @@ PRODUCT_KIND_IDS: tuple[str, ...] = ("single", "sealed", "unknown")
 
 
 # ---------------------------------------------------------------------------
+# Product format (FA-04): a productFormat categorical feature that splits
+# the single "sealed" productKind dummy into its real sub-classes.
+#
+# The defect this fixes: one productKind=="sealed" dummy is asked to
+# represent everything from a single loose pack to a full sealed case (a
+# ~100x price spread), and the hedonic level anchor (groupLogPriceMedian)
+# is a singles-dominated group median in every group that mixes singles and
+# sealed product. Together those saturate the anchor clamp downward for
+# premium sealed items (a case gets anchored near a pack's price level) and
+# center attribute-reference ranges far below market. This feature gives
+# the design matrix a real per-format dummy so the regression can learn a
+# case is not a tin; groupSealedLogPriceMedian (below) gives it a sealed-
+# only price level to anchor against instead of the singles-dominated one.
+# ---------------------------------------------------------------------------
+
+#: Stable, finite vocabulary for the hedonic design matrix's productFormat
+#: one-hot block. "single" and "unknown" are not sealed sub-formats -- they
+#: are the non-sealed/metadata-absent short-circuits product_format()
+#: returns before ever consulting the keyword rules below.
+PRODUCT_FORMAT_IDS: tuple[str, ...] = (
+    "single", "case", "elite-trainer-box", "booster-box", "bundle-collection-box",
+    "tin", "deck", "pack", "sealed-other", "unknown",
+)
+
+#: Keyword rules for classifying a SEALED product's name into a format
+#: level, aligned with sealed.py's PRODUCT_TYPES taxonomy (loose_pack,
+#: booster_box, booster_bundle, elite_trainer_box, collection_box, tin,
+#: other) plus "case" and "deck", per the T4 brief. All patterns are
+#: case-insensitive and use word boundaries so e.g. "packs" or "decks"
+#: still match but "unpack" or "decked" do not.
+#:
+#: Priority order (checked top to bottom, first match wins), NOT a literal
+#: longest-matched-substring comparison -- and that is a deliberate,
+#: verified deviation from a naive reading of "longest-match-wins":
+#: "case" is checked FIRST, unconditionally, ahead of every other rule.
+#: The brief's own worked examples prove a literal longest-substring
+#: algorithm cannot produce the required answer: in "Destined Rivals
+#: Booster Box Case" the "booster box" match (11 characters) is textually
+#: LONGER than the "case" match (4 characters), yet the required
+#: classification is "case", not "booster-box". The only self-consistent
+#: reading is a priority/tier order -- a "case" is a bulk unit of many
+#: boxes/tins/etc. and is genuinely the "longest" (highest-price,
+#: outermost) sealed container tier, so it outranks whatever smaller
+#: container word also happens to appear in the same name. Verified
+#: against both of the brief's live examples plus "Paldean Fates Tin
+#: Case" -> "case", not "tin" (see ProductFormatTests).
+_SEALED_FORMAT_RULES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("case", re.compile(r"\bcases?\b", re.IGNORECASE)),
+    (
+        "elite-trainer-box",
+        re.compile(r"\belite\s+trainer\s+box(?:es)?\b|\betbs?\b", re.IGNORECASE),
+    ),
+    ("booster-box", re.compile(r"\bbooster\s+box(?:es)?\b", re.IGNORECASE)),
+    (
+        "bundle-collection-box",
+        re.compile(
+            r"\bbooster\s+bundle\b|\bbundle(?:s)?\b|\bcollection\s+box(?:es)?\b|"
+            r"\bcollector'?s?\s+box(?:es)?\b|\bgift\s+(?:set|box)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("tin", re.compile(r"\btins?\b", re.IGNORECASE)),
+    (
+        "deck",
+        re.compile(
+            r"\bdecks?\b|\bstarter\b|\bstructure\s+deck\b|\btheme\s+deck\b|"
+            r"\bbattle\s+deck\b|\bchallenger\s+deck\b|\bpreconstructed\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("pack", re.compile(r"\bpacks?\b|\bbooster(?:s)?\b", re.IGNORECASE)),
+)
+
+
+def product_format(name: str | None, kind: str) -> str:
+    """FA-04 productFormat classifier: sub-classify a "sealed" productKind.
+
+    Deterministic and pure. ``kind`` (from ``product_kind()``/
+    ``PRODUCT_KIND_IDS``) short-circuits the two non-sealed cases first:
+    every single gets "single" regardless of name (subdividing singles by
+    name is out of scope here), and "unknown" (metadata never fetched for
+    this product at all) stays "unknown" rather than guessing from an
+    absent name. Only ``kind == "sealed"`` consults ``_SEALED_FORMAT_RULES``
+    against ``name``; a sealed product whose name matches none of them (or
+    whose name is missing/empty, e.g. an older cached products-metadata
+    entry fetched before this feature persisted ``name`` -- see
+    ``load_or_fetch_products_metadata``) gets "sealed-other", per the T4
+    brief, rather than being silently dropped or misclassified.
+    """
+
+    if kind == "unknown":
+        return "unknown"
+    if kind != "sealed":
+        return "single"
+    haystack = name or ""
+    for format_id, pattern in _SEALED_FORMAT_RULES:
+        if pattern.search(haystack):
+            return format_id
+    return "sealed-other"
+
+
+# ---------------------------------------------------------------------------
 # Products metadata fetch (community-free-access)
 # ---------------------------------------------------------------------------
 
@@ -317,16 +419,26 @@ def load_or_fetch_products_metadata(
                     except Exception:  # noqa: BLE001 -- one malformed product must not abort the pass
                         continue
                     key = (int(normalized["category_id"]), int(normalized["product_id"]))
-                    # Persist only the fields this feature actually consumes
-                    # (card_number, rarity) plus enough identity/hash for
-                    # receipts -- deliberately dropping normalize_product's
-                    # name/description/extendedData to keep the cache small
-                    # and to avoid retaining more provider content than this
-                    # feature needs (PRD Sec1 source-rights minimalism).
+                    # Persist the fields this module's features actually
+                    # consume (card_number, rarity, and -- FA-04 -- name,
+                    # needed to classify a sealed product's productFormat
+                    # from its own listing title) plus enough identity/hash
+                    # for receipts -- still deliberately dropping
+                    # normalize_product's description/extendedData/cleanName
+                    # to avoid retaining more provider content than these
+                    # features need (PRD Sec1 source-rights minimalism).
+                    # ``name`` is the same public listing title already
+                    # rendered on TCGCSV/TCGplayer product pages, not new
+                    # exposure. Additive vs. the pre-FA-04 cache schema: an
+                    # older cache file fetched before this change simply has
+                    # no "name" key per product, and every reader here
+                    # already treats a missing/falsy field as an honest
+                    # "unknown"/"sealed-other", never an error.
                     products[key] = {
                         "category_id": normalized["category_id"],
                         "group_id": normalized["group_id"],
                         "product_id": normalized["product_id"],
+                        "name": normalized["name"],
                         "card_number": normalized["card_number"],
                         "rarity": normalized["rarity"],
                         "card_type": normalized["card_type"],
@@ -376,7 +488,14 @@ def load_or_fetch_products_metadata(
 #: ablation's literal two-feature naming (see hedonic.fit_video_model_v0_ablation),
 #: and including both would make the main model's design matrix trivially
 #: collinear in that one column pair for no modeling benefit.
-MAIN_MODEL_CONTINUOUS_FIELDS = ("releaseAgeWeeks", "groupLogPriceMedian", "scarcityProxy")
+#: "groupSealedLogPriceMedian" (FA-04) is additive to, not a replacement
+#: for, "groupLogPriceMedian": the regression gets to see both the group's
+#: overall (singles-dominated) price level and its sealed-only price level,
+#: and productFormat/productKind dummies let it learn which one each row's
+#: format actually tracks.
+MAIN_MODEL_CONTINUOUS_FIELDS = (
+    "releaseAgeWeeks", "groupLogPriceMedian", "groupSealedLogPriceMedian", "scarcityProxy",
+)
 
 #: Continuous fields used by the video_model_v0 ablation fit, matching its
 #: original two-feature form (pull_cost, desirability) -- see
@@ -436,6 +555,59 @@ def _group_log_price_features(variant_group: Sequence[int], log_price: Sequence[
     return out
 
 
+def _group_sealed_log_price_features(
+    variant_group: Sequence[int],
+    log_price: Sequence[float],
+    is_sealed: Sequence[bool],
+    group_wide_median: Sequence[float],
+) -> list[float]:
+    """FA-04: leave-one-out group median log-price across SEALED variants only.
+
+    Mirrors ``_group_log_price_features``'s leave-one-out anti-leakage
+    construction (a priced variant never sees its own price folded into its
+    own feature value), restricted to ``productKind == "sealed"`` variants
+    with a known price. The plain (all-kinds) ``groupLogPriceMedian`` is
+    singles-dominated in every group that mixes singles and sealed product
+    -- exactly what saturates the hedonic anchor downward for premium
+    sealed items (see this module's productFormat section docstring). This
+    feature isolates the sealed price *level* instead.
+
+    Falls back to ``group_wide_median[i]`` (the caller's already-computed
+    all-kinds group median) for any variant whose group has fewer than two
+    priced sealed variants: below that a sealed-only leave-one-out estimate
+    is either undefined (zero priced sealed variants in the group -- the
+    documented fallback case per the T4 brief) or would trivially leak the
+    lone sealed price back to itself (exactly one). A non-sealed variant in
+    a group that DOES have >=2 priced sealed variants still gets that
+    group's real sealed-only median -- it is never that variant's own
+    price, so there is no leakage risk there.
+    """
+
+    members_by_group: dict[int, list[int]] = {}
+    for i, g in enumerate(variant_group):
+        members_by_group.setdefault(g, []).append(i)
+
+    by_group_sealed: dict[int, list[int]] = {}
+    for i, g in enumerate(variant_group):
+        if is_sealed[i] and not isnan(log_price[i]):
+            by_group_sealed.setdefault(g, []).append(i)
+
+    out = list(group_wide_median)
+    for g, sealed_indices in by_group_sealed.items():
+        if len(sealed_indices) < 2:
+            continue
+        values = [log_price[j] for j in sealed_indices]
+        sealed_set = set(sealed_indices)
+        plain_median = median(values)
+        for local_pos, i in enumerate(sealed_indices):
+            others = values[:local_pos] + values[local_pos + 1:]
+            out[i] = median(others)
+        for i in members_by_group[g]:
+            if i not in sealed_set:
+                out[i] = plain_median
+    return out
+
+
 def build_category_feature_rows(
     panel_dir: Path,
     category_id: int,
@@ -460,18 +632,32 @@ def build_category_feature_rows(
 
     log_price: list[float] = [float("nan")] * len(ordered_keys)
     has_history: list[bool] = [False] * len(ordered_keys)
-    for (_key, idx) in ordered_keys:
+    # FA-04: productKind/name resolved up front (per-product lookups that
+    # do not depend on groups_metadata) so the sealed-only group median
+    # feature below can be computed before the main per-variant loop runs.
+    kind_by_idx: list[str] = ["unknown"] * len(ordered_keys)
+    name_by_idx: list[object] = [None] * len(ordered_keys)
+    for (product_id, _subtype), idx in ordered_keys:
         found = last_known(prices[idx])
         if found is not None:
             _t, price = found
             log_price[idx] = log(price)
             has_history[idx] = True
+        product_meta = (products_metadata or {}).get((category_id, product_id))
+        card_number = product_meta.get("card_number") if product_meta else None
+        rarity = product_meta.get("rarity") if product_meta else None
+        kind_by_idx[idx] = product_kind(card_number, rarity) if product_meta is not None else "unknown"
+        name_by_idx[idx] = product_meta.get("name") if product_meta else None
+    is_sealed = [k == "sealed" for k in kind_by_idx]
 
     group_counts: dict[int, int] = {}
     for g in variant_group:
         group_counts[g] = group_counts.get(g, 0) + 1
 
     group_median_feature = _group_log_price_features(variant_group, log_price)
+    group_sealed_median_feature = _group_sealed_log_price_features(
+        variant_group, log_price, is_sealed, group_median_feature,
+    )
 
     known_ages = []
     for (_pid, _sub), idx in ordered_keys:
@@ -498,26 +684,30 @@ def build_category_feature_rows(
         release_age = float(age) if age is not None else fallback_age
 
         product_meta = (products_metadata or {}).get((category_id, product_id))
-        card_number = product_meta.get("card_number") if product_meta else None
         rarity = product_meta.get("rarity") if product_meta else None
         if rarity:
             rarity_known += 1
         # "unknown" (not product_kind()'s "sealed") when metadata was never
         # fetched for this product at all -- a genuinely sealed product and
         # a single with merely-missing metadata must not collapse into the
-        # same bucket (see PRODUCT_KIND_IDS docstring).
-        kind = product_kind(card_number, rarity) if product_meta is not None else "unknown"
+        # same bucket (see PRODUCT_KIND_IDS docstring). Computed above
+        # (kind_by_idx/name_by_idx) so it is available to the sealed-only
+        # group median feature; reused here rather than recomputed.
+        kind = kind_by_idx[idx]
+        fmt = product_format(name_by_idx[idx], kind)
 
         scarcity = structural_scarcity_proxy(group_counts.get(group_id, 1))
         categorical = {
             "setFamily": set_family(str(group_name) if group_name else None, is_supplemental),
             "productKind": kind,
+            "productFormat": fmt,
             "finish": subtype or "unknown",
             "rarity": rarity or "unknown",
         }
         continuous = {
             "releaseAgeWeeks": release_age,
             "groupLogPriceMedian": group_median_feature[idx],
+            "groupSealedLogPriceMedian": group_sealed_median_feature[idx],
             "scarcityProxy": scarcity,
             "desirabilityProxy": release_age,
         }
@@ -595,17 +785,34 @@ def cold_start_candidates(
     priced_product_ids = {product_id for product_id, _subtype in variant_index}
 
     log_price: list[float] = [float("nan")] * len(variant_index)
-    for (_key, idx) in variant_index.items():
+    is_sealed: list[bool] = [False] * len(variant_index)
+    for (priced_product_id, _subtype), idx in variant_index.items():
         found = last_known(prices[idx])
         if found is not None:
             _t, price = found
             log_price[idx] = log(price)
+        # FA-04: kind of the (already-priced) variant itself, needed for
+        # the sealed-only group median feature below -- products_metadata
+        # is guaranteed non-empty here (see the early return above).
+        priced_meta = products_metadata.get((category_id, priced_product_id))
+        priced_kind = (
+            product_kind(priced_meta.get("card_number"), priced_meta.get("rarity"))
+            if priced_meta is not None else "unknown"
+        )
+        is_sealed[idx] = priced_kind == "sealed"
     group_counts: dict[int, int] = {}
     for g in variant_group:
         group_counts[g] = group_counts.get(g, 0) + 1
+    group_wide_feature = _group_log_price_features(variant_group, log_price)
     group_median_by_group: dict[int, float] = {}
-    for group_median, g in zip(_group_log_price_features(variant_group, log_price), variant_group):
+    for group_median, g in zip(group_wide_feature, variant_group):
         group_median_by_group.setdefault(g, group_median)
+    group_sealed_feature = _group_sealed_log_price_features(
+        variant_group, log_price, is_sealed, group_wide_feature,
+    )
+    group_sealed_median_by_group: dict[int, float] = {}
+    for group_sealed_median, g in zip(group_sealed_feature, variant_group):
+        group_sealed_median_by_group.setdefault(g, group_sealed_median)
     category_priced = [lp for lp in log_price if not isnan(lp)]
     category_fallback = median(category_priced) if category_priced else 0.0
 
@@ -630,16 +837,19 @@ def cold_start_candidates(
         card_number = meta.get("card_number")
         rarity = meta.get("rarity")
         kind = product_kind(card_number, rarity)
+        fmt = product_format(meta.get("name"), kind)
         scarcity = structural_scarcity_proxy(group_counts.get(group_id, 1))
         categorical = {
             "setFamily": set_family(str(group_name) if group_name else None, is_supplemental),
             "productKind": kind,
+            "productFormat": fmt,
             "finish": COLD_START_DEFAULT_SUBTYPE,
             "rarity": rarity or "unknown",
         }
         continuous = {
             "releaseAgeWeeks": release_age,
             "groupLogPriceMedian": group_median_by_group.get(group_id, category_fallback),
+            "groupSealedLogPriceMedian": group_sealed_median_by_group.get(group_id, category_fallback),
             "scarcityProxy": scarcity,
             "desirabilityProxy": release_age,
         }

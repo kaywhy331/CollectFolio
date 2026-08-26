@@ -303,6 +303,18 @@ class HedonicFitMetrics:
     holdout_rmse: float
     holdout_r2: float
     folds_used_fallback: tuple[int, ...]
+    #: FA-04 sealed-slice validation: held-out MAE (log-price space) and
+    #: covered-row count, broken out by each row's ``FeatureRow.categorical
+    #: ["productKind"]`` (typically "single"/"sealed"/"unknown" -- see
+    #: hedonic_features.PRODUCT_KIND_IDS, though this reads whatever value
+    #: is actually present, so it degrades gracefully if a caller's rows
+    #: use a different vocabulary or omit the field entirely -- everything
+    #: then buckets under "unknown"). Existing top-level metric keys above
+    #: are unchanged; this is a pure addition so every future hedonic fit
+    #: receipt shows whether the sealed slice specifically improved,
+    #: instead of only a single pooled (mostly-singles-dominated) RMSE/R^2.
+    holdout_mae_by_kind: Mapping[str, float]
+    holdout_covered_by_kind: Mapping[str, int]
 
     def as_receipt_dict(self) -> dict[str, object]:
         return {
@@ -314,6 +326,11 @@ class HedonicFitMetrics:
             "holdoutRmse": None if isnan(self.holdout_rmse) else round(self.holdout_rmse, 6),
             "holdoutR2": None if isnan(self.holdout_r2) else round(self.holdout_r2, 6),
             "foldsUsedFallback": list(self.folds_used_fallback),
+            "holdoutMaeByKind": {
+                kind: (None if isnan(value) else round(value, 6))
+                for kind, value in sorted(self.holdout_mae_by_kind.items())
+            },
+            "holdoutCoveredByKind": dict(sorted(self.holdout_covered_by_kind.items())),
         }
 
 
@@ -328,6 +345,12 @@ def _rmse_r2(pairs: Sequence[tuple[float, float]]) -> tuple[float, float]:
     ss_res = sum((yt - yp) ** 2 for yt, yp in pairs)
     r2 = float("nan") if ss_tot <= 0 else 1.0 - (ss_res / ss_tot)
     return rmse, r2
+
+
+def _mae(pairs: Sequence[tuple[float, float]]) -> float:
+    if not pairs:
+        return float("nan")
+    return sum(abs(yt - yp) for yt, yp in pairs) / len(pairs)
 
 
 def cross_validate_holdout_sets(
@@ -371,6 +394,22 @@ def cross_validate_holdout_sets(
 
     pairs = [(y[i], y_pred_oof[i]) for i in range(len(rows)) if not isnan(y_pred_oof[i])]
     rmse, r2 = _rmse_r2(pairs)
+
+    # FA-04 sealed-slice validation: bucket the same out-of-fold pairs by
+    # each row's raw "productKind" ingredient (present regardless of
+    # whether this fit's categorical_fields actually included productKind
+    # in the design matrix -- FeatureRow.categorical always carries it when
+    # the caller is hedonic_features.py). A row with no such key, or an
+    # empty/falsy value, buckets under "unknown" rather than being dropped.
+    kind_pairs: dict[str, list[tuple[float, float]]] = {}
+    for i in range(len(rows)):
+        if isnan(y_pred_oof[i]):
+            continue
+        kind = rows[i].categorical.get("productKind") or "unknown"
+        kind_pairs.setdefault(kind, []).append((y[i], y_pred_oof[i]))
+    holdout_mae_by_kind = {kind: _mae(kp) for kind, kp in kind_pairs.items()}
+    holdout_covered_by_kind = {kind: len(kp) for kind, kp in kind_pairs.items()}
+
     return HedonicFitMetrics(
         n_folds=effective_folds,
         n_observations=len(rows),
@@ -380,6 +419,8 @@ def cross_validate_holdout_sets(
         holdout_rmse=rmse,
         holdout_r2=r2,
         folds_used_fallback=tuple(fallback_folds),
+        holdout_mae_by_kind=holdout_mae_by_kind,
+        holdout_covered_by_kind=holdout_covered_by_kind,
     )
 
 

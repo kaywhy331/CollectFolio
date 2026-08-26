@@ -18,6 +18,17 @@ import { UNKNOWN } from '../core/copy.js';
 // stays a pure render function either way; app.js owns all the open/close/
 // resize/history plumbing.
 
+// FA-07/FA-08: a defensive ISO-date-prefix reader for the fine-print
+// published date, sourced from network state (packet.asOf / manifest.asOf /
+// groupAsOf). Deliberately string-only -- no Date parsing/Intl formatting --
+// so a date-only value never gets reinterpreted through the viewer's local
+// timezone (see the matching helper/comment in price-intelligence-detail.js).
+// Malformed input resolves to '' so callers can omit the line.
+function isoDatePrefix(value) {
+  const text = String(value || '');
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
+}
+
 // 0.8.17: compact bar chart for the panel -- fewer bars, tighter height
 // (see core/history-chart.js's `compact` option). Same fail-closed rule
 // as the full detail page: no published history object -> no chart, and
@@ -86,7 +97,11 @@ function outlookSummary({ intelligence, item, state, localScenario }) {
       .map((horizon) => [horizon, packet.horizons?.[String(horizon)]])
       .filter(([, band]) => band)
       .map(([horizon, band]) => `${horizon}d ${escapeHTML(formatCurrency(band.q10, currency))}–${escapeHTML(formatCurrency(band.q90, currency))}`);
-    if (bands.length) return `<div class="inspector-stat forecast"><span>Market outlook</span><strong>${bands.join(' · ')}</strong><small>80% range</small></div>`;
+    // FA-07/FA-08: same published-date fine print as the full detail page's
+    // trajectorySection, read from whichever field the entry carries.
+    // RULE-5: no field present means the clause is simply omitted.
+    const publishedDateText = isoDatePrefix(packet.asOf || trajectoryEntry.manifest?.asOf || trajectoryEntry.groupAsOf);
+    if (bands.length) return `<div class="inspector-stat forecast"><span>Market outlook</span><strong>${bands.join(' · ')}</strong><small>80% range${publishedDateText ? ` · Forecast published ${escapeHTML(publishedDateText)}` : ''}</small></div>`;
   }
   if (['early', 'limited', 'available'].includes(localScenario?.status)) {
     const evidence = localScenario.status === 'available' ? 'Moderate evidence' : 'Limited evidence';

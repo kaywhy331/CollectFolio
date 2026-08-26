@@ -26,6 +26,7 @@ from collectfolio_analytics.trajectory import (
     empirical_quantile,
     fit_damped_trend,
     fit_theta_drift,
+    hedonic_anchor_clamp_saturated,
     hedonic_blend_anchor_log,
     horizon_steps_for,
     horizon_actual_days_for,
@@ -707,6 +708,83 @@ class HedonicHighNInvarianceTests(unittest.TestCase):
         self.assertEqual(result_implicit.content_hash, result_explicit.content_hash)
 
 
+class AnchorClampSaturatedPacketFieldTests(unittest.TestCase):
+    """FA-02: process_category records anchorClampSaturated on every row,
+    True exactly where hedonic_anchor_clamp_saturated would say so for
+    that row's own_log/hedonic_pred/n_i."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.panel_dir = Path(self.tmp.name) / "panel"
+        self.category_id = 8300
+        # Short history (3 weekly dates) keeps every variant's sampleSize
+        # well under MIN_HISTORY_FOR_STANDARD=8, so the hedonic blend (and
+        # therefore the clamp) actually runs for all of them.
+        self.dates, self.groups_metadata = _build_synthetic_panel(
+            self.panel_dir, self.category_id, n_dates=3,
+        )
+        self.index_set = build_indices(self.panel_dir, [self.category_id])
+        self.curve = build_lifecycle_curve(self.index_set, self.groups_metadata)
+        self.out_dir = Path(self.tmp.name) / "out"
+
+    def _rows(self, **kwargs):
+        result = process_category(
+            self.panel_dir, self.category_id, self.index_set, self.curve,
+            self.groups_metadata, self.out_dir, **kwargs,
+        )
+        with gzip.open(result.output_path, "rt", encoding="utf-8") as handle:
+            return {
+                (row["productId"], row["subTypeName"]): row for row in (json.loads(line) for line in handle)
+            }
+
+    def test_no_hedonic_input_never_saturates(self):
+        rows = self._rows()
+        self.assertGreater(len(rows), 0)
+        for row in rows.values():
+            self.assertFalse(row["anchorClampSaturated"])
+
+    def test_extreme_offset_flags_only_the_targeted_variant(self):
+        baseline = self._rows()
+        target_key, target_row = next(iter(baseline.items()))
+        self.assertLess(target_row["sampleSize"], MIN_HISTORY_FOR_STANDARD)
+        own_log = math.log(target_row["lastKnownPrice"])
+        # Five natural-log units below own price (~150x) saturates the
+        # ln(3) cap regardless of exactly how small n_i is.
+        hedonic_log_price = {target_key: own_log - 5.0}
+
+        rows = self._rows(hedonic_log_price=hedonic_log_price)
+        self.assertTrue(rows[target_key]["anchorClampSaturated"])
+        for key, row in rows.items():
+            if key != target_key:
+                self.assertFalse(row["anchorClampSaturated"], key)
+
+    def test_modest_offset_within_cap_does_not_saturate(self):
+        baseline = self._rows()
+        target_key, target_row = next(iter(baseline.items()))
+        own_log = math.log(target_row["lastKnownPrice"])
+        # A 20%-off hedonic prior is a plausible model residual, not an
+        # implausible level jump -- must not saturate the clamp.
+        hedonic_log_price = {target_key: own_log + math.log(1.2)}
+
+        rows = self._rows(hedonic_log_price=hedonic_log_price)
+        self.assertFalse(rows[target_key]["anchorClampSaturated"])
+
+    def test_cold_start_packet_is_never_flagged_saturated(self):
+        cold_key = (999002, "Normal")
+        result = process_category(
+            self.panel_dir, self.category_id, self.index_set, self.curve,
+            self.groups_metadata, self.out_dir,
+            cold_start_variants={cold_key: 101},
+            hedonic_log_price={cold_key: math.log(12.5)},
+        )
+        with gzip.open(result.output_path, "rt", encoding="utf-8") as handle:
+            rows = [json.loads(line) for line in handle]
+        cold_row = next(r for r in rows if (r["productId"], r["subTypeName"]) == cold_key)
+        self.assertEqual(cold_row["confidence"], "cold-start")
+        self.assertFalse(cold_row["anchorClampSaturated"])
+
+
 _STATE_DIR = Path(__file__).resolve().parents[2] / "analytics" / "data" / "trajectory"
 
 
@@ -742,9 +820,18 @@ class RealCategory85TrajectoryV11RegressionTests(unittest.TestCase):
     a regression. Prices/bands are unaffected by this change (it only
     downgrades a tier), so this is still a meaningful reproducibility pin
     on prices+bands going forward, just anchored to the post-T4 baseline.
+
+    FA-02 note: the pinned hash below was updated again (from
+    ``d97bc0f0bd8e48cc5a421ae8f655716cb71541b2ae8829dcc1a404bef8aeae90``)
+    because every row now carries a new ``anchorClampSaturated`` field (see
+    ``hedonic_anchor_clamp_saturated``/``process_category``'s row dict).
+    Verified locally against this same cached category-85 panel: 0 of
+    32,365 rows are actually flagged True (real data), so this update is a
+    pure schema-addition hash shift, not a change in any served price,
+    band, or confidence tier.
     """
 
-    COMMITTED_V11_HASH = "d97bc0f0bd8e48cc5a421ae8f655716cb71541b2ae8829dcc1a404bef8aeae90"
+    COMMITTED_V11_HASH = "aa13de9f46de33604b572fa8bab7bad08d2031f3b9b582373aeff0694710b3fa"
 
     def test_reproduces_trajectory_v11_content_hash(self):
         from collectfolio_analytics.trajectory_cli import _load_shared_inputs
@@ -913,6 +1000,56 @@ class HedonicBlendAnchorCapTests(unittest.TestCase):
         weight = n_i / (n_i + 8.0)  # N0_HEDONIC
         raw_shift = (1.0 - weight) * (hedonic_pred - own_log)
         self.assertLess(raw_shift, -MAX_HEDONIC_BLEND_LOG_SHIFT)
+
+
+class HedonicAnchorClampSaturatedTests(unittest.TestCase):
+    """FA-02: hedonic_anchor_clamp_saturated flags exactly the inputs whose
+    raw (unclamped) shift exceeds the ln(3) cap -- the same condition
+    hedonic_blend_anchor_log clamps against, exposed standalone so
+    forecast_publisher.py's withhold decision can be driven from the
+    packet field alone."""
+
+    def test_within_cap_shift_is_not_saturated(self):
+        own_log = math.log(100.0)
+        hedonic_pred = math.log(120.0)
+        self.assertFalse(hedonic_anchor_clamp_saturated(own_log, hedonic_pred, n_i=4))
+
+    def test_extreme_low_n_shift_is_saturated(self):
+        own_log = math.log(81421.0)
+        hedonic_pred = math.log(100.0)
+        self.assertTrue(hedonic_anchor_clamp_saturated(own_log, hedonic_pred, n_i=0))
+
+    def test_saturation_is_symmetric(self):
+        own_log = math.log(100.0)
+        hedonic_pred = math.log(100_000.0)
+        self.assertTrue(hedonic_anchor_clamp_saturated(own_log, hedonic_pred, n_i=0))
+
+    def test_high_n_never_saturates_regardless_of_offset(self):
+        own_log = math.log(100.0)
+        extreme_hedonic_pred = math.log(100_000.0)
+        for n_i in (MIN_HISTORY_FOR_STANDARD, MIN_HISTORY_FOR_STANDARD + 1, 50, 100_000):
+            self.assertFalse(hedonic_anchor_clamp_saturated(own_log, extreme_hedonic_pred, n_i))
+
+    def test_incident_shape_is_flagged_saturated(self):
+        # Same fixture as HedonicBlendAnchorCapTests's incident-shape test:
+        # n_i=10 is above MIN_HISTORY_FOR_STANDARD, so no blend runs at all
+        # and this must NOT be flagged -- confirms the helper mirrors
+        # hedonic_blend_anchor_log's early-return exactly rather than
+        # naively comparing prices regardless of n_i.
+        own_log = math.log(1196.63)
+        hedonic_pred = math.log(30.0)
+        self.assertFalse(hedonic_anchor_clamp_saturated(own_log, hedonic_pred, n_i=10))
+        # But one below that threshold, the same wide gap does saturate.
+        self.assertTrue(hedonic_anchor_clamp_saturated(own_log, hedonic_pred, n_i=MIN_HISTORY_FOR_STANDARD - 1))
+
+    def test_boundary_shift_exactly_at_cap_is_not_saturated(self):
+        # abs(raw_shift) > max_abs_shift is strict -- exactly at the cap is
+        # "clamp is a no-op", not "clamp saturated".
+        own_log = 0.0
+        n_i = 0
+        weight = 0.0  # hedonic_level_weight(0) == 0
+        hedonic_pred = MAX_HEDONIC_BLEND_LOG_SHIFT  # raw_shift == max_abs_shift exactly
+        self.assertFalse(hedonic_anchor_clamp_saturated(own_log, hedonic_pred, n_i))
 
 
 class ComponentWeightsApplicationTests(unittest.TestCase):

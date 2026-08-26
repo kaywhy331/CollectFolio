@@ -208,6 +208,9 @@ test('a legacy packet with only a 90d band renders one conservative range and fa
   assert.doesNotMatch(html, /30-day (?:checkpoint|price range)/);
   assert.doesNotMatch(html, /60-day (?:checkpoint|price range)/);
   assert.match(html, /Price ranges/);
+  // FA-07/FA-08: the publication fine print reads the manifest's asOf
+  // (the packet itself carries none here) and never shows "not disclosed".
+  assert.match(html, /Forecast published/);
 });
 
 test('trajectory-v1 excluded/unknown packet still shows the honest insufficient-evidence state, not a fabricated horizon', () => {

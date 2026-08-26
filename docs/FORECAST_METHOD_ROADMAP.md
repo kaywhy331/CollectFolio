@@ -225,6 +225,46 @@ venv only); event-flag features (reprint/ban/rotation calendars); drift
 monitoring and adaptive conformal updates via `monitoring.py`; champion/
 challenger per cohort decided by scorecards, never by default.
 
+### Phase 7 — sealed-aware modeling (preregistered)
+Recorded ahead of implementation per the 2026-08-26 forecast audit (finding
+FA-06), under the same preregistration discipline as the coefficient grid in
+Sec 4: each candidate below is a next-phase research direction, not a
+standing capability, and none of it may serve a directional claim until it
+independently clears the existing walk-forward gate (Sec 4, Phase 4
+acceptance criteria). FA-03 already forces every currently served sealed- or
+unknown-kind packet to `range-only` at publish time — a structural
+downgrade, never a promotion — precisely because none of the following
+exists yet.
+
+(a) **Sealed cohort separation** — sealed-only set/category indices (the
+    `m_t`/`g_t`/`s_t` decomposition rerun on a sealed-only panel slice, not
+    weights borrowed from the singles cohort), sealed lifecycle curves
+    (restock/discontinuation regimes differ from a single card's
+    release-age hype decay), sealed conformal calibration pools, and
+    per-kind promotion cells, so a sealed cohort's evidence tier is judged
+    against its own scored blocks, never a singles cohort's.
+
+(b) **Set-EV features for the sealed cohort** — pull-rate-weighted sum of
+    the set's singles prices (`pull_rates.py` pull rates ×
+    `sealed.py`'s `packs_per_product`), EV momentum (the trailing change in
+    that sum), and EV/price ratio (sealed price relative to computed EV) as
+    cross-sectional features for the cold-start hedonic prior and,
+    pending validation, the sealed trajectory itself.
+
+(c) **Per-kind gating earning its way back up** — the publisher already
+    classifies every served variant's `productKind` (single/sealed/unknown)
+    and structurally downgrades sealed/unknown packets out of a directional
+    tier at publish time (FA-03). This phase is what would let a sealed
+    cohort re-qualify for a directional tier on sealed-specific evidence
+    scored under (a) and (b), rather than only ever being downgraded.
+
+Every candidate above requires the standard gate before serving: causal
+non-overlapping origins, the scored set removed from its own coefficient
+selection and conformal calibration, positive aggregate and macro held-out
+lift, the 90% block/set bootstrap floor, and 80% coverage in `[75%, 88%]`.
+Reference: 2026-08-26 forecast audit, findings FA-03 (serving-contract gate,
+already structural) and FA-06 (this preregistration).
+
 ## 6. Risks
 
 - **Archive backlog size** (~1.5 GB/yr compressed, millions of rows/day):

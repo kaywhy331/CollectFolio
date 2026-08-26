@@ -8,11 +8,14 @@ from pathlib import Path
 from collectfolio_analytics.hedonic_features import (
     ColdStartFeatureSet,
     HedonicFeatureError,
+    MAIN_MODEL_CONTINUOUS_FIELDS,
+    PRODUCT_FORMAT_IDS,
     PRODUCT_KIND_IDS,
     SET_FAMILY_IDS,
     cold_start_candidates,
     build_category_feature_rows,
     load_or_fetch_products_metadata,
+    product_format,
     product_kind,
     set_family,
 )
@@ -48,6 +51,74 @@ class ProductKindTests(unittest.TestCase):
 
     def test_ids_tuple_contains_unknown(self):
         self.assertIn("unknown", PRODUCT_KIND_IDS)
+
+
+class ProductFormatTests(unittest.TestCase):
+    def test_single_kind_is_always_single_regardless_of_name(self):
+        self.assertEqual(product_format("Charizard ex", "single"), "single")
+        self.assertEqual(product_format(None, "single"), "single")
+        self.assertEqual(product_format("Booster Box Case", "single"), "single")
+
+    def test_unknown_kind_is_always_unknown_regardless_of_name(self):
+        self.assertEqual(product_format("Elite Trainer Box", "unknown"), "unknown")
+        self.assertEqual(product_format(None, "unknown"), "unknown")
+
+    def test_live_example_elite_trainer_box(self):
+        self.assertEqual(
+            product_format("Black Bolt Pokemon Center Elite Trainer Box", "sealed"),
+            "elite-trainer-box",
+        )
+
+    def test_live_example_tin_case_classifies_as_case_not_tin(self):
+        self.assertEqual(product_format("Paldean Fates Tin Case", "sealed"), "case")
+
+    def test_live_example_booster_box_case_classifies_as_case_not_booster_box(self):
+        self.assertEqual(
+            product_format("Destined Rivals Booster Box Case", "sealed"), "case",
+        )
+
+    def test_plain_booster_box_without_case(self):
+        self.assertEqual(product_format("Scarlet & Violet Booster Box", "sealed"), "booster-box")
+
+    def test_plain_tin_without_case(self):
+        self.assertEqual(product_format("Paldean Fates Tin", "sealed"), "tin")
+
+    def test_loose_pack(self):
+        self.assertEqual(product_format("Destined Rivals Booster Pack", "sealed"), "pack")
+
+    def test_bundle_and_collection_box(self):
+        self.assertEqual(product_format("Scarlet & Violet Booster Bundle", "sealed"), "bundle-collection-box")
+        self.assertEqual(product_format("Charizard Ultra-Premium Collection Box", "sealed"), "bundle-collection-box")
+
+    def test_deck(self):
+        self.assertEqual(product_format("Paldean Fates Battle Deck", "sealed"), "deck")
+
+    def test_unmatched_sealed_name_is_sealed_other(self):
+        self.assertEqual(product_format("Mystery Sealed Product XYZ", "sealed"), "sealed-other")
+
+    def test_missing_name_for_sealed_kind_is_sealed_other(self):
+        self.assertEqual(product_format(None, "sealed"), "sealed-other")
+        self.assertEqual(product_format("", "sealed"), "sealed-other")
+
+    def test_case_insensitive(self):
+        self.assertEqual(product_format("paldean fates TIN case", "sealed"), "case")
+
+    def test_ids_tuple_contains_every_returned_value(self):
+        for name, kind in (
+            ("Black Bolt Pokemon Center Elite Trainer Box", "sealed"),
+            ("Paldean Fates Tin Case", "sealed"),
+            ("Destined Rivals Booster Box Case", "sealed"),
+            ("Scarlet & Violet Booster Box", "sealed"),
+            ("Paldean Fates Tin", "sealed"),
+            ("Destined Rivals Booster Pack", "sealed"),
+            ("Scarlet & Violet Booster Bundle", "sealed"),
+            ("Paldean Fates Battle Deck", "sealed"),
+            ("Mystery Sealed Product XYZ", "sealed"),
+            (None, "sealed"),
+            ("Charizard ex", "single"),
+            (None, "unknown"),
+        ):
+            self.assertIn(product_format(name, kind), PRODUCT_FORMAT_IDS)
 
 
 def _write_panel_file(panel_dir: Path, category_id: int, day: date, rows: list[dict]) -> None:
@@ -118,6 +189,110 @@ class BuildCategoryFeatureRowsTests(unittest.TestCase):
         )
         self.assertTrue(all(row.categorical["setFamily"] == "commander" for row in fs.rows))
 
+    def test_product_format_is_unknown_without_products_metadata(self):
+        fs = build_category_feature_rows(
+            self.panel_dir, self.category_id, self.dates, self.groups_metadata, None, self.dates[-1],
+        )
+        for row in fs.rows:
+            self.assertEqual(row.categorical["productFormat"], "unknown")
+
+    def test_product_format_derived_from_name_when_sealed(self):
+        products_metadata = {
+            (self.category_id, 1): {"card_number": "007", "rarity": "Rare"},
+            (self.category_id, 2): {
+                "card_number": "", "rarity": "", "name": "Some Set Elite Trainer Box",
+            },
+        }
+        fs = build_category_feature_rows(
+            self.panel_dir, self.category_id, self.dates, self.groups_metadata, products_metadata, self.dates[-1],
+        )
+        formats = dict(zip(fs.keys, (row.categorical["productFormat"] for row in fs.rows)))
+        self.assertEqual(formats[(1, "Normal")], "single")
+        self.assertEqual(formats[(2, "Holofoil")], "elite-trainer-box")
+
+    def test_group_sealed_log_price_median_present_in_every_row(self):
+        fs = build_category_feature_rows(
+            self.panel_dir, self.category_id, self.dates, self.groups_metadata, None, self.dates[-1],
+        )
+        for row in fs.rows:
+            self.assertIn("groupSealedLogPriceMedian", row.continuous)
+
+    def test_main_model_continuous_fields_includes_group_sealed_median(self):
+        self.assertIn("groupSealedLogPriceMedian", MAIN_MODEL_CONTINUOUS_FIELDS)
+
+
+class GroupSealedLogPriceMedianTests(unittest.TestCase):
+    """FA-04: sealed-only group median feature, including its fallback."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.panel_dir = Path(self.tmp.name) / "panel"
+        self.category_id = 781
+        self.dates = [date(2025, 1, 5)]
+        _write_panel_file(
+            self.panel_dir, self.category_id, self.dates[0],
+            [
+                # Group 30: one single + two sealed variants (a case and a box).
+                {"groupId": 30, "productId": 1, "subTypeName": "Normal", "price": 10.0},
+                {"groupId": 30, "productId": 2, "subTypeName": "Normal", "price": 100.0},
+                {"groupId": 30, "productId": 3, "subTypeName": "Normal", "price": 200.0},
+                # Group 31: singles only, zero priced sealed variants.
+                {"groupId": 31, "productId": 4, "subTypeName": "Normal", "price": 50.0},
+                {"groupId": 31, "productId": 5, "subTypeName": "Normal", "price": 60.0},
+            ],
+        )
+        self.groups_metadata = {
+            (self.category_id, 30): {"category_id": self.category_id, "group_id": 30, "name": "Some Set"},
+            (self.category_id, 31): {"category_id": self.category_id, "group_id": 31, "name": "Some Set"},
+        }
+        self.products_metadata = {
+            (self.category_id, 1): {"card_number": "001", "rarity": "Common"},
+            (self.category_id, 2): {"card_number": "", "rarity": "", "name": "Set Booster Box"},
+            (self.category_id, 3): {"card_number": "", "rarity": "", "name": "Set Booster Box Case"},
+            (self.category_id, 4): {"card_number": "004", "rarity": "Common"},
+            (self.category_id, 5): {"card_number": "005", "rarity": "Common"},
+        }
+
+    def _feature(self, key):
+        fs = build_category_feature_rows(
+            self.panel_dir, self.category_id, self.dates, self.groups_metadata,
+            self.products_metadata, self.dates[-1],
+        )
+        by_key = dict(zip(fs.keys, fs.rows))
+        return by_key[key].continuous["groupSealedLogPriceMedian"]
+
+    def test_sealed_variant_gets_leave_one_out_sealed_median(self):
+        import math
+
+        # Only 2 sealed variants (100, 200) in group 30: leaving one out
+        # leaves exactly the other single value, so the LOO "median" of a
+        # 1-element set is that element itself -- never the variant's own
+        # price (no leakage).
+        self.assertAlmostEqual(self._feature((2, "Normal")), math.log(200.0), places=9)
+        self.assertAlmostEqual(self._feature((3, "Normal")), math.log(100.0), places=9)
+
+    def test_single_variant_gets_plain_sealed_median_not_leave_one_out(self):
+        import math
+        from statistics import median
+
+        expected = median([math.log(100.0), math.log(200.0)])
+        self.assertAlmostEqual(self._feature((1, "Normal")), expected, places=9)
+
+    def test_group_with_no_priced_sealed_variant_falls_back_to_group_wide_median(self):
+        fs = build_category_feature_rows(
+            self.panel_dir, self.category_id, self.dates, self.groups_metadata,
+            self.products_metadata, self.dates[-1],
+        )
+        by_key = dict(zip(fs.keys, fs.rows))
+        for key in ((4, "Normal"), (5, "Normal")):
+            row = by_key[key]
+            self.assertAlmostEqual(
+                row.continuous["groupSealedLogPriceMedian"],
+                row.continuous["groupLogPriceMedian"],
+                places=9,
+            )
+
 
 class ColdStartCandidatesTests(unittest.TestCase):
     def setUp(self):
@@ -166,7 +341,23 @@ class ColdStartCandidatesTests(unittest.TestCase):
         self.assertEqual(len(cs.rows), 1)
         self.assertEqual(cs.rows[0].categorical["rarity"], "Mythic")
         self.assertEqual(cs.rows[0].categorical["productKind"], "single")
+        self.assertEqual(cs.rows[0].categorical["productFormat"], "single")
         self.assertIn("releaseAgeWeeks", cs.rows[0].continuous)
+        self.assertIn("groupSealedLogPriceMedian", cs.rows[0].continuous)
+
+    def test_never_priced_sealed_candidate_gets_format_from_name(self):
+        products_metadata = {
+            (self.category_id, 2): {
+                "group_id": 20, "card_number": "", "rarity": "",
+                "name": "Some Set Elite Trainer Box",
+            },
+        }
+        cs = cold_start_candidates(
+            self.panel_dir, self.category_id, self.dates, self.groups_metadata, products_metadata, self.dates[-1],
+        )
+        self.assertEqual(len(cs.rows), 1)
+        self.assertEqual(cs.rows[0].categorical["productKind"], "sealed")
+        self.assertEqual(cs.rows[0].categorical["productFormat"], "elite-trainer-box")
 
 
 class LoadOrFetchProductsMetadataTests(unittest.TestCase):
@@ -197,6 +388,9 @@ class LoadOrFetchProductsMetadataTests(unittest.TestCase):
             )
             self.assertEqual(result.groups_fetched_this_call, 2)
             self.assertEqual(result.groups_failed_this_call, 0)
+            # FA-04: "name" must be persisted (needed by product_format()),
+            # not just card_number/rarity.
+            self.assertTrue(all(row["name"] == "Test Card" for row in products.values()))
             self.assertFalse(result.truncated)
             self.assertEqual(len(products), 2)
             self.assertEqual(sorted(calls), [(85, 1), (85, 2)])
