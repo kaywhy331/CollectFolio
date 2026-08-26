@@ -11,11 +11,14 @@ from collectfolio_analytics import forecast_publisher
 from collectfolio_analytics.forecast_publisher import (
     DEFAULT_MAX_OBJECT_BYTES,
     GroupPart,
+    classify_product_kind,
     eligible_horizons,
     is_packet_eligible,
+    load_evidence_tiers_by_horizon,
+    load_msrp_table,
+    load_msrp_table_if_present,
     load_serving_eligibility,
     load_serving_eligibility_by_horizon,
-    load_evidence_tiers_by_horizon,
     load_source_terms,
     object_key,
     publish_category,
@@ -614,6 +617,336 @@ class PublishAllEvidenceTiersModeTests(unittest.TestCase):
             self.assertTrue(manifest["serveAllCohorts"])
             self.assertEqual(manifest["categories"]["3"]["eligibleVariants"], 1)
 
+
+class ClassifyProductKindTests(unittest.TestCase):
+    """FA-03: productKind classification, from the same
+    {(categoryId, productId): {card_number, rarity}} shape
+    hedonic_features.build_category_feature_rows consumes."""
+
+    def test_none_mapping_is_unknown(self):
+        self.assertEqual(classify_product_kind(3, 100, None), "unknown")
+
+    def test_empty_mapping_is_unknown(self):
+        self.assertEqual(classify_product_kind(3, 100, {}), "unknown")
+
+    def test_unmatched_product_id_is_unknown(self):
+        meta = {(3, 999): {"card_number": "1", "rarity": "Common"}}
+        self.assertEqual(classify_product_kind(3, 100, meta), "unknown")
+
+    def test_card_number_or_rarity_present_is_single(self):
+        meta = {(3, 100): {"card_number": "025/198", "rarity": None}}
+        self.assertEqual(classify_product_kind(3, 100, meta), "single")
+
+    def test_no_card_number_or_rarity_is_sealed(self):
+        meta = {(3, 100): {"card_number": None, "rarity": None}}
+        self.assertEqual(classify_product_kind(3, 100, meta), "sealed")
+
+    def test_lookup_is_scoped_to_category_id(self):
+        # Same productId, different categoryId -- must not cross-match.
+        meta = {(1, 100): {"card_number": "1", "rarity": "Common"}}
+        self.assertEqual(classify_product_kind(3, 100, meta), "unknown")
+
+
+class LoadMsrpTableTests(unittest.TestCase):
+    """FA-05: the curated {productId: {msrp, inPrint}} loader."""
+
+    def test_loads_valid_entries_and_skips_underscore_keys(self):
+        payload = {
+            "_comment": "not a product",
+            "100": {"msrp": 39.99, "inPrint": True},
+            "200": {"msrp": 159.99, "inPrint": False},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "msrp.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(load_msrp_table(path), {100: (39.99, True), 200: (159.99, False)})
+
+    def test_skips_malformed_rows_without_raising(self):
+        payload = {
+            "100": {"msrp": 39.99, "inPrint": True},
+            "bad-key-not-an-int": {"msrp": 10.0, "inPrint": True},
+            "300": {"msrp": "not-a-number", "inPrint": True},
+            "400": {"msrp": -5.0, "inPrint": True},
+            "500": {"inPrint": True},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "msrp.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(load_msrp_table(path), {100: (39.99, True)})
+
+    def test_empty_object_is_an_empty_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "msrp.json"
+            path.write_text(json.dumps({"_comment": "curate me"}), encoding="utf-8")
+            self.assertEqual(load_msrp_table(path), {})
+
+    def test_real_seed_file_is_valid_and_currently_empty(self):
+        # analytics/manifests/sealed-msrp.json ships as an empty, curated
+        # seed -- an exact no-op until hand-curated (see its header).
+        seed_path = REPO_ROOT / "analytics/manifests/sealed-msrp.json"
+        self.assertEqual(load_msrp_table(seed_path), {})
+
+
+class LoadMsrpTableIfPresentTests(unittest.TestCase):
+    def test_none_path_is_an_empty_table(self):
+        self.assertEqual(load_msrp_table_if_present(None), {})
+
+    def test_missing_file_is_an_empty_table_not_an_error(self):
+        self.assertEqual(load_msrp_table_if_present(Path("/nonexistent/msrp.json")), {})
+
+    def test_existing_file_loads_normally(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "msrp.json"
+            path.write_text(json.dumps({"100": {"msrp": 10.0, "inPrint": True}}), encoding="utf-8")
+            self.assertEqual(load_msrp_table_if_present(path), {100: (10.0, True)})
+
+
+class PublishCategoryAnchorClampSaturatedTests(unittest.TestCase):
+    """FA-02: a packet flagged anchorClampSaturated is withheld outright --
+    every horizon -- never served with a band centered on that anchor."""
+
+    def setUp(self):
+        self.serving_eligibility = {3: {"standard": True}}
+
+    def test_saturated_packet_is_withheld_entirely(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            saturated = {**_variant(1), "categoryId": 3, "groupId": 5, "anchorClampSaturated": True}
+            _write_packets(packets_path, [saturated])
+            staging_root = tmp_path / "out"
+            row = publish_category(3, packets_path, self.serving_eligibility, staging_root)
+            self.assertEqual(row["eligibleVariants"], 0)
+            self.assertEqual(row["excludedByReason"], {"anchor_clamp_saturated": 1})
+            self.assertEqual(row["excludedByCohort"], {})
+            self.assertEqual(row["groups"]["5"]["status"], "excluded")
+            self.assertEqual(row["servedHorizonsByCohort"], {})
+
+    def test_unsaturated_sibling_in_the_same_group_still_publishes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            saturated = {**_variant(1), "categoryId": 3, "groupId": 5, "anchorClampSaturated": True}
+            fine = {**_variant(2), "categoryId": 3, "groupId": 5, "anchorClampSaturated": False}
+            _write_packets(packets_path, [saturated, fine])
+            staging_root = tmp_path / "out"
+            row = publish_category(3, packets_path, self.serving_eligibility, staging_root)
+            self.assertEqual(row["eligibleVariants"], 1)
+            self.assertEqual(row["excludedByReason"], {"anchor_clamp_saturated": 1})
+            self.assertEqual(row["groups"]["5"]["status"], "published")
+            self.assertEqual(row["groups"]["5"]["eligibleVariantCount"], 1)
+            part = row["groups"]["5"]["parts"][0]
+            payload = json.loads(gzip.decompress((staging_root / part["objectKey"]).read_bytes()))
+            self.assertEqual([v["productId"] for v in payload["variants"]], [2])
+
+    def test_missing_flag_defaults_to_not_saturated(self):
+        # Packets from before FA-02 (no anchorClampSaturated key at all)
+        # must not be treated as saturated.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [{**_variant(1), "categoryId": 3, "groupId": 5}])
+            staging_root = tmp_path / "out"
+            row = publish_category(3, packets_path, self.serving_eligibility, staging_root)
+            self.assertEqual(row["eligibleVariants"], 1)
+            self.assertEqual(row["excludedByReason"], {})
+
+
+class PublishCategoryProductKindGateTests(unittest.TestCase):
+    """FA-03: a sealed or unknown-kind variant may never serve a
+    directional evidence tier; singles keep the evidence-tier map's tier
+    unchanged. Runs in the SERVE_ALL_COHORTS production default (not the
+    legacy gate) since that is the mode where "standard" packets actually
+    reach a directional tier at all."""
+
+    def setUp(self):
+        self.serving_eligibility = {3: {"standard": True}}
+        self.evidence_tiers_by_horizon = {
+            3: {"standard": {30: "category-validated", 60: "category-validated", 90: "category-validated"}},
+        }
+
+    def _publish(self, variant, *, products_metadata=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [variant])
+            staging_root = tmp_path / "out"
+            row = publish_category(
+                3, packets_path, self.serving_eligibility, staging_root,
+                evidence_tiers_by_horizon=self.evidence_tiers_by_horizon,
+                products_metadata=products_metadata,
+            )
+            part = row["groups"]["1"]["parts"][0]
+            payload = json.loads(gzip.decompress((staging_root / part["objectKey"]).read_bytes()))
+            return row, payload["variants"][0]
+
+    def test_no_products_cache_defaults_unknown_and_downgrades(self):
+        variant = {**_variant(1), "categoryId": 3, "groupId": 1, "confidence": "standard"}
+        row, served = self._publish(variant, products_metadata=None)
+        self.assertEqual(served["productKind"], "unknown")
+        self.assertEqual(served["horizons"]["30"]["evidenceTier"], "range-only")
+        self.assertEqual(row["directionalDowngradesByKind"], {"unknown": 3})
+
+    def test_classified_single_keeps_directional_tier(self):
+        variant = {**_variant(1), "categoryId": 3, "groupId": 1, "confidence": "standard"}
+        products_metadata = {(3, 1): {"card_number": "025/198", "rarity": "Rare"}}
+        row, served = self._publish(variant, products_metadata=products_metadata)
+        self.assertEqual(served["productKind"], "single")
+        self.assertEqual(served["horizons"]["30"]["evidenceTier"], "category-validated")
+        self.assertEqual(row["directionalDowngradesByKind"], {})
+
+    def test_classified_sealed_is_downgraded(self):
+        variant = {**_variant(1), "categoryId": 3, "groupId": 1, "confidence": "standard"}
+        products_metadata = {(3, 1): {"card_number": None, "rarity": None}}
+        row, served = self._publish(variant, products_metadata=products_metadata)
+        self.assertEqual(served["productKind"], "sealed")
+        self.assertEqual(served["horizons"]["30"]["evidenceTier"], "range-only")
+        self.assertEqual(row["directionalDowngradesByKind"], {"sealed": 3})
+
+    def test_unmatched_product_id_in_products_cache_is_unknown(self):
+        variant = {**_variant(1), "categoryId": 3, "groupId": 1, "confidence": "standard"}
+        products_metadata = {(3, 999): {"card_number": "1", "rarity": "Common"}}
+        row, served = self._publish(variant, products_metadata=products_metadata)
+        self.assertEqual(served["productKind"], "unknown")
+        self.assertEqual(served["horizons"]["30"]["evidenceTier"], "range-only")
+
+    def test_non_directional_confidence_is_unaffected_by_the_kind_gate(self):
+        # cold-start is already attribute-reference; the kind gate must
+        # not spuriously "downgrade" a tier that was never directional.
+        variant = {
+            **_variant(1), "categoryId": 3, "groupId": 1, "confidence": "cold-start",
+            "lastKnownDate": None, "lastKnownPrice": None,
+        }
+        row, served = self._publish(variant, products_metadata=None)
+        self.assertEqual(served["horizons"]["30"]["evidenceTier"], "attribute-reference")
+        self.assertEqual(row["directionalDowngradesByKind"], {})
+
+
+class PublishCategoryMsrpGateTests(unittest.TestCase):
+    """FA-05: a sealed, in-print band whose q50 falls below 80% of MSRP is
+    withheld outright, never clamped upward."""
+
+    def setUp(self):
+        self.serving_eligibility = {3: {"standard": True}}
+        self.sealed_meta = {(3, 1): {"card_number": None, "rarity": None}}
+
+    def _publish(self, variant, *, msrp_table, products_metadata=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [variant])
+            staging_root = tmp_path / "out"
+            row = publish_category(
+                3, packets_path, self.serving_eligibility, staging_root,
+                products_metadata=products_metadata if products_metadata is not None else self.sealed_meta,
+                msrp_table=msrp_table,
+            )
+            return row, staging_root
+
+    def test_below_floor_in_print_is_withheld_entirely(self):
+        variant = {**_variant(1, price=20.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        row, _staging = self._publish(variant, msrp_table={1: (100.0, True)})  # 20 < 0.8*100
+        self.assertEqual(row["eligibleVariants"], 0)
+        self.assertEqual(row["excludedByReason"], {"below_msrp_floor": 3})
+        self.assertEqual(row["groups"]["1"]["status"], "excluded")
+
+    def test_at_or_above_floor_is_served_normally(self):
+        variant = {**_variant(1, price=90.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        row, _staging = self._publish(variant, msrp_table={1: (100.0, True)})  # 90 >= 0.8*100
+        self.assertEqual(row["eligibleVariants"], 1)
+        self.assertEqual(row["excludedByReason"], {})
+
+    def test_out_of_print_is_never_withheld_even_below_floor(self):
+        variant = {**_variant(1, price=20.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        row, _staging = self._publish(variant, msrp_table={1: (100.0, False)})
+        self.assertEqual(row["eligibleVariants"], 1)
+        self.assertEqual(row["excludedByReason"], {})
+
+    def test_no_msrp_entry_for_product_is_a_no_op(self):
+        variant = {**_variant(1, price=20.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        row, _staging = self._publish(variant, msrp_table={999: (100.0, True)})
+        self.assertEqual(row["eligibleVariants"], 1)
+        self.assertEqual(row["excludedByReason"], {})
+
+    def test_empty_msrp_table_is_a_no_op(self):
+        variant = {**_variant(1, price=20.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        row, _staging = self._publish(variant, msrp_table={})
+        self.assertEqual(row["eligibleVariants"], 1)
+        self.assertEqual(row["excludedByReason"], {})
+
+    def test_single_kind_is_never_subject_to_the_msrp_gate(self):
+        variant = {**_variant(1, price=20.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        single_meta = {(3, 1): {"card_number": "025/198", "rarity": "Rare"}}
+        row, _staging = self._publish(variant, msrp_table={1: (100.0, True)}, products_metadata=single_meta)
+        self.assertEqual(row["eligibleVariants"], 1)
+        self.assertEqual(row["excludedByReason"], {})
+
+    def test_mixed_below_and_above_floor_publishes_only_the_passing_variant(self):
+        below = {**_variant(1, price=20.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        above = {**_variant(2, price=90.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_path = tmp_path / "packets.jsonl.gz"
+            _write_packets(packets_path, [below, above])
+            staging_root = tmp_path / "out"
+            row = publish_category(
+                3, packets_path, self.serving_eligibility, staging_root,
+                products_metadata={
+                    (3, 1): {"card_number": None, "rarity": None},
+                    (3, 2): {"card_number": None, "rarity": None},
+                },
+                msrp_table={1: (100.0, True), 2: (100.0, True)},
+            )
+            self.assertEqual(row["eligibleVariants"], 1)
+            self.assertEqual(row["excludedByReason"], {"below_msrp_floor": 3})
+            self.assertEqual(row["groups"]["1"]["status"], "published")
+            self.assertEqual(row["groups"]["1"]["eligibleVariantCount"], 1)
+            part = row["groups"]["1"]["parts"][0]
+            payload = json.loads(gzip.decompress((staging_root / part["objectKey"]).read_bytes()))
+            self.assertEqual([v["productId"] for v in payload["variants"]], [2])
+            # The passing variant's real price is served unmodified --
+            # never clamped up toward MSRP, and the withheld variant's low
+            # price never appears anywhere in the served object.
+            self.assertEqual(payload["variants"][0]["horizons"]["30"]["q50"], 90.0)
+
+
+class PublishForecastsProductKindAndMsrpWiringTests(unittest.TestCase):
+    """End-to-end: publish_forecasts wires products_metadata/msrp_path
+    through to publish_category for every requested category."""
+
+    def test_products_metadata_and_msrp_path_flow_through_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_dir = tmp_path / "packets"
+            sealed_low = {**_variant(1, price=20.0), "categoryId": 3, "groupId": 1, "confidence": "low-history"}
+            _write_packets(packets_dir / "category-3" / "packets.jsonl.gz", [sealed_low])
+            staging_root = tmp_path / "out"
+
+            msrp_path = tmp_path / "msrp.json"
+            msrp_path.write_text(json.dumps({"1": {"msrp": 100.0, "inPrint": True}}), encoding="utf-8")
+
+            manifest = publish_forecasts(
+                packets_dir, EVALUATION_SUMMARY_PATH, SOURCE_TERMS_PATH, staging_root,
+                products_metadata={(3, 1): {"card_number": None, "rarity": None}},
+                msrp_path=msrp_path,
+            )
+            self.assertEqual(manifest["categories"]["3"]["eligibleVariants"], 0)
+            self.assertEqual(manifest["categories"]["3"]["excludedByReason"], {"below_msrp_floor": 3})
+
+    def test_omitted_products_metadata_and_msrp_path_is_the_pre_fa_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            packets_dir = tmp_path / "packets"
+            _write_packets(packets_dir / "category-3" / "packets.jsonl.gz", [
+                {**_variant(1), "categoryId": 3, "groupId": 1, "confidence": "low-history"},
+            ])
+            staging_root = tmp_path / "out"
+            manifest = publish_forecasts(
+                packets_dir, EVALUATION_SUMMARY_PATH, SOURCE_TERMS_PATH, staging_root,
+            )
+            self.assertEqual(manifest["categories"]["3"]["eligibleVariants"], 1)
+            self.assertEqual(manifest["categories"]["3"]["excludedByReason"], {})
+            self.assertEqual(manifest["categories"]["3"]["directionalDowngradesByKind"], {})
 
 
 if __name__ == "__main__":

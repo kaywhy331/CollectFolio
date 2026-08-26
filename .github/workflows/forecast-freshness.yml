@@ -1,0 +1,146 @@
+# Forecast freshness monitor (forecast audit FA-08).
+#
+# The trajectory-v1 forecast publish pipeline (trajectory-publish.yml) has
+# no way to promise it actually keeps running -- a cron can silently stop
+# firing, a workflow can be disabled, an org policy can pause schedules.
+# This is a small, dependency-free, repo-checkout-free daily alarm that
+# exists independently of that pipeline: it only reads the public
+# `/catalog/forecasts/manifest` endpoint every day and fails loudly (that
+# failure IS the alarm -- a red daily run, not a passing job) when the live
+# forecast surface has gone stale or has quietly dropped its evidence
+# labels. It intentionally does not try to fix anything; it only detects
+# and reports, per FA-08's "no freshness monitor" finding.
+#
+# Two independent checks:
+#   1. forecasts/manifest.json's generatedAt is more than 10 days old --
+#      the audit's own live finding was a stale pre-v0.8.31 publish serving
+#      +13% drift bands, so staleness itself is the thing this must catch.
+#   2. A sampled published group object, for every category the manifest
+#      lists, serves every horizon band with an `evidenceTier` field. A
+#      band missing evidenceTier is exactly the audit's other live finding
+#      (zero served packets carrying evidenceTier) -- this is the same
+#      contract check trajectory-publish.yml's own local/live verification
+#      steps run right after a fresh publish, kept here as an independent,
+#      always-on watchdog that does not depend on that workflow running at
+#      all.
+
+name: Forecast freshness monitor
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Daily, offset from trajectory-publish.yml's weekly Monday 09:30 UTC
+    # run and from the other daily crons in this repo (cardbase-mtg-history
+    # 07:23, tcgcsv-market-universe 06:41).
+    - cron: '17 8 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forecast-freshness
+  cancel-in-progress: false
+
+env:
+  TCGCSV_CATALOG_URL: https://collectfolio-tcgcsv-refresh.kevinyang331.workers.dev
+  STALE_DAYS: '10'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch the live forecast manifest
+        run: |
+          set -euo pipefail
+          curl -sf "$TCGCSV_CATALOG_URL/catalog/forecasts/manifest" -o manifest.json
+
+      - name: Check staleness + evidenceTier coverage
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+          import datetime
+          import gzip
+          import json
+          import os
+          import sys
+          import urllib.request
+
+          base_url = os.environ["TCGCSV_CATALOG_URL"]
+          stale_days = float(os.environ["STALE_DAYS"])
+
+          with open("manifest.json", "r", encoding="utf-8") as fh:
+              manifest = json.load(fh)
+
+          failures = []
+
+          generated_at_raw = manifest.get("generatedAt")
+          if not generated_at_raw:
+              failures.append("forecast manifest has no generatedAt field")
+              generated_at_raw = None
+
+          if generated_at_raw:
+              generated_at = datetime.datetime.fromisoformat(str(generated_at_raw).replace("Z", "+00:00"))
+              if generated_at.tzinfo is None:
+                  generated_at = generated_at.replace(tzinfo=datetime.timezone.utc)
+              now = datetime.datetime.now(datetime.timezone.utc)
+              age_days = (now - generated_at).total_seconds() / 86400.0
+              print(f"forecast manifest generatedAt={generated_at.isoformat()} age_days={age_days:.2f}")
+              if age_days > stale_days:
+                  failures.append(f"forecast manifest is stale: {age_days:.1f} days old (limit {stale_days:.0f})")
+
+          categories = manifest.get("categories", {})
+          if not categories:
+              failures.append("forecast manifest has no categories")
+
+          def fetch_gzip_json(path):
+              request = urllib.request.Request(
+                  f"{base_url}{path}", headers={"user-agent": "CollectFolio-forecast-freshness/1"}
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  raw = response.read()
+                  encoding = response.headers.get("Content-Encoding", "")
+              if "gzip" in encoding:
+                  raw = gzip.decompress(raw)
+              return json.loads(raw.decode("utf-8"))
+
+          sampled = 0
+          for category_id, row in sorted(categories.items(), key=lambda kv: int(kv[0])):
+              groups = row.get("groups", {})
+              published_group_id = next(
+                  (gid for gid, g in sorted(groups.items(), key=lambda kv: int(kv[0]))
+                   if g.get("status") == "published"),
+                  None,
+              )
+              if published_group_id is None:
+                  continue
+              parts = groups[published_group_id].get("parts", [])
+              if not parts:
+                  failures.append(f"category {category_id} group {published_group_id} is published with zero parts")
+                  continue
+              object_id = parts[0]["objectKey"].rsplit("/", 1)[-1].removesuffix(".json.gz")
+              try:
+                  payload = fetch_gzip_json(f"/catalog/forecasts/{category_id}/{object_id}")
+              except Exception as exc:  # noqa: BLE001 - report and keep sampling other categories
+                  failures.append(f"category {category_id} group {published_group_id}: fetch failed: {exc}")
+                  continue
+              sampled += 1
+              for variant in payload.get("variants", []):
+                  for horizon_days, band in variant.get("horizons", {}).items():
+                      if "evidenceTier" not in band:
+                          failures.append(
+                              f"category {category_id} group {published_group_id} variant "
+                              f"{variant.get('productId')}/{variant.get('subTypeName')} horizon {horizon_days} "
+                              "band is missing evidenceTier"
+                          )
+
+          print(f"sampled {sampled} group object(s) across {len(categories)} categor(y/ies)")
+          if sampled == 0:
+              failures.append("no published group could be sampled from any category")
+
+          if failures:
+              for message in failures:
+                  print(f"::error::{message}")
+              sys.exit(1)
+          print("forecast freshness check passed")
+          PY

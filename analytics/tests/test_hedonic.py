@@ -150,6 +150,57 @@ class SolveOlsRidgeTests(unittest.TestCase):
             solve_ols_ridge([], [])
 
 
+class CrossValidateHoldoutSetsPerKindMaeTests(unittest.TestCase):
+    """FA-04: per-productKind held-out MAE breakdown on HedonicFitMetrics."""
+
+    def test_reports_mae_separately_for_single_and_sealed(self):
+        rows, y = [], []
+        # "single" rows: feature predicts them well (tight residual).
+        for group_id in range(1, 21):
+            for _ in range(4):
+                rows.append(_row(group_id, setFamily="main", productKind="single", releaseAgeWeeks=10.0))
+                y.append(1.0)
+        # "sealed" rows: same feature value, but a much noisier target ->
+        # the sealed slice's held-out MAE must come out worse than single's.
+        import random
+
+        rng = random.Random(11)
+        for group_id in range(21, 41):
+            for _ in range(4):
+                rows.append(_row(group_id, setFamily="main", productKind="sealed", releaseAgeWeeks=10.0))
+                y.append(1.0 + rng.uniform(-2.0, 2.0))
+
+        metrics = cross_validate_holdout_sets(rows, y, n_folds=5)
+        self.assertIn("single", metrics.holdout_mae_by_kind)
+        self.assertIn("sealed", metrics.holdout_mae_by_kind)
+        self.assertGreater(metrics.holdout_mae_by_kind["sealed"], metrics.holdout_mae_by_kind["single"])
+        self.assertEqual(
+            metrics.holdout_covered_by_kind["single"] + metrics.holdout_covered_by_kind["sealed"],
+            metrics.holdout_covered,
+        )
+
+    def test_rows_without_product_kind_bucket_as_unknown(self):
+        rows = [_row(g, setFamily="main", releaseAgeWeeks=float(g)) for g in range(1, 21) for _ in range(4)]
+        y = [1.0 + 0.01 * row.continuous["releaseAgeWeeks"] for row in rows]
+        metrics = cross_validate_holdout_sets(rows, y, n_folds=5)
+        self.assertEqual(set(metrics.holdout_mae_by_kind), {"unknown"})
+        self.assertEqual(metrics.holdout_covered_by_kind["unknown"], metrics.holdout_covered)
+
+    def test_as_receipt_dict_keeps_existing_keys_and_adds_new_ones(self):
+        rows = [_row(g, setFamily="main", productKind="single", releaseAgeWeeks=float(g)) for g in range(1, 21) for _ in range(4)]
+        y = [1.0 + 0.01 * row.continuous["releaseAgeWeeks"] for row in rows]
+        metrics = cross_validate_holdout_sets(rows, y, n_folds=5)
+        receipt = metrics.as_receipt_dict()
+        for existing_key in (
+            "nFolds", "nObservations", "nGroups", "nFeatures",
+            "holdoutCovered", "holdoutRmse", "holdoutR2", "foldsUsedFallback",
+        ):
+            self.assertIn(existing_key, receipt)
+        self.assertIn("holdoutMaeByKind", receipt)
+        self.assertIn("holdoutCoveredByKind", receipt)
+        self.assertEqual(receipt["holdoutCoveredByKind"], {"single": metrics.holdout_covered})
+
+
 class CrossValidateHoldoutSetsTests(unittest.TestCase):
     """Synthetic scenarios verifying held-out-SETS CV is genuinely by-group."""
 

@@ -963,6 +963,17 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
     if args.category_ids:
         category_ids = sorted({int(part) for part in args.category_ids.split(",") if part.strip()})
 
+    # FA-03: reuse the same read-only products-metadata cache loader
+    # fit-hedonic already uses (see _load_products_metadata_readonly above)
+    # rather than duplicating its cache-reading logic here. Omitted flag =>
+    # None => every packet classifies productKind "unknown" (safe default).
+    products_metadata = (
+        _load_products_metadata_readonly(Path(args.products_cache)) if args.products_cache else None
+    )
+    # FA-05: optional, additive; forecast_publisher treats a missing path
+    # as an exact no-op, so no existence check is needed here.
+    msrp_path = Path(args.msrp_path) if args.msrp_path else None
+
     started = time.monotonic()
     manifest = publish_forecasts(
         packets_dir,
@@ -971,6 +982,8 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
         Path(args.out_dir),
         category_ids=category_ids,
         max_object_bytes=args.max_object_bytes,
+        products_metadata=products_metadata,
+        msrp_path=msrp_path,
     )
     elapsed_seconds = time.monotonic() - started
 
@@ -987,6 +1000,8 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
         "publishAllEvidenceTiers": manifest["publishAllEvidenceTiers"],
         "evidenceTierPolicy": manifest["evidenceTierPolicy"],
         "servedHorizonsByCategory": manifest["servedHorizonsByCategory"],
+        "productsCache": str(Path(args.products_cache)) if args.products_cache else None,
+        "msrpPath": str(msrp_path) if msrp_path else None,
         "categories": {
             category_id: {
                 "totalVariants": row["totalVariants"],
@@ -995,6 +1010,10 @@ def _publish_forecasts_command(args: argparse.Namespace) -> int:
                 "publishedGroups": row["publishedGroups"],
                 "excludedGroups": row["excludedGroups"],
                 "excludedByCohort": row["excludedByCohort"],
+                # FA-02 (anchor_clamp_saturated) / FA-05 (below_msrp_floor)
+                "excludedByReason": row["excludedByReason"],
+                # FA-03: directional-tier downgrades forced by productKind.
+                "directionalDowngradesByKind": row["directionalDowngradesByKind"],
                 "objectsWritten": row["objectsWritten"],
                 "lastKnownDateRange": row["lastKnownDateRange"],
                 "servedHorizonsByCohort": row["servedHorizonsByCohort"],
@@ -1257,6 +1276,35 @@ def _parser() -> argparse.ArgumentParser:
         help="comma-separated category ids to publish; defaults to every category-<id> dir found",
     )
     publish.add_argument("--max-object-bytes", type=int, default=DEFAULT_MAX_OBJECT_BYTES)
+    publish.add_argument(
+        "--products-cache", default=None,
+        help=(
+            "FA-03 serving contract: path to an already-fetched products-metadata "
+            "cache (the same file `fetch-products` writes and `fit-hedonic` reads, "
+            "state-dir/hedonic/products_metadata.json.gz by default) used to "
+            "classify every packet's productKind (single/sealed) via "
+            "hedonic_features.product_kind. NOT REQUIRED, but the default when "
+            "omitted is deliberately conservative: every variant classifies as "
+            "'unknown', and the serving gate treats 'unknown' exactly like "
+            "'sealed' -- it may only ever serve a non-directional (range-only / "
+            "attribute-reference) tier, never category-validated or "
+            "relative-validated, no matter what the evidence-tier map says. Pass "
+            "this flag so validated single-card cohorts can serve their real "
+            "directional tier; sealed products are never affected either way."
+        ),
+    )
+    publish.add_argument(
+        "--msrp-path", default="analytics/manifests/sealed-msrp.json",
+        help=(
+            "FA-05: JSON file mapping productId -> {msrp, inPrint} (see that "
+            "file for the schema) used to withhold (never clamp upward) a "
+            "sealed, in-print band whose q50 falls below 80%% of MSRP at some "
+            "horizon. Defaults to the checked-in curated seed, which starts "
+            "empty and is therefore an exact no-op until hand-curated. A path "
+            "that does not exist on disk is also an exact no-op (the gate is "
+            "purely additive, never required)."
+        ),
+    )
     publish.set_defaults(handler=_publish_forecasts_command)
 
     publish_history = subparsers.add_parser(

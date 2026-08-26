@@ -120,6 +120,17 @@ function allAttributesSection(item, ref, currency) {
   return `<details class="data-details" id="detail-attributes"><summary><span>All attributes</span><span>Full catalog record for this printing</span></summary><div>${identityMarkup ? `<p class="fine-print">Group &amp; category identity</p><dl>${identityMarkup}</dl>` : ''}${attributeMarkup ? `<p class="fine-print">Card attributes</p><dl>${attributeMarkup}</dl>` : ''}${priceMarkup ? `<p class="fine-print">Price subtypes (all fields)</p><dl>${priceMarkup}</dl>` : ''}</div></details>`;
 }
 
+// FA-07/FA-08: a defensive ISO-date-prefix reader for fine-print dates
+// sourced from network state (packet.asOf / manifest.asOf / groupAsOf).
+// Deliberately string-only -- no Date parsing/Intl formatting -- so a
+// date-only value never gets reinterpreted through the viewer's local
+// timezone. Malformed input (missing, or not YYYY-MM-DD-prefixed) resolves
+// to '' so callers can omit the line rather than render garbage.
+function isoDatePrefix(value) {
+  const text = String(value || '');
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
+}
+
 function updatedAgo(iso) {
   const time = Date.parse(iso);
   if (!Number.isFinite(time)) return '';
@@ -417,6 +428,16 @@ function trajectorySection(item, state, hasLocalScenario = false) {
     return `<section class="card trajectory-insufficient"${idAttr}><p class="eyebrow">Published market forecast</p><h2>Insufficient evidence for a price forecast</h2><p class="muted">This printing does not yet have enough published price history to support a modeled trajectory.</p></section>`;
   }
   const packet = entry.packet;
+  // FA-07/FA-08: fine print showing when this packet was actually published,
+  // read from whichever field the entry carries (per-packet asOf is the
+  // most specific, then the manifest's publish date, then the group
+  // object's own asOf). RULE-5: no field present means the line is simply
+  // omitted -- never a "not disclosed" placeholder. Rendered as the raw
+  // ISO date prefix (matching lastKnownDate/publishedAt elsewhere in this
+  // file) rather than through Date/Intl formatting, which would parse the
+  // date-only string as UTC midnight and then localize it, silently
+  // rolling the displayed date back a day in timezones west of UTC.
+  const publishedDateText = isoDatePrefix(packet.asOf || entry.manifest?.asOf || entry.groupAsOf);
   if (isTrajectoryStale(packet, entry.manifest?.asOf || entry.groupAsOf)) {
     return `<section class="card trajectory-insufficient"${idAttr}><p class="eyebrow">Published market forecast</p><h2>A fresher market observation is required</h2><p class="muted">The last price behind this forecast is too old relative to its publication. CollectFolio withholds the modeled values instead of presenting a stale baseline as current.</p></section>`;
   }
@@ -451,7 +472,7 @@ function trajectorySection(item, state, hasLocalScenario = false) {
           : 'No directional estimate';
     return `<section class="forecast-horizon"><div class="form-section-heading"><div><p class="eyebrow">${horizon}-day ${directional ? 'checkpoint' : 'price range'}</p><h3>${escapeHTML(title)}</h3></div><span class="pill">${escapeHTML(label)}</span></div><div class="forecast-grid"><div><span>80% range</span><strong>${escapeHTML(formatCurrency(band.q10, state.settings?.currency || 'USD'))}–${escapeHTML(formatCurrency(band.q90, state.settings?.currency || 'USD'))}</strong></div></div></section>`;
   };
-  return `<section class="card forecast-card product-outlook-card trajectory-section"${idAttr}><div class="section-heading"><div><p class="eyebrow">Published market outlook</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${bands.map(([horizon, band]) => horizonBlock(horizon, band)).join('')}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.</p></section>`;
+  return `<section class="card forecast-card product-outlook-card trajectory-section"${idAttr}><div class="section-heading"><div><p class="eyebrow">Published market outlook</p><h2>${heading}</h2><p class="muted">${explainer}</p></div></div><div class="forecast-horizon-list">${bands.map(([horizon, band]) => horizonBlock(horizon, band)).join('')}</div><p class="fine-print">Last known price date ${escapeHTML(String(packet.lastKnownDate || 'not disclosed'))}.${publishedDateText ? ` Forecast published ${escapeHTML(publishedDateText)}.` : ''}</p></section>`;
 }
 
 // Observed weekly price history, with the latest published trajectory-v1
