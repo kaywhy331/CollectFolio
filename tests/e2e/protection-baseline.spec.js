@@ -651,8 +651,11 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await expect(page).toHaveURL(/\/insights\/scenarios\?horizon=30$/);
   await expect(page.getByRole('heading', { name: 'Published Forecasts' })).toHaveCount(0);
 
-  await page.getByRole('tab', { name: /Alerts/ }).click();
-  await expect(page).toHaveURL(/\/insights\/alerts$/);
+  // DCL-NAV-02 (decision D-1): alert review lives in Collection's Watchlist
+  // section; the old /insights/alerts deep link forwards there.
+  await page.goto('/insights/alerts');
+  await expect(page).toHaveURL(/\/collection\/watchlist$/);
+  await expect(page.locator('[data-watchlist-section="alerts"]')).toHaveAttribute('aria-pressed', 'true');
   const alert = page.locator('.alert-history-card').filter({ hasText: 'revised approved forecast' });
   await expect(alert).toContainText('Unread');
   await expect(alert).toContainText('Model-based forecast change');
@@ -664,10 +667,13 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await alert.getByRole('button', { name: 'Mute notification' }).click();
   await expect(alert).toContainText('Muted');
   await page.reload();
-  await expect(page).toHaveURL(/\/insights\/alerts$/);
+  await expect(page).toHaveURL(/\/collection\/watchlist$/);
+  // The cards/alerts switch is session state, so a reload lands on cards;
+  // the muted alert must still be there (IndexedDB persistence) one click away.
+  await page.locator('[data-watchlist-section="alerts"]').click();
   await expect(page.locator('.alert-history-card')).toContainText('Muted');
 
-  await page.getByRole('tab', { name: 'Track Record' }).click();
+  await page.goto('/insights/track-record');
   await expect(page).toHaveURL(/\/insights\/track-record$/);
   await expect(page.getByRole('heading', { name: 'Approved model scorecard' })).toBeVisible();
   await expect(page.getByText('24 matured')).toBeVisible();
@@ -676,12 +682,13 @@ test('Phase 4 Insights separates actuals and forecasts, persists alert state, an
   await expect(page.getByText(/Open · not included in metrics/)).toBeVisible();
 });
 
-test('Insights alerts has no serious or critical accessibility violations', async ({ page }) => {
+test('Watchlist alerts has no serious or critical accessibility violations', async ({ page }) => {
   await configureApprovedPhase4Publication(page);
   await seedLegacyIndexedDB(page);
   await seedPhase4Alert(page);
+  // DCL-NAV-02: the legacy Insights deep link forwards to the Watchlist.
   await page.goto('/insights/alerts');
-  await expect(page.getByRole('tab', { name: /Alerts/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-watchlist-section="alerts"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.alert-history-card')).toBeVisible();
   await expectNoBlockingAccessibilityViolations(page);
 });

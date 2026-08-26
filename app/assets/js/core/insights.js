@@ -8,7 +8,9 @@ import {
   watchlistMarketSeriesIdentity
 } from './market-series.js';
 
-export const INSIGHTS_VIEWS = Object.freeze(['performance', 'forecasts', 'alerts', 'track-record']);
+// DCL-NAV-02 (decision D-1): alert review moved to Collection's Watchlist
+// section; Insights keeps only the unread-count deep link.
+export const INSIGHTS_VIEWS = Object.freeze(['performance', 'forecasts', 'track-record']);
 export const INSIGHTS_HORIZONS = FORECAST_HORIZONS;
 
 const finite = (value) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value))

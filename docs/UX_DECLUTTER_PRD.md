@@ -321,7 +321,7 @@ The instruments that make "done" checkable and keep it done.
 
 | ID | Decision | Recommendation |
 |---|---|---|
-| D-1 | Where do Alerts live? | Watchlist surface owns alert review; Insights keeps the unread-count deep link. **Amends root PRD §11.7 (INSIGHTS-002)** — explicit sign-off required. |
+| D-1 | Where do Alerts live? | **DECIDED 2026-08-26 (Kevin): recommended path accepted.** Watchlist surface owns alert review (cards/alerts switch in Collection → Watchlist); Insights keeps the unread-count deep link; `/insights/alerts` forwards to the new location. Amends root PRD §11.7 (INSIGHTS-002). |
 | D-2 | 30-day movement chip on result cards? | Yes, list view only; gallery tiles stay identity + price + badge. |
 | D-3 | Detail nav: real tabs or index? | In-page index with scroll-spy (cheapest honest treatment; real tabs are a P3 candidate). |
 | D-4 | Discover "Data source" filter control | Remove entirely (automatic behavior is the only sensible default). |

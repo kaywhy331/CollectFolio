@@ -1,6 +1,5 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
 import {
-  alertHistoryModels,
   forecastAssets,
   INSIGHTS_HORIZONS,
   INSIGHTS_VIEWS,
@@ -20,7 +19,6 @@ import { portfolioMovers, pricingCoverage } from './home.js';
 const VIEW_LABELS = Object.freeze({
   performance: 'Overview',
   forecasts: 'Scenario Lab',
-  alerts: 'Alerts',
   'track-record': 'Track Record'
 });
 
@@ -38,8 +36,7 @@ function horizonLabel(value, { adjective = false } = {}) {
 }
 
 function insightsTabs(state, selected) {
-  const unread = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt).length;
-  return `<div class="insights-tabs" role="tablist" aria-label="Insights sections">${INSIGHTS_VIEWS.map((view) => `<button type="button" role="tab" aria-selected="${view === selected}" class="${view === selected ? 'active' : ''}" data-insights-view="${view}">${VIEW_LABELS[view]}${view === 'alerts' && unread ? ` <span class="insights-tab-count" aria-label="${unread} unread">${unread}</span>` : ''}</button>`).join('')}</div>`;
+  return `<div class="insights-tabs" role="tablist" aria-label="Insights sections">${INSIGHTS_VIEWS.map((view) => `<button type="button" role="tab" aria-selected="${view === selected}" class="${view === selected ? 'active' : ''}" data-insights-view="${view}">${VIEW_LABELS[view]}</button>`).join('')}</div>`;
 }
 
 export function renderInsights(state) {
@@ -47,14 +44,11 @@ export function renderInsights(state) {
   const subtitles = {
     performance: 'Understand changes, gaps, and risks across your collection.',
     forecasts: 'Explore how your collection could change under different assumptions.',
-    alerts: 'Local notification history for exact watched variants.',
     'track-record': 'How published forecasts are scored against outcomes.'
   };
   const content = selected === 'performance'
     ? overviewSection(state)
-    : selected === 'alerts'
-      ? alertsSection(state)
-      : selected === 'track-record' ? trackRecordSection(state) : forecastsSection(state);
+    : selected === 'track-record' ? trackRecordSection(state) : forecastsSection(state);
   // DCL-LEX-11: the Methodology disclosure is reachable from Insights,
   // once, regardless of which tab is active.
   // DCL-LEX-06/RULE-7: eyebrow sweep -- "Evidence before prediction" is
@@ -95,7 +89,7 @@ function overviewSection(state) {
     // the filter chip is visible on arrival at Collection.
     insightRow({ eyebrow: 'Missing prices', title: coverage.unpriced ? `${coverage.unpriced} item${coverage.unpriced === 1 ? '' : 's'} need a value` : 'Every item is priced', value: `${coverage.percent.toFixed(0)}% covered`, detail: coverage.unpriced ? 'Add a manual value or review an exact catalog match.' : 'Market and explicit manual values cover the full collection.', action: '<button class="button ghost small" type="button" data-go="portfolio" data-portfolio-pricing="unpriced">Resolve pricing</button>' }),
     freshness.known ? insightRow({ eyebrow: 'Stale prices', title: freshness.stale ? `${freshness.stale} may be stale` : 'No known stale prices', value: freshness.latest.label, detail: `${freshness.known} market-price update time${freshness.known === 1 ? '' : 's'} checked.`, action: '<button class="button ghost small" type="button" data-action="refresh-prices">Refresh prices</button>' }) : '',
-    insightRow({ eyebrow: 'Watchlist alerts', title: unread ? `${unread} unread alert${unread === 1 ? '' : 's'}` : 'No unread alerts', value: unread ? 'Review' : 'Clear', detail: unread ? 'Review the exact watched items whose saved rules were triggered.' : 'No active Watchlist rule needs attention.', action: '<button class="button ghost small" type="button" data-insights-view="alerts">Open Alerts</button>' })
+    insightRow({ eyebrow: 'Watchlist alerts', title: unread ? `${unread} unread alert${unread === 1 ? '' : 's'}` : 'No unread alerts', value: unread ? 'Review' : 'Clear', detail: unread ? 'Review the exact watched items whose saved rules were triggered.' : 'No active Watchlist rule needs attention.', action: '<button class="button ghost small" type="button" data-go="portfolio" data-portfolio-target="watchlist" data-watchlist-view="alerts">Open Alerts</button>' })
   ].filter(Boolean);
   // DCL-LEX-06/RULE-7: "Actionable collection signals" removed for a
   // plain 1-word wayfinding eyebrow.
@@ -224,40 +218,6 @@ function publishedForecastsSection(summary, assets, state, currency) {
 // DCL-INS-03: when the flag is off, this section simply doesn't render.
 function publicationGateNotice() {
   return '';
-}
-
-function alertsSection(state) {
-  const filter = ['all', 'unread', 'muted'].includes(state.insights?.alertFilter) ? state.insights.alertFilter : 'all';
-  const all = alertHistoryModels(state.alerts || [], state.watchlistItems || [], 'all');
-  const alerts = alertHistoryModels(state.alerts || [], state.watchlistItems || [], filter);
-  const unread = all.filter((alert) => alert.unread && !alert.muted).length;
-  const muted = all.filter((alert) => alert.muted).length;
-  // LEX sweep/RULE-7: "Local notification history" (3 words, and repeats
-  // the page lede almost verbatim) shortened to a plain eyebrow.
-  return `<section class="alerts-workspace" aria-labelledby="alerts-title"><div class="alerts-summary"><div><p class="eyebrow">Notifications</p><h2 id="alerts-title">Alerts</h2><p>${all.length} recorded · ${unread} unread · ${muted} muted</p></div>${unread ? '<button class="button ghost small" type="button" data-action="mark-all-alerts-read">Mark all read</button>' : ''}</div>
-    <div class="alert-filter" role="group" aria-label="Filter alert history">${[['all', 'All'], ['unread', 'Unread'], ['muted', 'Muted']].map(([value, label]) => `<button type="button" data-alert-filter="${value}" aria-pressed="${filter === value}">${label}</button>`).join('')}</div>
-    ${alerts.length ? `<div class="alert-history-list">${alerts.map(alertCard).join('')}</div>` : all.length ? emptyState('No alerts match this filter', 'Choose another history filter to review saved notifications.', '<button class="button ghost" type="button" data-alert-filter="all">Show all alerts</button>') : emptyState('No alert history yet', 'Set a target or movement rule on an exact Watchlist item. Alerts are created only from approved market changes.', '<button class="button" type="button" data-go="portfolio" data-portfolio-target="watchlist">Open Watchlist</button>')}
-  </section>`;
-}
-
-function alertCard(alert) {
-  const labels = {
-    target_price: 'Price target reached',
-    percent_change: 'Price movement threshold',
-    new_catalog_price: 'New catalog price',
-    price_stale: 'Price became stale',
-    became_unpriced: 'Item became unpriced',
-    set_release: 'Set release or availability',
-    watchlist_change: 'Watchlist change',
-    forecast_change: 'Model-based forecast change',
-    trend_change: 'Market trend change',
-    range_change: 'Market range change'
-  };
-  const label = labels[alert.kind] || 'Collection alert';
-  const name = alert.item?.name || 'Exact watched variant';
-  // DCL-INS-06: chips mark exceptions only -- Unread, Muted, System.
-  // Default (read/market) states carry zero chips.
-  return `<article class="alert-history-card ${alert.unread ? 'unread' : 'read'} ${alert.muted ? 'muted' : ''}"><div class="alert-state">${alert.unread ? '<span>Unread</span>' : ''}${alert.muted ? '<span>Muted</span>' : ''}${alert.system ? '<span>System</span>' : ''}</div><div><p class="eyebrow">${escapeHTML(label)}</p><h3>${escapeHTML(name)}</h3><p>${escapeHTML(alert.message || 'A configured alert condition changed.')}</p><small>${escapeHTML(dateLabel(alert.triggeredAt))}</small>${alert.kind === 'forecast_change' ? '<p class="fine-print">This notification describes a model output change, not an observed price movement.</p>' : ''}</div><div class="item-actions">${alert.watched ? `<button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(alert.watchKey)}">Open item</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(alert.watchKey)}">Edit rule</button>` : ''}<button class="button ghost small" type="button" data-action="${alert.unread ? 'mark-alert-read' : 'mark-alert-unread'}" data-id="${escapeAttribute(alert.id)}">Mark ${alert.unread ? 'read' : 'unread'}</button><button class="button ghost small" type="button" data-action="toggle-alert-mute" data-id="${escapeAttribute(alert.id)}">${alert.muted ? 'Unmute notification' : 'Mute notification'}</button></div></article>`;
 }
 
 // DCL-INS-04: the gated state is one line (no badge, no card); the

@@ -1,5 +1,6 @@
 import { emptyState, externalImage, pageHeader } from '../core/components.js';
 import { icon } from '../core/icons.js';
+import { alertHistoryModels } from '../core/insights.js';
 import { normalizeIntelligencePayload, trendLabel } from '../core/intelligence-contract.js';
 import { filterAndSortHoldings, holdingCostBasis, holdingCostCurrency, holdingGain, holdingMarketCurrency, holdingMarketValue, holdingPricingStatus, portfolioSummary, returnPercent } from '../core/calculations.js';
 import { catalogPriceDisclosure, catalogPriceForValuation } from '../core/pricing-policy.js';
@@ -318,7 +319,18 @@ function watchlistControls(state) {
 
 function watchlistSection(state) {
   const currency = state.settings.currency || 'USD';
-  if (!state.watchlistItems.length) return `<section class="empty-state watchlist-empty"><span class="empty-symbol">${icon('star', { size: 24 })}</span><h2>Track cards before you buy</h2><p>Watch prices, set targets, and follow future outlooks.</p><button class="button" type="button" data-go="search">Find a card</button></section>`;
+  const watchlistEmpty = `<section class="empty-state watchlist-empty"><span class="empty-symbol">${icon('star', { size: 24 })}</span><h2>Track cards before you buy</h2><p>Watch prices, set targets, and follow future outlooks.</p><button class="button" type="button" data-go="search">Find a card</button></section>`;
+  if (!state.watchlistItems.length) {
+    // DCL-NAV-02: alert history stays reachable even after the last watched
+    // card is removed -- only a fully empty state collapses to the intro.
+    if (!(state.alerts || []).length) return watchlistEmpty;
+    const emptyView = state.portfolio.watchlistView === 'alerts' ? 'alerts' : 'cards';
+    const emptyUnread = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt).length;
+    return `<div class="alert-filter watchlist-view-switch" role="group" aria-label="Watchlist sections">
+      <button type="button" data-watchlist-section="cards" aria-pressed="${emptyView === 'cards'}">Watched cards</button>
+      <button type="button" data-watchlist-section="alerts" aria-pressed="${emptyView === 'alerts'}">Alerts${emptyUnread ? ` <span class="insights-tab-count" aria-label="${emptyUnread} unread">${emptyUnread}</span>` : ''}</button>
+    </div>${emptyView === 'alerts' ? alertsPanel(state) : watchlistEmpty}`;
+  }
   const controls = state.watchlist || { query: '', category: 'all', sort: 'forecast-desc' };
   const shown = filterAndSortWatchlist(state.watchlistItems, state.intelligence?.byVariant || {}, controls);
   const activeAlerts = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt && state.watchlistItems.some((item) => item.watchKey === alert.watchKey));
@@ -326,11 +338,55 @@ function watchlistSection(state) {
   const filtersUseful = state.watchlistItems.length > 1 || controls.query || (controls.category && controls.category !== 'all');
   // DCL-COLL-07: "N watched cards" + "M alerts" -- drop "exact variants"
   // and the "Approved intelligence alerts:" label.
-  return `<section class="watchlist-overview"><div><p class="eyebrow">Purchase watch</p><strong>${state.watchlistItems.length} watched card${state.watchlistItems.length === 1 ? '' : 's'}</strong><span>${configured} with targets or alerts · ${activeAlerts.length} alert${activeAlerts.length === 1 ? '' : 's'}</span></div><button class="button secondary small" type="button" data-go="search">Find another card</button></section>
-    ${filtersUseful ? watchlistControls(state) : ''}
+  // DCL-NAV-02 (decision D-1): the Watchlist surface owns alert review;
+  // a two-way switch keeps watched cards and their alert history together
+  // so the watch -> alert -> review loop completes in one destination.
+  const watchlistView = state.portfolio.watchlistView === 'alerts' ? 'alerts' : 'cards';
+  const unreadAlerts = (state.alerts || []).filter((alert) => !alert.readAt && !alert.mutedAt).length;
+  const viewSwitch = `<div class="alert-filter watchlist-view-switch" role="group" aria-label="Watchlist sections">
+    <button type="button" data-watchlist-section="cards" aria-pressed="${watchlistView === 'cards'}">Watched cards</button>
+    <button type="button" data-watchlist-section="alerts" aria-pressed="${watchlistView === 'alerts'}">Alerts${unreadAlerts ? ` <span class="insights-tab-count" aria-label="${unreadAlerts} unread">${unreadAlerts}</span>` : ''}</button>
+  </div>`;
+  const cardsContent = `${filtersUseful ? watchlistControls(state) : ''}
     ${compareBar(state.compare || [])}
     <div class="section-heading"><div><p class="eyebrow">${shown.length} shown</p><h2>Watched cards</h2></div></div>
     ${shown.length ? `<div class="watchlist-grid">${shown.map((model) => watchlistCard(model, currency, activeAlerts.filter((alert) => alert.watchKey === model.entry.watchKey), state.compare || [])).join('')}</div>` : `<section class="empty-state"><h2>No watched cards match</h2><p>Clear the watchlist filters to see every exact variant.</p><button class="button ghost" type="button" data-action="clear-watchlist-filters">Clear filters</button></section>`}`;
+  return `<section class="watchlist-overview"><div><p class="eyebrow">Purchase watch</p><strong>${state.watchlistItems.length} watched card${state.watchlistItems.length === 1 ? '' : 's'}</strong><span>${configured} with targets or alerts · ${activeAlerts.length} alert${activeAlerts.length === 1 ? '' : 's'}</span></div><button class="button secondary small" type="button" data-go="search">Find another card</button></section>
+    ${viewSwitch}
+    ${watchlistView === 'alerts' ? alertsPanel(state) : cardsContent}`;
+}
+
+// DCL-NAV-02: alert review, moved here from Insights (decision D-1). The
+// filter state lives in state.portfolio.alertFilter now.
+function alertsPanel(state) {
+  const filter = ['all', 'unread', 'muted'].includes(state.portfolio?.alertFilter) ? state.portfolio.alertFilter : 'all';
+  const all = alertHistoryModels(state.alerts || [], state.watchlistItems || [], 'all');
+  const alerts = alertHistoryModels(state.alerts || [], state.watchlistItems || [], filter);
+  const unread = all.filter((alert) => alert.unread && !alert.muted).length;
+  const muted = all.filter((alert) => alert.muted).length;
+  return `<section class="alerts-workspace" aria-labelledby="alerts-title"><div class="alerts-summary"><div><p class="eyebrow">Notifications</p><h2 id="alerts-title">Alerts</h2><p>${all.length} recorded · ${unread} unread · ${muted} muted</p></div>${unread ? '<button class="button ghost small" type="button" data-action="mark-all-alerts-read">Mark all read</button>' : ''}</div>
+    <div class="alert-filter" role="group" aria-label="Filter alert history">${[['all', 'All'], ['unread', 'Unread'], ['muted', 'Muted']].map(([value, label]) => `<button type="button" data-alert-filter="${value}" aria-pressed="${filter === value}">${label}</button>`).join('')}</div>
+    ${alerts.length ? `<div class="alert-history-list">${alerts.map(alertCard).join('')}</div>` : all.length ? emptyState('No alerts match this filter', 'Choose another history filter to review saved notifications.', '<button class="button ghost" type="button" data-alert-filter="all">Show all alerts</button>') : emptyState('No alert history yet', 'Set a target or movement rule on a watched card. Alerts are created only from approved market changes.', '<button class="button" type="button" data-watchlist-section="cards">View watched cards</button>')}
+  </section>`;
+}
+
+function alertCard(alert) {
+  const labels = {
+    target_price: 'Price target reached',
+    percent_change: 'Price movement threshold',
+    new_catalog_price: 'New catalog price',
+    price_stale: 'Price became stale',
+    became_unpriced: 'Item became unpriced',
+    set_release: 'Set release or availability',
+    watchlist_change: 'Watchlist change',
+    forecast_change: 'Model-based forecast change',
+    trend_change: 'Market trend change',
+    range_change: 'Market range change'
+  };
+  const label = labels[alert.kind] || 'Collection alert';
+  const name = alert.item?.name || 'Watched card';
+  // DCL-INS-06: chips mark exceptions only -- Unread, Muted, System.
+  return `<article class="alert-history-card ${alert.unread ? 'unread' : 'read'} ${alert.muted ? 'muted' : ''}"><div class="alert-state">${alert.unread ? '<span>Unread</span>' : ''}${alert.muted ? '<span>Muted</span>' : ''}${alert.system ? '<span>System</span>' : ''}</div><div><p class="eyebrow">${escapeHTML(label)}</p><h3>${escapeHTML(name)}</h3><p>${escapeHTML(alert.message || 'A configured alert condition changed.')}</p><small>${escapeHTML(readableDate(alert.triggeredAt))}</small>${alert.kind === 'forecast_change' ? '<p class="fine-print">This notification describes a model output change, not an observed price movement.</p>' : ''}</div><div class="item-actions">${alert.watched ? `<button class="button ghost small" type="button" data-action="open-detail" data-watch-key="${escapeAttribute(alert.watchKey)}">Open item</button><button class="button ghost small" type="button" data-action="edit-watch" data-watch-key="${escapeAttribute(alert.watchKey)}">Edit rule</button>` : ''}<button class="button ghost small" type="button" data-action="${alert.unread ? 'mark-alert-read' : 'mark-alert-unread'}" data-id="${escapeAttribute(alert.id)}">Mark ${alert.unread ? 'read' : 'unread'}</button><button class="button ghost small" type="button" data-action="toggle-alert-mute" data-id="${escapeAttribute(alert.id)}">${alert.muted ? 'Unmute notification' : 'Mute notification'}</button></div></article>`;
 }
 
 // DCL-COLL-08: the gated state is one sentence -- no badge, no bullets, no

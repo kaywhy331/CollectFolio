@@ -186,6 +186,14 @@ function insightsRoute(url, pathname = '/insights') {
   const pathView = pathname.slice('/insights'.length).split('/').filter(Boolean)[0] || '';
   const mappedPathView = pathView === 'scenarios' ? 'forecasts' : pathView;
   const requested = mappedPathView || bounded(url.searchParams.get('view'), 40) || 'performance';
+  // DCL-NAV-02: alert review lives with the Watchlist now; the old
+  // /insights/alerts deep link forwards there instead of 404-ing.
+  if (requested === 'alerts') {
+    return route('portfolio', 'portfolio', collectionPath('watchlist'), {
+      portfolioSection: 'watchlist',
+      watchlistView: 'alerts'
+    });
+  }
   const view = INSIGHTS_VIEWS.includes(requested) ? requested : 'performance';
   const requestedHorizon = Number(url.searchParams.get('horizon'));
   const horizon = INSIGHTS_HORIZONS.includes(requestedHorizon) ? requestedHorizon : 90;
@@ -299,7 +307,11 @@ export function appRouteForLegacyView(view, state = {}, context = {}) {
 export function routeStatePatch(appRoute, state = {}) {
   const patch = { activeView: appRoute.legacyView, route: appRoute };
   if (appRoute.portfolioSection) {
-    patch.portfolio = { ...state.portfolio, section: appRoute.portfolioSection };
+    patch.portfolio = {
+      ...state.portfolio,
+      section: appRoute.portfolioSection,
+      ...(appRoute.watchlistView ? { watchlistView: appRoute.watchlistView } : {})
+    };
   }
   if (appRoute.insights) {
     patch.insights = { ...state.insights, ...appRoute.insights };

@@ -17,11 +17,13 @@ let state = {
   discover: { mode: 'search', game: 'all', setId: '', query: '', sort: 'newest', scope: 'all', setPage: 1, setLimit: 48, productQuery: '', productSort: 'number', productKind: 'all', productPage: 1, limit: 48, loading: false, productsLoadingMore: false, productNextCursor: '', productTotal: 0, games: [], sets: [], products: [], selectedSet: null, warnings: [], error: '', loadedGame: '', loadedSetId: '' },
   portfolio: {
     section: 'holdings', query: '', category: 'all', sort: 'value-desc', filters: {}, view: 'gallery', groupMode: 'grouped', selectionMode: false, selected: [], limit: 100,
-    setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: 60
+    setQuery: '', setCategory: 'all', setSort: 'recent-desc', setLimit: 60,
+    // DCL-NAV-02: the Watchlist section's cards/alerts switch + alert filter.
+    watchlistView: 'cards', alertFilter: 'all'
   },
   watchlist: { query: '', category: 'all', sort: 'forecast-desc' },
   insights: {
-    view: 'performance', horizon: 90, alertFilter: 'all', scenarioSort: 'upside', expandedScenarioId: '', expandedPublishedId: '',
+    view: 'performance', horizon: 90, scenarioSort: 'upside', expandedScenarioId: '', expandedPublishedId: '',
     scenarioAssumptions: { marketDirection: 'unchanged', category: '', categoryDirection: 'unchanged', itemId: '', itemDirection: 'unchanged', volatility: 'typical', manualValues: 'steady' }
   },
   compare: [],

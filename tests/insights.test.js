@@ -9,6 +9,7 @@ import {
   publishedScorecards
 } from '../app/assets/js/core/insights.js';
 import { renderInsights } from '../app/assets/js/views/insights.js';
+import { renderPortfolio } from '../app/assets/js/views/portfolio.js';
 
 const variantId = '123e4567-e89b-42d3-a456-426614174000';
 const secondVariantId = '223e4567-e89b-42d3-a456-426614174000';
@@ -189,9 +190,12 @@ test('alert history keeps read, muted, exact-variant, and system states textual'
   assert.equal(muted[0].item.name, 'Pikachu ex');
 });
 
-test('Insights uses the four primary PRD sections and keeps approved forecasts compact and separate', () => {
+test('Insights uses the three primary PRD sections and keeps approved forecasts compact and separate', () => {
+  // DCL-NAV-02 (decision D-1): the Alerts tab moved to Collection's
+  // Watchlist section; Insights keeps only the unread-count deep link.
   const html = renderInsights(state());
-  for (const label of ['Overview', 'Alerts', 'Scenario Lab', 'Track Record']) assert.match(html, new RegExp(`>${label}(?:<| )`));
+  for (const label of ['Overview', 'Scenario Lab', 'Track Record']) assert.match(html, new RegExp(`>${label}(?:<| )`));
+  assert.doesNotMatch(html, /data-insights-view="alerts"/);
   assert.match(html, /Published Forecasts/);
   assert.match(html, /Current market/);
   assert.match(html, /Median/);
@@ -278,12 +282,14 @@ test('Insights Overview is a concise actionable list without a duplicate dashboa
 });
 
 test('Alerts use plain supported-kind labels and hide internal variant IDs', () => {
+  // DCL-NAV-02 (decision D-1): alert review renders inside Collection's
+  // Watchlist section now, not Insights.
   const kinds = ['target_price', 'percent_change', 'new_catalog_price', 'price_stale', 'became_unpriced', 'set_release', 'watchlist_change', 'forecast_change'];
   const labels = ['Price target reached', 'Price movement threshold', 'New catalog price', 'Price became stale', 'Item became unpriced', 'Set release or availability', 'Watchlist change', 'Model-based forecast change'];
   const base = state();
-  const html = renderInsights({
+  const html = renderPortfolio({
     ...base,
-    insights: { ...base.insights, view: 'alerts' },
+    portfolio: { section: 'watchlist', watchlistView: 'alerts', alertFilter: 'all', filters: {}, selected: [], query: '', category: 'all' },
     watchlistItems: [{ watchKey: 'watch:1', canonicalVariantId: variantId, catalogRef: { ...item } }],
     alerts: kinds.map((kind, index) => ({ id: `alert-${index}`, watchKey: 'watch:1', variantId, kind, message: `${kind} happened`, triggeredAt: '2026-08-10T00:00:00Z', readAt: '' }))
   });
@@ -291,4 +297,5 @@ test('Alerts use plain supported-kind labels and hide internal variant IDs', () 
   assert.doesNotMatch(html, new RegExp(variantId));
   assert.match(html, /Mark all read/);
   assert.match(html, /Mute notification/);
+  assert.match(html, /data-watchlist-section="cards"/);
 });

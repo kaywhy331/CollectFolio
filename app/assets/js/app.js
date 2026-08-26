@@ -2017,7 +2017,8 @@ root.addEventListener('click', async (event) => {
   }
   const alertFilter = event.target.closest('[data-alert-filter]');
   if (alertFilter && ['all', 'unread', 'muted'].includes(alertFilter.dataset.alertFilter)) {
-    setState({ insights: { ...getState().insights, alertFilter: alertFilter.dataset.alertFilter } });
+    // DCL-NAV-02: alert review lives in Collection's Watchlist section now.
+    setState({ portfolio: { ...getState().portfolio, alertFilter: alertFilter.dataset.alertFilter } });
     return;
   }
   const go = event.target.closest('[data-go]');
@@ -2031,6 +2032,11 @@ root.addEventListener('click', async (event) => {
       const portfolio = getState().portfolio;
       setState({ portfolio: { ...portfolio, filters: { ...portfolio.filters, pricing: go.dataset.portfolioPricing } } });
     }
+    // DCL-NAV-02: a CTA may land directly on the Watchlist's alerts view
+    // (Insights' "Open Alerts" row, Home's Watchlist-alert attention item).
+    if (go.dataset.watchlistView) {
+      setState({ portfolio: { ...getState().portfolio, watchlistView: go.dataset.watchlistView } });
+    }
     navigate(go.dataset.go, {
       portfolioSection: go.dataset.portfolioTarget || (go.dataset.go === 'portfolio' ? 'holdings' : undefined)
     });
@@ -2039,6 +2045,12 @@ root.addEventListener('click', async (event) => {
   const section = event.target.closest('[data-portfolio-section]');
   if (section) {
     navigate('portfolio', { portfolioSection: section.dataset.portfolioSection });
+    return;
+  }
+  // DCL-NAV-02: the Watchlist's cards/alerts switch.
+  const watchlistSwitch = event.target.closest('[data-watchlist-section]');
+  if (watchlistSwitch && ['cards', 'alerts'].includes(watchlistSwitch.dataset.watchlistSection)) {
+    setState({ portfolio: { ...getState().portfolio, watchlistView: watchlistSwitch.dataset.watchlistSection } });
     return;
   }
   const action = event.target.closest('[data-action]');
