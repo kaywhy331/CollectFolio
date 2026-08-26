@@ -455,6 +455,6 @@ jobs:
           name: trajectory-publish-${{ github.run_id }}
           path: |
             ${{ env.RECEIPTS_DIR }}/**
-            ${{ env.PUBLISH_OUT_DIR }}/forecasts/manifest.json
+            ${{ env.PUBLISH_OUT_DIR }}/forecasts/**
           if-no-files-found: warn
           retention-days: 30
