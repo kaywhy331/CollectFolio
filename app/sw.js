@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.34';
+const CACHE = 'collectfolio-shell-v0.8.35';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
@@ -8,7 +8,7 @@ const SHELL = [
   './assets/css/app.css', './assets/icons/icon.svg', './assets/icons/icon-192.png',
   './assets/icons/icon-512.png', './assets/js/app.js',
   './assets/js/core/store.js', './assets/js/core/utils.js', './assets/js/core/ui.js',
-  './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js', './assets/js/core/catalog-images.js',
+  './assets/js/core/components.js', './assets/js/core/calculations.js', './assets/js/core/catalog-identity.js', './assets/js/core/catalog-images.js', './assets/js/core/catalog-crumb.js',
   './assets/js/core/pricing-policy.js', './assets/js/core/market-series.js', './assets/js/core/compare.js', './assets/js/core/router.js',
   './assets/js/core/view-models.js', './assets/js/core/settings.js', './assets/js/core/data-freshness.js', './assets/js/core/portfolio-sets.js',
   './assets/js/core/intelligence-contract.js', './assets/js/core/intelligence-alerts.js', './assets/js/core/insights.js', './assets/js/core/local-scenarios.js', './assets/js/core/scenario-lab.js', './assets/js/core/db.js',

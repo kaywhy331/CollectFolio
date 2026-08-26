@@ -336,7 +336,7 @@ test('a blocked local database upgrade explains recovery instead of loading fore
   expect(nextVersion).toBe(7);
 });
 
-test('routes restore filters and Quick Inspector preserves context, focus, and full detail', async ({ page }) => {
+test('routes restore filters and the quick view panel preserves context, focus, and full detail without changing the route', async ({ page }) => {
   // catalog-v2 B3: the 'Market source' filter's secondary-provider options
   // (scryfall included) were removed -- only 'all' and 'tcgcsv' remain.
   await page.goto('/discover/search?q=Lotus&category=magic&provider=tcgcsv');
@@ -350,20 +350,29 @@ test('routes restore filters and Quick Inspector preserves context, focus, and f
 
   await seedLegacyIndexedDB(page);
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Collection' }).click();
+  await expect(page).toHaveURL(/\/collection\/items$/);
   const holdingCard = page.locator('[data-action="open-detail"][data-holding-id="10000000-0000-4000-8000-000000000001"]');
   await holdingCard.click();
-  await expect(page).toHaveURL(/\/holdings\/10000000-0000-4000-8000-000000000001$/);
-  const inspector = page.getByRole('dialog', { name: 'Synthetic Archive Mage' });
-  await expect(inspector).toBeVisible();
-  await expect(inspector.getByRole('button', { name: 'Close item inspector' })).toBeFocused();
+  // Directive 2: the quick view is a real, non-modal side panel now -- it
+  // opens without ever touching the route/URL (desktop viewport pushes no
+  // history entry either), and is a labelled complementary region, not an
+  // aria-modal dialog.
+  await expect(page).toHaveURL(/\/collection\/items$/);
+  const panel = page.getByRole('complementary', { name: 'Synthetic Archive Mage' });
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Synthetic Archive Mage' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Close quick view' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page).toHaveURL(/\/collection\/items$/);
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: 'Synthetic Archive Mage' })).toHaveCount(0);
   await expect(holdingCard).toBeFocused();
 
   await holdingCard.click();
-  await page.getByRole('dialog', { name: 'Synthetic Archive Mage' }).getByRole('button', { name: 'Open full details' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('complementary', { name: 'Synthetic Archive Mage' }).getByRole('button', { name: 'Open full details' }).click();
+  // "Open full details" promotes the panel's item onto the real route --
+  // this is the one panel action that does navigate.
+  await expect(page).toHaveURL(/\/holdings\/10000000-0000-4000-8000-000000000001$/);
+  await expect(page.getByRole('complementary', { name: 'Synthetic Archive Mage' })).toHaveCount(0);
   await expect(page.locator('.detail-product').getByRole('heading', { name: 'Synthetic Archive Mage' })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/\/collection\/items$/);
@@ -371,6 +380,55 @@ test('routes restore filters and Quick Inspector preserves context, focus, and f
 
   await page.goto('/holdings/10000000-0000-4000-8000-000000000001');
   await expect(page.getByRole('heading', { name: 'Synthetic Archive Mage' }).first()).toBeVisible();
+});
+
+test('the quick view panel stays open while the collector keeps browsing behind it (desktop)', async ({ page }) => {
+  const panelOrigin = 'https://tcgcsv-protection-panel-e2e.example.test';
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: window.location.origin + '/__protection-panel-cloud',
+      SUPABASE_ANON_KEY: 'synthetic-browser-key',
+      APP_VERSION: '0.8.0-test',
+      TCGCSV_CATALOG_URL: '${panelOrigin}/',
+      ENABLE_TESSERACT: false,
+      ENABLE_PRICE_INTELLIGENCE: false
+    });`
+  }));
+  await page.route('**/__protection-panel-cloud/**', (route) => route.fulfill({ contentType: 'application/json', body: '[]' }));
+  await page.route(`${panelOrigin}/catalog/search**`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      products: [{
+        productId: 77002, categoryId: 3, groupId: 1442, categoryName: 'Pokemon', groupName: 'Panel Test Set',
+        name: 'Panel Test Card', cleanName: 'Panel Test Card', cardNumber: '1',
+        prices: [{ subtypeName: 'Holofoil', marketPrice: 12 }]
+      }], sourceUpdatedAt: '2026-08-20'
+    })
+  }));
+  await page.route(`${panelOrigin}/catalog/forecasts/manifest**`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+  await page.route(`${panelOrigin}/catalog/history/manifest**`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+
+  await openApp(page);
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.locator('#catalog-query').fill('Panel Test');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
+  const firstResult = page.locator('.result-card').first();
+  await expect(firstResult).toBeVisible();
+  await firstResult.click();
+  const panel = page.locator('.quick-inspector');
+  await expect(panel).toBeVisible();
+
+  // Directive 2: switching to a different nav destination behind the panel
+  // does not close it -- only Esc, the close button, a mobile scrim tap, or
+  // "Open full details" close it.
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' }).click();
+  await expect(page).toHaveURL(/\/home$/);
+  await expect(page.getByRole('heading', { name: 'Home', exact: true })).toBeVisible();
+  await expect(panel).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
 });
 
 test('collection chart labels remain readable and unclipped across supported viewports', async ({ page }) => {
@@ -471,10 +529,10 @@ test('version-4 local data hydrates calculations, holdings, and scan recovery', 
   // "Unmatched").
   await expect(page.getByRole('region', { name: 'Review queue summary' })).toContainText('No match1');
   await expect(page.getByText('Apply purchase details to all')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Add 1 confirmed' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add 1 items' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Identify this item' })).toBeVisible();
   await expectNoBlockingAccessibilityViolations(page);
-  await page.getByRole('button', { name: 'Add 1 confirmed' }).click();
+  await page.getByRole('button', { name: 'Add 1 items' }).click();
   await expect(page.getByRole('heading', { name: 'Items added' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
   await page.getByRole('button', { name: 'View collection' }).click();

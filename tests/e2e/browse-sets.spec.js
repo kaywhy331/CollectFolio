@@ -231,3 +231,37 @@ test('Browse Sets filters by selected years while preserving one newest-first ti
   await expect(page.locator('.browse-set-tile').first()).toContainText('Silver Tempest');
   await expect(page.locator('.browse-set-tile').last()).toContainText('Base Set');
 });
+
+test('directive 3: the quick view catalog crumb navigates to that set in Browse', async ({ page }) => {
+  await mockFlagshipCatalog(page);
+  await page.route(`${TCGCSV_ORIGIN}/catalog/search**`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      products: [{
+        productId: 9001, categoryId: 3, groupId: 1102, categoryName: 'Pokemon', groupName: 'Silver Tempest',
+        name: 'Crumb Test Card', cleanName: 'Crumb Test Card', cardNumber: '1',
+        prices: [{ subtypeName: 'Holofoil', marketPrice: 12 }]
+      }],
+      publicationId: 'e2e', sourceUpdatedAt: '2026-08-10'
+    })
+  }));
+  await skipOnboarding(page);
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.getByPlaceholder('Search the catalog').fill('Crumb Test');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
+  const result = page.locator('.result-card', { hasText: 'Crumb Test Card' });
+  await expect(result).toBeVisible();
+  await result.click();
+  const panel = page.locator('.quick-inspector');
+  await expect(panel).toBeVisible();
+  const crumb = panel.locator('.catalog-crumb');
+  await expect(crumb).toBeVisible();
+  await expect(crumb.getByRole('button', { name: 'Pokemon' })).toBeVisible();
+  await crumb.getByRole('button', { name: 'Silver Tempest' }).click();
+
+  // Directive 2: a crumb click closes the panel and navigates -- the same
+  // set page Browse Sets itself lands on.
+  await expect(page).toHaveURL(/\/sets\/silver-tempest-3-1102\?game=pokemon/);
+  await expect(page.getByRole('heading', { name: 'Silver Tempest' })).toBeVisible();
+  await expect(page.locator('.quick-inspector')).toHaveCount(0);
+});

@@ -367,6 +367,18 @@ test('B4: group/category identity (categoryId/groupId/productId, category + set 
   assert.match(html, /<dt>Set \/ group<\/dt><dd>Obsidian Flames<\/dd>/);
 });
 
+test('directive 3: the product page shows a game/set catalog crumb that navigates to browse', () => {
+  const catalogRef = catalogReferenceForItem(tcgcsvItem);
+  const html = renderPriceIntelligenceDetail({ origin: 'search', item: tcgcsvItem, catalogRef }, baseState());
+  // Flagship TCGCSV category 3 -> game id "pokemon"; the set segment carries
+  // the "<categoryId>:<groupId>" pair app.js's open-browse-set handler
+  // expects (see core/catalog-crumb.js), labeled with the bare set name
+  // here since tcgcsvItem carries no setCode.
+  assert.match(html, /<nav class="catalog-crumb" aria-label="Catalog path">/);
+  assert.match(html, /data-action="select-browse-game" data-game="pokemon">Pokemon</);
+  assert.match(html, /data-action="open-browse-set" data-game="pokemon" data-set-id="3:604">Obsidian Flames</);
+});
+
 test('B4: non-TCGCSV items (secondary providers) do not render the all-attributes section', () => {
   const catalogRef = catalogReferenceForItem(item, { canonicalVariantId: variantId });
   const html = renderPriceIntelligenceDetail({ origin: 'search', item, catalogRef }, baseState());

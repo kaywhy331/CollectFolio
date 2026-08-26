@@ -1,12 +1,11 @@
 import { externalImage, pageHeader } from '../core/components.js';
 import { icon } from '../core/icons.js';
-import { matchBucketFor } from '../core/view-models.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { CURRENCIES, DEFAULT_LANGUAGES } from '../core/settings.js';
 import { RAW_MARKET_CONDITIONS } from '../core/market-series.js';
 import { MATCH_STATES } from '../core/copy.js';
 import { escapeAttribute, escapeHTML, formatCurrency, safeImageUrl } from '../core/utils.js';
-import { cropHasApprovableIdentity, normalizeAcquisition, scanReviewSummary, scanReviewTotals, selectedCropItem } from '../services/scan-review.js';
+import { normalizeAcquisition, scanReviewSummary, scanReviewTotals, selectedCropItem } from '../services/scan-review.js';
 import { cardRecognitionMode } from '../services/collectcapture.js';
 import { findWatchedItem } from '../services/watchlist.js';
 import { photoHandlingDisclosure } from './add.js';
@@ -52,8 +51,8 @@ function acquisitionFields(acquisition, { bulk = false } = {}) {
 function queueSummary(summary) {
   return `<section class="review-summary" aria-label="Review queue summary">
     <div><span>Total detected</span><strong>${summary.total}</strong></div>
-    <div><span>Catalog selections</span><strong>${summary.exact}</strong></div>
-    <div><span>Needs review</span><strong>${summary.needsReview}</strong></div>
+    <div><span>Included</span><strong>${summary.included}</strong></div>
+    <div><span>Needs identity</span><strong>${summary.needsIdentity}</strong></div>
     <div><span>${MATCH_STATES.unmatched}</span><strong>${summary.unmatched}</strong></div>
   </section>`;
 }
@@ -68,37 +67,33 @@ function bulkAcquisition(draft) {
   </details>`;
 }
 
-// DCL-LEX-04: one match-state vocabulary, sourced from the shared registry.
-// Bucket keys stay the same (used for the match-state CSS class); only the
-// visible label changes to a pure status word -- no verbs.
+// Decision D-5: a selected identity is trusted, so match confidence tiers
+// (exact/likely/possible) are gone -- a resolved crop just reads
+// "Identified" (or "Custom item"). Bucket keys are kept from the existing
+// match-state CSS classes (exact/possible/unmatched) so no app.css change
+// is needed here.
 function matchStatus(crop, selected) {
   if (!selected && ['queued', 'identifying'].includes(crop.status)) return ['possible', 'Identifying…'];
   if (!selected) return ['unmatched', MATCH_STATES.unmatched];
-  if (crop.customItem) return ['possible', MATCH_STATES.possible];
-  if (cropHasApprovableIdentity(crop)) return ['exact', crop.approved ? MATCH_STATES.confirmed : MATCH_STATES.exact];
-  const bucket = matchBucketFor(selected);
-  return [bucket, MATCH_STATES[bucket] || MATCH_STATES.possible];
+  if (crop.customItem) return ['possible', 'Custom item'];
+  return ['exact', 'Identified'];
 }
 
 function selectedMatch(crop, selected, state) {
   if (!selected) return '';
   const watching = Boolean(findWatchedItem(state.watchlistItems, selected));
   const [bucket, label] = matchStatus(crop, selected);
-  const approvable = cropHasApprovableIdentity(crop);
-  const approved = crop.approved && approvable;
-  const helpId = `exact-match-help-${crop.id}`;
-  // DCL-SCAN-06: unapproved state is a single "Confirm…" verb button;
-  // approved state is a status label plus a separate small "Undo" button.
+  const included = Boolean(crop.approved);
+  // Decision D-5: any selected identity is includable the moment it exists,
+  // so this is a plain include/skip toggle rather than a confirm gate.
   // Both branches keep the same data-action/data-approved contract app.js
   // reads (action.dataset.approved !== 'true' decides the next value).
-  const confirmationLabel = crop.customItem ? 'Confirm custom item' : approvable ? 'Confirm this item' : 'Catalog printing required';
-  const confirmControl = approved
-    ? `<span class="approval-state" role="status">Confirmed ✓</span><button class="button ghost small" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="true">Undo</button>`
-    : `<button class="button" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="false" ${approvable ? '' : `disabled aria-describedby="${escapeAttribute(helpId)}"`}>${confirmationLabel}</button>`;
+  const toggleControl = included
+    ? `<span class="approval-state" role="status">Included ✓</span><button class="button ghost small" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="true">Skip this item</button>`
+    : `<span class="match-state unmatched" role="status">Skip</span><button class="button" type="button" data-action="approve-crop" data-id="${escapeAttribute(crop.id)}" data-approved="false">Include this item</button>`;
   return `<section class="selected-match">
     <div><p class="eyebrow">Proposed match</p><h3>${escapeHTML(selected.name)}</h3><p class="item-meta">${escapeHTML([selected.game, selected.setName, selected.number, selected.variant || selected.finish].filter(Boolean).join(' · '))}</p><span class="match-state ${escapeAttribute(bucket)}">${escapeHTML(label)}</span></div>
-    <div class="button-row">${confirmControl}${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? `${icon('starFilled', { size: 16 })} Watching` : `${icon('star', { size: 16 })} Watch`}</button>` : ''}</div>
-    ${approvable ? '' : `<p id="${escapeAttribute(helpId)}" class="fine-print">Choose a catalog printing or create a custom item. A lookup suggestion is never approved automatically.</p>`}
+    <div class="button-row">${toggleControl}${state.featureFlags?.watchlists !== false ? `<button class="button ghost" type="button" data-action="toggle-watch" data-crop-watch="${escapeAttribute(crop.id)}">${watching ? `${icon('starFilled', { size: 16 })} Watching` : `${icon('star', { size: 16 })} Watch`}</button>` : ''}</div>
   </section>`;
 }
 
@@ -124,7 +119,7 @@ function cropCard(crop, index, state, canEditBoundary = false, recognitionMode =
   const description = crop.approved
     ? 'This item will be included with the purchase details below.'
     : selected
-      ? 'Confirm the identity, fill purchase details, then approve it.'
+      ? 'Skipped — it will not be added. Fill purchase details or include it below.'
       : identifying
         ? 'Identifying…'
         : 'Enter a query, retry, or create a custom identity.';
@@ -143,16 +138,16 @@ function cropCard(crop, index, state, canEditBoundary = false, recognitionMode =
 
 function confirmationBar(draft, summary, totals, currency) {
   const coverage = totals.items ? Math.round((totals.priced / totals.items) * 100) : 0;
-  return `<section class="review-confirmation" aria-label="Approved intake summary">
-    <div><p class="eyebrow">Ready to add</p><strong>${summary.approved} of ${summary.total} confirmed</strong><span>${totals.quantity} total quantity · ${escapeHTML(formatCurrency(totals.costBasis, currency))} ${escapeHTML(currency)} cost basis · ${coverage}% pricing coverage</span><small>Only confirmed items are added.${totals.excludedCostItems ? ` ${totals.excludedCostItems} other-currency cost entr${totals.excludedCostItems === 1 ? 'y is' : 'ies are'} kept separate.` : ''}</small></div>
-    <button class="button" type="button" data-action="batch-add" ${summary.approved && draft.status !== 'adding' ? '' : 'disabled'}>${draft.status === 'adding' ? 'Adding…' : `Add ${summary.approved} confirmed`}</button>
+  return `<section class="review-confirmation" aria-label="Included intake summary">
+    <div><p class="eyebrow">Ready to add</p><strong>${summary.included} of ${summary.total} included</strong><span>${totals.quantity} total quantity · ${escapeHTML(formatCurrency(totals.costBasis, currency))} ${escapeHTML(currency)} cost basis · ${coverage}% pricing coverage</span><small>Skipped and unmatched items aren't added.${totals.excludedCostItems ? ` ${totals.excludedCostItems} other-currency cost entr${totals.excludedCostItems === 1 ? 'y is' : 'ies are'} kept separate.` : ''}</small></div>
+    <button class="button" type="button" data-action="batch-add" ${summary.included && draft.status !== 'adding' ? '' : 'disabled'}>${draft.status === 'adding' ? 'Adding…' : `Add ${summary.included} items`}</button>
   </section>`;
 }
 
 function successView(draft, state) {
   const result = draft.result || { added: draft.addedCount || 0, skipped: 0, unresolved: 0, quantity: draft.addedCount || 0, costBasis: 0 };
   const currency = result.currency || state.settings?.currency || 'USD';
-  return `${pageHeader('Add items', 'Items added', 'Your confirmed items are saved locally and the collection snapshot has been updated.')}
+  return `${pageHeader('Add items', 'Items added', 'Your included items are saved locally and the collection snapshot has been updated.')}
     <section class="intake-success" role="status">
       <span class="success-mark" aria-hidden="true">✓</span><h2>${result.added} item${result.added === 1 ? '' : 's'} added</h2>
       <p>${result.quantity} total quantity · ${escapeHTML(formatCurrency(result.costBasis, currency))} recorded ${escapeHTML(currency)} cost basis${result.excludedCostItems ? ` · ${result.excludedCostItems} other-currency entr${result.excludedCostItems === 1 ? 'y' : 'ies'} kept separate` : ''}</p>
@@ -170,7 +165,7 @@ export function renderScanReview(draft, state = {}) {
   const sourceAvailable = Boolean(state.scanSourceAvailable);
   const recognitionMode = state.cardRecognitionMode || cardRecognitionMode();
   const headerActions = `<div class="button-row"><button class="button secondary small" type="button" data-action="save-scan">Save draft</button><button class="button danger small" type="button" data-action="discard-scan" data-draft-id="${escapeAttribute(draft.id)}">Discard draft</button></div>`;
-  return `${pageHeader('Add items', `Review ${draft.crops.length} detected item${draft.crops.length === 1 ? '' : 's'}`, 'Resolve each identity, add shared purchase details, then explicitly approve only the items you want.', headerActions)}
+  return `${pageHeader('Add items', `Review ${draft.crops.length} detected item${draft.crops.length === 1 ? '' : 's'}`, 'Resolve any unidentified items, add shared purchase details, then skip anything you do not want.', headerActions)}
     <nav class="intake-steps" aria-label="Intake progress"><span class="complete">1 · Scan or upload</span><span aria-current="step">2 · Review detected items</span><span>3 · Confirm and add</span></nav>
     ${queueSummary(summary)}
     ${draft.submissionError ? `<p class="inline-warning" role="status">${escapeHTML(draft.submissionError)}</p>` : ''}

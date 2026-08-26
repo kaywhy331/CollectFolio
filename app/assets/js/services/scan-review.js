@@ -2,7 +2,6 @@ import { createId } from '../core/utils.js';
 import { canonicalRawMarketCondition } from '../core/market-series.js';
 import { deleteRecord, deleteRecords, getAll, putRecord, saveHolding } from '../core/db.js';
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
-import { matchBucketFor } from '../core/view-models.js';
 import { searchCatalog } from './catalog.js';
 import { cardRecognitionMode, lookupCardWithCollectCapture } from './collectcapture.js';
 import { candidateEvidenceScore, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
@@ -89,19 +88,23 @@ export function selectedCropItem(crop = {}) {
   return crop.customItem || crop.candidates?.find((candidate) => candidate.id === crop.selectedId) || null;
 }
 
-function hasExactTCGCSVIdentity(item = {}) {
-  const match = /^(\d+):(\d+):(\d+)$/.exec(String(item.externalId || ''));
-  if (item.provider !== 'tcgcsv' || !match) return false;
-  const [categoryId, groupId, productId] = match.slice(1).map(Number);
-  return categoryId === Number(item.categoryId)
-    && groupId === Number(item.groupId)
-    && productId === Number(item.productId)
-    && [categoryId, groupId, productId].every((value) => Number.isSafeInteger(value) && value > 0);
+// Decision D-5: an extracted/matched identity is trusted -- any crop with a
+// selected candidate or a custom item is includable. There is no separate
+// "exact catalog printing" bar to clear first.
+export function cropHasApprovableIdentity(crop = {}) {
+  return Boolean(selectedCropItem(crop));
 }
 
-export function cropHasApprovableIdentity(crop = {}) {
-  const selected = selectedCropItem(crop);
-  return Boolean(selected && (crop.customItem || matchBucketFor(selected) === 'exact' || hasExactTCGCSVIdentity(selected)));
+// Decision D-5: identification success auto-selects the strongest candidate
+// and marks the crop included -- the collector reviews and can Skip, but
+// nothing sits gated behind an extra confirm step.
+function autoSelectTopCandidate(crop) {
+  if (!crop.candidates?.length) return;
+  const top = crop.candidates.reduce((best, candidate) =>
+    (Number(candidate.matchScore) || 0) > (Number(best.matchScore) || 0) ? candidate : best,
+  crop.candidates[0]);
+  crop.selectedId = top.id;
+  crop.approved = true;
 }
 
 export function createScanDraft(crops, mode = 'multi', acquisitionDefaults = {}) {
@@ -231,15 +234,21 @@ export function recoverInterruptedIdentifications(draft) {
   return recovered;
 }
 
+// Decision D-5: the exact/needs-review split is gone -- any selected identity
+// is trusted, so crops resolve to included (will be added), needsIdentity
+// (still queued/identifying/errored, no identity yet), or unmatched
+// (identification finished with no candidates). A crop with an identity the
+// collector explicitly skipped counts toward none of these three -- it isn't
+// waiting on anything, it just isn't included.
 export function scanReviewSummary(draft = {}) {
   const crops = Array.isArray(draft.crops) ? draft.crops : [];
-  const result = { total: crops.length, exact: 0, needsReview: 0, unmatched: 0, approved: 0 };
+  const result = { total: crops.length, included: 0, needsIdentity: 0, unmatched: 0 };
   for (const crop of crops) {
     const selected = selectedCropItem(crop);
-    if (crop.approved && cropHasApprovableIdentity(crop)) result.approved++;
-    if (!selected) result.unmatched++;
-    else if (!crop.customItem && cropHasApprovableIdentity(crop)) result.exact++;
-    else result.needsReview++;
+    if (crop.approved && cropHasApprovableIdentity(crop)) { result.included++; continue; }
+    if (selected) continue;
+    if (crop.status === 'unmatched') result.unmatched++;
+    else result.needsIdentity++;
   }
   return result;
 }
@@ -307,6 +316,7 @@ export async function identifyCrop(draft, cropId, editedQuery = '', options = {}
       crop.ocrText = result.recognition.visibleText.join('\n');
       crop.query = editedQuery.trim() || result.recognition.queries[0] || '';
       crop.candidates = result.candidates;
+      autoSelectTopCandidate(crop);
       crop.status = crop.candidates.length ? 'matched' : 'unmatched';
       crop.error = crop.candidates.length
         ? result.warnings.join(' ')
@@ -354,9 +364,10 @@ async function identifyCropLocally(crop, editedQuery, { visualSearch, mapVisualC
     } catch {
       crop.candidates = [];
     }
+    autoSelectTopCandidate(crop);
     crop.status = crop.candidates.length ? 'matched' : 'unmatched';
     crop.error = crop.candidates.length
-      ? `${recognitionWarning ? `${recognitionWarning} ` : ''}These Pokémon candidates were recovered by image similarity. Confirm the exact printing.`
+      ? `${recognitionWarning ? `${recognitionWarning} ` : ''}These Pokémon candidates were recovered by image similarity.`
       : `${recognitionWarning ? `${recognitionWarning} ` : ''}Couldn’t read a reliable card name. Try a tighter, well-lit crop or enter the name or collector number.`;
     return;
   }
@@ -372,11 +383,12 @@ async function identifyCropLocally(crop, editedQuery, { visualSearch, mapVisualC
       // Manual query remains available.
     }
   }
+  autoSelectTopCandidate(crop);
   crop.status = crop.candidates.length ? 'matched' : 'unmatched';
   crop.error = crop.candidates.length
     ? (recovered.candidates.length
       ? recovered.warnings.join(' ')
-      : 'No reliable text match was found, so these Pokémon candidates were recovered by image similarity. Confirm the exact printing.')
+      : 'No reliable text match was found, so these Pokémon candidates were recovered by image similarity.')
     : ['No catalog match found. Try the card name or collector number, or create a custom item.', ...recovered.warnings].join(' ');
 }
 
@@ -386,7 +398,9 @@ export async function selectCropCandidate(draft, cropId, candidateId, { hydrate 
   if (!crop || candidateIndex < 0) throw new Error('Candidate not found.');
   const candidate = await hydrate(crop.candidates[candidateIndex]);
   crop.candidates[candidateIndex] = candidate;
-  crop.selectedId = candidate.id; crop.customItem = null; crop.status = 'matched'; crop.approved = false;
+  // Decision D-5: picking a different candidate is still a trusted identity
+  // -- it keeps the crop included, it never re-gates it behind a confirm step.
+  crop.selectedId = candidate.id; crop.customItem = null; crop.status = 'matched'; crop.approved = true;
   await saveScanDraft(draft);
   return crop;
 }
@@ -395,7 +409,9 @@ export async function setCropCustomItem(draft, cropId, item) {
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
   crop.customItem = { ...item, id: item.id || createId(), externalId: item.externalId || '', provider: 'custom', image: '', imageSmall: '', priceOptions: item.priceOptions || [], currency: item.currency || 'USD' };
-  crop.selectedId = ''; crop.status = 'matched'; crop.approved = false;
+  // Decision D-5: a custom item the collector just described is trusted
+  // the moment it's created -- no separate confirm step.
+  crop.selectedId = ''; crop.status = 'matched'; crop.approved = true;
   await saveScanDraft(draft);
   return crop;
 }
@@ -460,7 +476,7 @@ export async function batchAddApproved(draft, currency = 'USD') {
   draft.result = {
     added: approved.length,
     skipped: Math.max(0, summary.total - approved.length),
-    unresolved: summary.unmatched,
+    unresolved: summary.unmatched + summary.needsIdentity,
     quantity: totals.quantity,
     costBasis: totals.costBasis,
     currency,

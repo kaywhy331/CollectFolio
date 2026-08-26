@@ -130,7 +130,7 @@ async function configureCollectCaptureStub(page, { respond } = {}) {
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.34-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.35-test',
       COLLECTCAPTURE_API_URL: '${COLLECTCAPTURE_ORIGIN}/', ENABLE_COLLECTCAPTURE: true,
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
       ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
@@ -152,7 +152,7 @@ async function configureDisabledCollectCapture(page, { localRollback = false } =
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.34-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.35-test',
       COLLECTCAPTURE_API_URL: '', ENABLE_COLLECTCAPTURE: false,
       ENABLE_LOCAL_SCAN_ROLLBACK: ${localRollback},
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
@@ -271,7 +271,7 @@ test('scanner sends only the bounded crop to CollectCapture and does not invoke 
   await expect.poll(() => page.evaluate(() => window.__localRecognitionCalls)).toBe(0);
 });
 
-test('a collector-selected CollectCapture catalog printing is approvable without a browser-side catalog request', async ({ page }) => {
+test('a CollectCapture catalog printing is auto-selected as a trusted identity and stays selectable without a browser-side catalog request', async ({ page }) => {
   const browserCatalogRequests = [];
   page.on('request', (request) => {
     if (/\/catalog\//.test(new URL(request.url()).pathname)) browserCatalogRequests.push(request.url());
@@ -282,17 +282,23 @@ test('a collector-selected CollectCapture catalog printing is approvable without
   await skipOnboarding(page);
   await openImageReview(page, unrecognizablePNG);
 
+  // Decision D-5: identification success auto-selects the strongest (here,
+  // only) candidate and auto-includes the crop the instant it resolves --
+  // there is no separate confirm step left to click.
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Identified');
+  await expect(page.locator('.approval-state')).toHaveText('Included ✓');
+  expect(browserCatalogRequests).toEqual([]);
+
+  // The collector can still open the candidate list and (re)select this
+  // catalog row explicitly -- that path stays a trusted, addable identity
+  // too, and still never calls a browser-side catalog endpoint.
+  await page.getByText('Choose or replace match').click();
   const candidate = page.getByRole('button', { name: /CollectCapture Identity Card/ });
   await candidate.click();
-  // DCL-LEX-04: a TCGCSV row is an approvable exact source identity, so the
-  // shared match-state vocabulary reads "Exact match" (was the
-  // provider-specific "Catalog printing selected").
-  await expect(page.locator('.selected-match .match-state')).toHaveText('Exact match');
-  expect(browserCatalogRequests).toEqual([]);
-  const confirm = page.getByRole('button', { name: 'Confirm this item', exact: true });
-  await expect(confirm).toBeEnabled();
-  await confirm.click();
-  await page.getByRole('button', { name: 'Add 1 confirmed', exact: true }).click();
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Identified');
+  await expect(page.locator('.approval-state')).toHaveText('Included ✓');
+
+  await page.getByRole('button', { name: 'Add 1 items', exact: true }).click();
   await expect(page.getByRole('heading', { name: '1 item added' })).toBeVisible();
   expect(browserCatalogRequests).toEqual([]);
 });
@@ -317,6 +323,11 @@ test('manual scanner query retries through CollectCapture without invoking brows
   // scope to the review card since the shell topbar also has a "Search"
   // button (DCL-SET-08).
   await page.locator('.review-card').getByRole('button', { name: 'Search', exact: true }).click();
+  // Decision D-5: a resolved candidate is auto-selected and the crop is
+  // auto-included -- the "Choose or replace match" candidate list defaults
+  // to collapsed once something is selected, so open it to see the row.
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Identified');
+  await page.getByText('Choose or replace match').click();
   await expect(page.getByRole('button', { name: /Synthetic Dragon ex/ })).toBeVisible();
   await expect(page.locator('[data-crop-query]')).toHaveValue('Synthetic Dragon ex 223/197');
   expect(requests).toHaveLength(2);

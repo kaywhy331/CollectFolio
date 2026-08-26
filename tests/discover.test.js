@@ -44,7 +44,9 @@ function state(overrides = {}) {
   };
 }
 
-test('Discover uses one tile grid with customer-facing match badges instead of grouped buckets', () => {
+test('Discover uses one ungrouped tile grid and trusts extracted/matched identity without confirmation badges', () => {
+  // Decision D-5: catalog results ARE the identity -- no grouped exact/likely
+  // buckets, no match-confidence badge, every card offers Add unconditionally.
   const html = renderSearch(state({
     search: {
       query: 'Lotus', category: 'magic', provider: 'all', filters: {}, view: 'gallery', loading: false, warnings: [],
@@ -53,9 +55,10 @@ test('Discover uses one tile grid with customer-facing match badges instead of g
   }));
   assert.doesNotMatch(html, /Exact matches|Likely matches|result-group/);
   assert.match(html, /catalog-tile-grid result-list gallery/);
-  assert.match(html, /match-badge exact">Exact/);
-  assert.match(html, /match-badge likely">Likely/);
+  assert.doesNotMatch(html, /match-badge/);
   assert.equal((html.match(/class="result-card gallery catalog-tile"/g) || []).length, 2);
+  assert.equal((html.match(/data-action="add-catalog"/g) || []).length, 2);
+  assert.doesNotMatch(html, /Confirm exact item|review-catalog-identity/);
   assert.doesNotMatch(html, /% text match|91%|100%/);
   assert.doesNotMatch(html, />Details</);
 });
@@ -461,27 +464,31 @@ test('Discover renders related sealed formats as independent tiles without famil
   assert.match(html, /product-format-badge">Case/);
 });
 
-test('Quick Inspector requires identity confirmation, hides empty metrics, and supports both mobile detents', () => {
+test('Quick Inspector trusts extracted identity without confirmation, hides empty metrics, shows the catalog crumb, and is a non-modal panel supporting both detents', () => {
+  // Decision D-5: there is no "confirm exact item" step left anywhere --
+  // Add/Watch are always available the instant the panel opens.
   const catalogRef = catalogReferenceForItem({ ...item, name: '<script>bad</script>' });
   const html = renderQuickInspector({ origin: 'search', item: { ...item, name: '<script>bad</script>' }, catalogRef }, state());
   assert.doesNotMatch(html, /<script>bad<\/script>/);
   assert.match(html, /Synthetic Alpha · #001 · foil · english · Rare/i);
-  // DCL-LEX-04: match-state vocabulary is the shared registry now --
-  // unconfirmed/no-bucket identity reads "No match" (was "Identity unresolved").
-  assert.match(html, />No match</);
-  assert.match(html, /data-action="confirm-detail-identity">Confirm exact item/);
+  assert.doesNotMatch(html, /match-badge|>No match</);
+  assert.doesNotMatch(html, /confirm-detail-identity|Confirm exact item/);
   assert.doesNotMatch(html, /No approved outlook published/);
-  assert.doesNotMatch(html, /data-action="add-from-detail"/);
-  assert.doesNotMatch(html, /data-action="toggle-watch"/);
+  // Directive 3: the game/set catalog breadcrumb renders inside the panel.
+  assert.match(html, /<nav class="catalog-crumb" aria-label="Catalog path">/);
+  assert.match(html, /data-action="add-from-detail">Add to collection/);
+  assert.match(html, /data-action="toggle-watch" data-detail-watch="true"/);
   assert.match(html, /data-action="open-full-detail"/);
-  assert.match(html, /role="dialog" aria-modal="true"/);
+  // Directive 2: a real side panel, not a modal dialog -- no aria-modal,
+  // no focus trap semantics baked into the markup.
+  assert.match(html, /role="complementary" aria-labelledby="quick-inspector-title"/);
+  assert.doesNotMatch(html, /role="dialog"|aria-modal/);
   assert.match(html, /data-sheet-detent="medium"/);
 
-  const confirmed = renderQuickInspector({ origin: 'search', item, catalogRef, identityConfirmed: true, detent: 'expanded' }, state());
-  assert.match(confirmed, /confirmed by you/i);
-  assert.match(confirmed, /data-action="add-from-detail"/);
-  assert.match(confirmed, /data-action="toggle-watch"/);
-  assert.match(confirmed, /data-sheet-detent="expanded"/);
+  const expanded = renderQuickInspector({ origin: 'search', item, catalogRef, detent: 'expanded' }, state());
+  assert.match(expanded, /data-action="add-from-detail">Add to collection/);
+  assert.match(expanded, /data-action="toggle-watch"/);
+  assert.match(expanded, /data-sheet-detent="expanded"/);
 });
 
 test('Scan separates camera and upload, previews the workflow, and keeps import copy terse', () => {

@@ -8,7 +8,6 @@ import { selectPublicationForCatalogItem } from '../core/market-series.js';
 import { CATALOG_GAMES, catalogGame, filterCatalogProducts, filterCatalogSets, mergeCatalogGames, catalogSetYears } from '../services/catalog-browse.js';
 import { findWatchedItem } from '../services/watchlist.js';
 import { isTrajectoryStale, trajectoryForecastEstimates, trajectoryKeyForItem } from '../services/forecast-trajectory.js';
-import { MATCH_STATES } from '../core/copy.js';
 
 // Trajectory-v1 (T6): looks up a prefetched forecast packet for a TCGCSV
 // catalog item (see app.js's hydrateTrajectoryForecasts) and shapes it
@@ -116,7 +115,6 @@ function productFormat(item, model) {
 
 function resultCard(item, index, state, view, {
   scope = 'search',
-  matchBadge = true,
   compact = false
 } = {}) {
   const rawPublication = item.canonicalVariantId ? state.intelligence?.byVariant?.[item.canonicalVariantId] : null;
@@ -130,7 +128,6 @@ function resultCard(item, index, state, view, {
     : [model.setName, model.cardNumber ? `#${model.cardNumber}` : '', model.type, model.variant, model.rarity]
   ).filter(Boolean).join(' · ');
   const format = productFormat(item, model);
-  const confirmedIdentity = model.matchBucket === 'exact';
   // DCL-DISC-03/Decision D-2: list view only gets one 30-day movement chip
   // plus the pricing provenance small line; gallery tiles stay identity +
   // price + badge with no other market data.
@@ -138,20 +135,19 @@ function resultCard(item, index, state, view, {
   const movementChip = listView && model.change30d !== null
     ? `<span class="result-movement ${model.change30d >= 0 ? 'positive' : 'negative'}"><span aria-hidden="true">${model.change30d >= 0 ? '↗' : '↘'}</span> ${escapeHTML(signedPercent(model.change30d))}</span>`
     : '';
+  // Decision D-5: catalog results ARE the identity -- a matched/extracted
+  // item is trusted, so every card always offers Add + Watch (no separate
+  // confirmation step, no match-confidence badge).
   return `<article class="result-card ${escapeAttribute(view)}${compact ? ' catalog-tile' : ''}" data-action="open-detail" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}" tabindex="0" aria-label="Inspect ${escapeAttribute(model.name || 'catalog result')}">
-    <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}${!compact || item.productKind === 'sealed' ? `<span class="product-format-badge">${escapeHTML(format)}</span>` : ''}${matchBadge ? `<span class="match-badge ${escapeAttribute(model.matchBucket)}">${escapeHTML(MATCH_STATES[model.matchBucket] || MATCH_STATES.unmatched)}</span>` : ''}</div>
+    <div class="result-art">${externalImage(item, 'result-image', { loading: index < 12 ? 'eager' : 'lazy' })}${!compact || item.productKind === 'sealed' ? `<span class="product-format-badge">${escapeHTML(format)}</span>` : ''}</div>
     <div class="result-copy"><h3>${escapeHTML(model.name || 'Unnamed collectible')}</h3><p class="item-meta">${escapeHTML(identity || 'Identity details pending')}</p>${pricingMarkup(model, item, { compact: listView ? false : compact })}${movementChip}</div>
-    <div class="result-actions">${confirmedIdentity ? `<button class="button small" type="button" data-action="add-catalog" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Add to collection</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">${escapeHTML(watchLabel)}</button>` : ''}` : `<button class="button small" type="button" data-action="review-catalog-identity" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Confirm exact item</button>`}</div>
+    <div class="result-actions"><button class="button small" type="button" data-action="add-catalog" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">Add to collection</button>${state.featureFlags?.watchlists !== false ? `<button class="button ghost small" type="button" data-action="toggle-watch" data-catalog-scope="${escapeAttribute(scope)}" data-index="${index}">${escapeHTML(watchLabel)}</button>` : ''}</div>
   </article>`;
 }
 
-function catalogTileGrid(entries, state, view = 'gallery', {
-  scope = 'search',
-  matchBadge = scope === 'search'
-} = {}) {
+function catalogTileGrid(entries, state, view = 'gallery', { scope = 'search' } = {}) {
   return `<div class="catalog-tile-grid result-list ${escapeAttribute(view)}${scope === 'browse' ? ' browse-product-grid' : ''}">${entries.map(({ item, index }) => resultCard(item, index, state, view, {
     scope,
-    matchBadge,
     compact: true
   })).join('')}</div>`;
 }
@@ -165,7 +161,7 @@ function resultGrid(items, state, view) {
     item,
     index: state.search.results.indexOf(item) >= 0 ? state.search.results.indexOf(item) : visibleIndex
   }));
-  return catalogTileGrid(entries, state, view, { scope: 'search', matchBadge: true });
+  return catalogTileGrid(entries, state, view, { scope: 'search' });
 }
 
 function recentSearches(state) {
@@ -384,7 +380,7 @@ function renderBrowseProducts(state, browse) {
     </div>
     ${browse.productsLoadingMore && browse.productQuery ? '<p class="sort-availability" role="status">Searching the complete set…</p>' : ''}
     ${browseWarnings(browse)}
-    ${browse.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading cards</span></div>' : visible.length ? `${catalogTileGrid(visible, state, 'gallery', { scope: 'browse', matchBadge: false })}${catalogPager({ action: 'browse-products-page', page, totalPages, start, end, total: exactTotal, loading: browse.productsLoadingMore, label: 'set products' })}` : browse.productsLoadingMore ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching the complete set</span></div>' : emptyState(`No matching ${noun[1]}`, browse.error ? 'Retry the catalog request.' : 'Try another name, collector number, rarity, or product type.', browse.error ? '<button class="button" type="button" data-action="retry-browse">Retry</button>' : '<button class="button ghost" type="button" data-action="clear-browse-product-query">Clear search</button>')}`;
+    ${browse.loading ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Loading cards</span></div>' : visible.length ? `${catalogTileGrid(visible, state, 'gallery', { scope: 'browse' })}${catalogPager({ action: 'browse-products-page', page, totalPages, start, end, total: exactTotal, loading: browse.productsLoadingMore, label: 'set products' })}` : browse.productsLoadingMore ? '<div class="result-loading" role="status"><span></span><span></span><span></span><span class="sr-only">Searching the complete set</span></div>' : emptyState(`No matching ${noun[1]}`, browse.error ? 'Retry the catalog request.' : 'Try another name, collector number, rarity, or product type.', browse.error ? '<button class="button" type="button" data-action="retry-browse">Retry</button>' : '<button class="button ghost" type="button" data-action="clear-browse-product-query">Clear search</button>')}`;
 }
 
 function renderBrowse(state) {

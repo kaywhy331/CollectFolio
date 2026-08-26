@@ -25,6 +25,37 @@ async function completeFirstUse(page) {
   await expect(home).toBeVisible();
 }
 
+const PANEL_TCGCSV_ORIGIN = 'https://tcgcsv-premium-ux-panel-e2e.example.test';
+
+// A minimal deterministic catalog so the panel-focused tests below can open
+// a real result's quick view without depending on live network access.
+async function mockPanelCatalog(page) {
+  await page.route('**/runtime-config.js', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
+      SUPABASE_URL: window.location.origin + '/__premium-ux-panel-cloud',
+      SUPABASE_ANON_KEY: 'synthetic-browser-key',
+      APP_VERSION: 'premium-ux-panel',
+      TCGCSV_CATALOG_URL: '${PANEL_TCGCSV_ORIGIN}/',
+      ENABLE_TESSERACT: false,
+      ENABLE_PRICE_INTELLIGENCE: false
+    });`
+  }));
+  await page.route('**/__premium-ux-panel-cloud/**', (route) => route.fulfill({ contentType: 'application/json', body: '[]' }));
+  await page.route(`${PANEL_TCGCSV_ORIGIN}/catalog/search**`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      products: [{
+        productId: 77001, categoryId: 3, groupId: 1442, categoryName: 'Pokemon', groupName: 'Panel Test Set',
+        name: 'Panel Test Card', cleanName: 'Panel Test Card', cardNumber: '1',
+        prices: [{ subtypeName: 'Holofoil', marketPrice: 12 }]
+      }], sourceUpdatedAt: '2026-08-20'
+    })
+  }));
+  await page.route(`${PANEL_TCGCSV_ORIGIN}/catalog/forecasts/manifest**`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+  await page.route(`${PANEL_TCGCSV_ORIGIN}/catalog/history/manifest**`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+}
+
 async function layoutHealth(page) {
   return page.evaluate(() => {
     const navigation = document.querySelector('[aria-label="Primary"]');
@@ -134,6 +165,64 @@ test('all primary destinations have no serious or critical WCAG 2.2 A/AA violati
     const blocking = report.violations.filter(({ impact }) => ['serious', 'critical'].includes(impact));
     expect(blocking, `${path}\n${JSON.stringify(blocking, null, 2)}`).toEqual([]);
   }
+});
+
+test('the quick view panel is a non-modal, labelled complementary region with no serious or critical violations', async ({ page }) => {
+  // Directive 2: the panel is a real side window, not a modal dialog -- no
+  // aria-modal, no focus trap on desktop, just a labelled complementary
+  // landmark layered over whatever the collector was already browsing.
+  await mockPanelCatalog(page);
+  await completeFirstUse(page);
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.locator('#catalog-query').fill('Panel Test');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
+  const firstResult = page.locator('.result-card').first();
+  await expect(firstResult).toBeVisible();
+  await firstResult.click();
+  const panel = page.locator('.quick-inspector');
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute('role', 'complementary');
+  await expect(panel).not.toHaveAttribute('aria-modal', 'true');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // The rest of the shell stays reachable -- the primary nav is not inert
+  // while the panel is open (non-modal: no focus trap on desktop).
+  await expect(page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Home' })).toBeEnabled();
+
+  const report = await new AxeBuilder({ page })
+    .include('#main-content')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  const blocking = report.violations.filter(({ impact }) => ['serious', 'critical'].includes(impact));
+  expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
+});
+
+test('on mobile the quick view is a bottom drawer that closes on an outside tap', async ({ page }) => {
+  await mockPanelCatalog(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await completeFirstUse(page);
+  await page.goto('/discover/search?category=tcgcsv-category-3&provider=tcgcsv');
+  await page.locator('#catalog-query').fill('Panel Test');
+  await page.locator('#catalog-search').getByRole('button', { name: 'Search', exact: true }).click();
+  const firstResult = page.locator('.result-card').first();
+  await expect(firstResult).toBeVisible();
+  await firstResult.click();
+  const panel = page.locator('.quick-inspector');
+  await expect(panel).toBeVisible();
+
+  const scrim = page.locator('.inspector-scrim');
+  await expect(scrim).toBeVisible();
+  // The scrim spans the full viewport behind the sheet, but the sheet
+  // itself (docked to the bottom, "medium" detent) visually covers and
+  // intercepts pointer events over the scrim's own geometric center --
+  // tap a corner that is actually outside the sheet, i.e. genuinely
+  // "outside" from the collector's point of view.
+  await scrim.tap({ position: { x: 20, y: 20 } });
+  await expect(panel).toHaveCount(0);
+  // The mobile open pushed a shallow history entry to back the tap-close --
+  // the collector should still be exactly where they were searching, not
+  // bounced up the stack an extra step.
+  await expect(page).toHaveURL(/\/discover/);
+  await expect(page.locator('#catalog-query')).toHaveValue('Panel Test');
 });
 
 test('first-use performance stays inside the LCP, interaction, and layout-shift budgets', async ({ page }) => {

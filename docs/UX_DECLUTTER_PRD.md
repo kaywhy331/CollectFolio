@@ -325,6 +325,7 @@ The instruments that make "done" checkable and keep it done.
 | D-2 | 30-day movement chip on result cards? | Yes, list view only; gallery tiles stay identity + price + badge. |
 | D-3 | Detail nav: real tabs or index? | In-page index with scroll-spy (cheapest honest treatment; real tabs are a P3 candidate). |
 | D-4 | Discover "Data source" filter control | Remove entirely (automatic behavior is the only sensible default). |
+| D-5 | Identity confirmation gating? | **DECIDED 2026-08-26 (Kevin):** Identity confirmation removed — extracted/matched identities are trusted; Add/Watch are never gated on confirmation. Amends root redesign PRD QUICK-003, SCAN-004/005, DISC-009. |
 
 ## 6. Phasing & release mapping
 

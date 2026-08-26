@@ -7,6 +7,7 @@ import {
   createScanDraft,
   cropHasApprovableIdentity,
   eligibleApprovedCrops,
+  identifyCrop,
   identifyDraftCrops,
   normalizeAcquisition,
   searchCatalogCandidates,
@@ -17,6 +18,45 @@ import {
 } from '../app/assets/js/services/scan-review.js';
 import { catalogReferenceForItem } from '../app/assets/js/core/catalog-identity.js';
 import { renderScanReview } from '../app/assets/js/views/scan.js';
+
+// A minimal in-memory IndexedDB shim covering only what core/db.js's
+// putRecord needs against the single 'scans' store identifyCrop() writes to
+// via saveScanDraft(). Node has no IndexedDB; without this shim putRecord
+// rejects and the auto-select assertions below never get a chance to run.
+// Test-local only, does not add a runtime dependency (mirrors the shim in
+// forecast-trajectory.test.js).
+function installFakeScansIndexedDB() {
+  const scans = new Map();
+  function requestFor(action) {
+    const target = new EventTarget();
+    target.result = undefined;
+    target.error = undefined;
+    queueMicrotask(() => {
+      try {
+        target.result = action();
+        target.dispatchEvent(new Event('success'));
+      } catch (error) {
+        target.error = error;
+        target.dispatchEvent(new Event('error'));
+      }
+    });
+    return target;
+  }
+  const db = {
+    objectStoreNames: { contains: () => true },
+    transaction() {
+      const txTarget = new EventTarget();
+      queueMicrotask(() => txTarget.dispatchEvent(new Event('complete')));
+      return {
+        objectStore: () => ({ put: (value) => requestFor(() => { scans.set(value.id, value); return value; }) }),
+        addEventListener: txTarget.addEventListener.bind(txTarget)
+      };
+    }
+  };
+  const original = globalThis.indexedDB;
+  globalThis.indexedDB = { open: () => requestFor(() => db) };
+  return () => { globalThis.indexedDB = original; };
+}
 
 const card = {
   id: 'pokemon:sv3-223', provider: 'pokemon', externalId: 'sv3-223', category: 'pokemon',
@@ -37,9 +77,12 @@ function reviewDraft() {
   return draft;
 }
 
-test('scan review distinguishes queue state and totals only explicitly approved items', () => {
+test('scan review distinguishes queue state and totals only explicitly included items', () => {
+  // Decision D-5: the exact/needsReview/approved split collapses to
+  // included/needsIdentity/unmatched -- a selected identity is trusted the
+  // moment it exists, so totals still only count the explicitly included crop.
   const draft = reviewDraft();
-  assert.deepEqual(scanReviewSummary(draft), { total: 2, exact: 1, needsReview: 0, unmatched: 1, approved: 1 });
+  assert.deepEqual(scanReviewSummary(draft), { total: 2, included: 1, needsIdentity: 1, unmatched: 0 });
   assert.deepEqual(scanReviewTotals(draft), { items: 1, quantity: 2, costBasis: 22, priced: 1 });
 });
 
@@ -77,7 +120,7 @@ test('scan acquisition retains explicit currencies and excludes mismatched cost 
   });
 });
 
-test('redesigned review exposes bulk editing, exact identity, cost basis, and explicit confirmation', () => {
+test('redesigned review exposes bulk editing, trusted identity, cost basis, and an include/skip toggle', () => {
   const draft = reviewDraft();
   const html = renderScanReview(draft, {
     settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true },
@@ -85,11 +128,13 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   });
   assert.match(html, /Review queue summary/);
   assert.match(html, /Apply purchase details to all/);
-  // DCL-SCAN-06: "Confirm" becomes "Confirmed ✓" plus a separate "Undo" --
-  // "Confirmed printing" is retired match-state vocabulary.
-  assert.match(html, /approval-state" role="status">Confirmed ✓</);
-  assert.match(html, /data-action="approve-crop"[^>]*data-approved="true">Undo/);
-  assert.doesNotMatch(html, /Confirmed printing/);
+  // Decision D-5: there is no confirm step -- a resolved crop is
+  // "Included ✓" with a "Skip this item" ghost button next to it, both
+  // wired through the same data-action="approve-crop"/data-approved
+  // contract app.js already reads.
+  assert.match(html, /approval-state" role="status">Included ✓</);
+  assert.match(html, /data-action="approve-crop"[^>]*data-approved="true">Skip this item/);
+  assert.doesNotMatch(html, /Confirm this item|Confirmed ✓|Confirmed printing|confirm-detail-identity|review-catalog-identity/);
   assert.match(html, /data-crop-acquisition="purchasePrice"/);
   assert.match(html, /data-crop-acquisition="purchaseCurrency"/);
   assert.match(html, /data-crop-acquisition="manualMarketCurrency"/);
@@ -97,10 +142,10 @@ test('redesigned review exposes bulk editing, exact identity, cost basis, and ex
   assert.match(html, /data-crop-acquisition="language"/);
   assert.match(html, /data-crop-acquisition="retainPhoto"/);
   assert.match(html, /\$22\.00 USD cost basis/);
-  assert.match(html, /Add 1 confirmed/);
-  // DCL-SCAN-07: confirmation-bar small print shortens to one sentence.
-  assert.match(html, /Only confirmed items are added\./);
-  assert.doesNotMatch(html, /Unconfirmed and unmatched items are skipped/);
+  assert.match(html, /Add 1 items/);
+  // Confirmation-bar small print reflects include/skip, not confirm/approve.
+  assert.match(html, /Skipped and unmatched items aren't added\./);
+  assert.doesNotMatch(html, /Unconfirmed and unmatched items are skipped|Only confirmed items are added/);
   // DCL-SCAN-02: the shared "How photos are handled" disclosure is the one
   // place pipeline/privacy prose lives now (data-integrity guarantee
   // preserved: the full source photo never leaves the browser / is never
@@ -138,52 +183,86 @@ test('scan review recognizes a condition-aware mapped watch', () => {
   assert.match(html, /<svg[^>]*aria-hidden="true"/);
 });
 
-test('review labels candidates as similarity evidence and requires explicit identity confirmation', () => {
+test('a skipped-but-identified crop shows the proposed match and an Include toggle, not a confirm gate', () => {
   const draft = reviewDraft();
   draft.crops[0].approved = false;
   const html = renderScanReview(draft, {
     settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true }
   });
   assert.match(html, /Proposed match/);
-  // DCL-SCAN-06: approval control verb generalizes to "Confirm this item"
-  // (retiring the printing-specific label).
-  assert.match(html, /Confirm this item/);
+  // Decision D-5: the selected identity is already trusted -- skipping it is
+  // just an inclusion choice ("Include this item"), never a confirm gate.
+  assert.match(html, /data-action="approve-crop"[^>]*data-approved="false">Include this item/);
+  assert.doesNotMatch(html, /Confirm this item|Catalog printing required|lookup suggestion is never approved automatically/i);
   assert.match(html, /Strong lookup match/);
   assert.doesNotMatch(html, /100%/);
-  assert.doesNotMatch(html, /Approve this exact item/);
 });
 
-test('similarity-only candidates cannot be approved or added as exact identities', async () => {
+test('any selected candidate is a trusted, approvable identity regardless of match confidence (Decision D-5)', async () => {
+  // Directive 1: extracted/matched information is assumed correct -- a
+  // "likely" (non-exact) lookup match is just as approvable as an exact one.
+  // There is no separate "exact catalog printing" bar left to clear.
   const draft = reviewDraft();
   const likely = { ...card, id: 'pokemon:possible', externalId: 'possible', matchBucket: 'likely', matchScore: 0.96 };
   draft.crops[0].candidates = [likely];
   draft.crops[0].selectedId = likely.id;
   draft.crops[0].approved = true;
+  assert.equal(cropHasApprovableIdentity(draft.crops[0]), true);
+  assert.equal(eligibleApprovedCrops(draft).length, 1);
+  assert.deepEqual(scanReviewSummary(draft), { total: 2, included: 1, needsIdentity: 1, unmatched: 0 });
+  const html = renderScanReview(draft, { settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true } });
+  assert.match(html, /approval-state" role="status">Included ✓</);
+  assert.doesNotMatch(html, /Catalog printing required|Confirm this item/);
+});
+
+test('a crop with no selected candidate or custom item still cannot be included -- data-integrity gate remains', async () => {
+  // The one gate that survives Decision D-5: something must actually be
+  // selected (a candidate or a custom item) before a crop can be included --
+  // trust replaces the confirm step, it does not remove the need for an identity.
+  const draft = reviewDraft();
+  draft.crops[0].candidates = [];
+  draft.crops[0].selectedId = '';
+  draft.crops[0].customItem = null;
+  draft.crops[0].approved = false;
   assert.equal(cropHasApprovableIdentity(draft.crops[0]), false);
   assert.equal(eligibleApprovedCrops(draft).length, 0);
-  assert.deepEqual(scanReviewSummary(draft), { total: 2, exact: 0, needsReview: 1, unmatched: 1, approved: 0 });
-  const html = renderScanReview(draft, { settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true } });
-  assert.match(html, /Catalog printing required/);
-  assert.match(html, /lookup suggestion is never approved automatically/i);
   await assert.rejects(() => setCropApproval(draft, draft.crops[0].id, true), /catalog printing/i);
 });
 
-test('a collector-selected TCGCSV row is an approvable exact source identity, not a similarity-only guess', () => {
-  const draft = reviewDraft();
-  const catalogRow = {
-    id: 'tcgcsv:3:1102:5001', externalId: '3:1102:5001', provider: 'tcgcsv',
-    categoryId: 3, groupId: 1102, productId: 5001, name: 'Synthetic Dragon ex',
-    matchBucket: 'likely', matchScore: 0.91
-  };
-  draft.crops[0].candidates = [catalogRow];
-  draft.crops[0].selectedId = catalogRow.id;
-  draft.crops[0].approved = true;
-  assert.equal(cropHasApprovableIdentity(draft.crops[0]), true);
-  assert.equal(eligibleApprovedCrops(draft).length, 1);
-  assert.deepEqual(scanReviewSummary(draft), { total: 2, exact: 1, needsReview: 0, unmatched: 1, approved: 1 });
+test('successful identification auto-selects the strongest candidate and auto-includes the crop', async () => {
+  // Decision D-5: identification success trusts the top match immediately --
+  // the collector reviews and can Skip, but nothing sits gated behind an
+  // extra confirm step. This exercises the real identifyCrop() (not a mock),
+  // so it covers autoSelectTopCandidate wiring through the collectcapture path.
+  const restoreIndexedDB = installFakeScansIndexedDB();
+  try {
+    const draft = createScanDraft([
+      { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+    ]);
+    const weak = { ...card, id: 'pokemon:weak', externalId: 'weak', matchScore: 0.4 };
+    const strong = { ...card, id: 'pokemon:strong', externalId: 'strong', matchScore: 0.93 };
+    const fakeLookup = async () => ({
+      recognition: { source: 'ocr', visibleText: ['Charizard ex'], queries: ['Charizard ex'] },
+      candidates: [weak, strong],
+      warnings: []
+    });
+    const crop = await identifyCrop(draft, draft.crops[0].id, '', { lookup: fakeLookup });
+    assert.equal(crop.status, 'matched');
+    assert.equal(crop.selectedId, strong.id);
+    assert.equal(crop.approved, true);
 
-  draft.crops[0].candidates[0] = { ...catalogRow, productId: 9999 };
-  assert.equal(cropHasApprovableIdentity(draft.crops[0]), false);
+    const noMatchLookup = async () => ({
+      recognition: { source: 'ocr', visibleText: [], queries: [] },
+      candidates: [],
+      warnings: []
+    });
+    const unmatchedCrop = await identifyCrop(draft, draft.crops[0].id, '', { lookup: noMatchLookup });
+    assert.equal(unmatchedCrop.status, 'unmatched');
+    assert.equal(unmatchedCrop.approved, false);
+    assert.equal(unmatchedCrop.selectedId, '');
+  } finally {
+    restoreIndexedDB();
+  }
 });
 
 test('catalog candidate search relaxes in order, recovers, and deduplicates useful matches', async () => {

@@ -61,7 +61,54 @@ let activeDraft = null;
 let activeDetail = null;
 let activeRoute = parseAppRoute(location);
 let inspectorReturnTarget = null;
-let inspectorWasOpen = false;
+let panelWasOpen = false;
+// Quick-view panel state (UX declutter directive 2, Kevin 2026-08-26): a
+// persistent, non-modal side panel independent of routing. Opening it from
+// a list sets activeDetail + panelOpen WITHOUT switching activeView/the
+// URL to the full detail route -- render() just appends the panel's
+// markup after whatever view is already on screen. Reaching the real
+// detail route (a direct link, or "Open full details") always closes the
+// panel first (see resolveRouteContext) so the two never show at once.
+let panelOpen = false;
+// True only while a shallow, same-path history entry backs the panel open
+// on a narrow (mobile bottom-sheet) viewport, so the system back gesture
+// closes it (desktop/tablet never push one -- Esc and the close button are
+// the only close affordances there). Cleared the moment a real navigation
+// pushes its own entry on top, so a later back-gesture falls through to
+// ordinary route handling instead of misfiring a panel close.
+let panelHistoryPushed = false;
+let panelResizePointerId = null;
+let panelResizeStartX = 0;
+let panelResizeStartWidth = 0;
+const PANEL_WIDTH_MIN = 320;
+const PANEL_WIDTH_MAX = 640;
+
+function currentPanelWidth() {
+  const panel = root.querySelector('.quick-inspector');
+  return panel ? panel.getBoundingClientRect().width : 420;
+}
+
+// The resize handle is a focusable role="separator" -- ARIA 1.2 treats a
+// focusable separator as a range widget, so it requires aria-valuenow (axe
+// aria-required-attr, critical impact) alongside the min/max it was
+// missing. Kept in sync here rather than threaded through
+// renderQuickInspector's markup because the live width only exists after
+// layout (initial render, a drag, or a keyboard nudge), not at string-build
+// time.
+function syncPanelResizeHandleValue(width = currentPanelWidth()) {
+  const handle = root.querySelector('.panel-resize-handle');
+  if (!handle) return;
+  handle.setAttribute('aria-valuemin', String(PANEL_WIDTH_MIN));
+  handle.setAttribute('aria-valuemax', String(PANEL_WIDTH_MAX));
+  handle.setAttribute('aria-valuenow', String(Math.round(width)));
+}
+
+function setPanelWidth(width) {
+  const clamped = Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, Math.round(width)));
+  document.documentElement.style.setProperty('--panel-width', `${clamped}px`);
+  syncPanelResizeHandleValue(clamped);
+  return clamped;
+}
 let searchGeneration = 0;
 let browseGeneration = 0;
 let catalogGamesGeneration = 0;
@@ -259,7 +306,12 @@ function setupDetailScrollSpy() {
 
 function render(state = getState()) {
   const views = { home: renderHome, search: renderSearch, add: renderAdd, portfolio: renderPortfolio, insights: renderInsights, profile: renderProfile, scan: () => renderScanReview(activeDraft, { ...state, scanSourceAvailable: Boolean(sourceImageForDraft()) }), detail: () => renderPriceIntelligenceDetail(activeDetail, state) };
-  const inspectorOpen = Boolean(state.ready && state.activeView === 'detail' && history.state?.inspector && activeDetail);
+  // The quick-view panel is UI state independent of the route (see the
+  // panelOpen declaration above) -- it is never shown while the real
+  // detail route is the active view (resolveRouteContext closes it the
+  // moment that route is reached, so the two surfaces never overlap).
+  const panelVisible = Boolean(state.ready && panelOpen && activeDetail && state.activeView !== 'detail');
+  const entering = panelVisible && !panelWasOpen;
   const onboardingVisible = state.ready
     && !state.settings.onboardingComplete
     && !state.settings.onboardingSkipped
@@ -268,13 +320,12 @@ function render(state = getState()) {
     ? `<section class="empty-state" role="alert"><h1>Local collection needs attention</h1><p>${escapeHTML(state.localOpenError)}</p><button class="button" type="button" data-action="retry-local-open">Try again</button></section>`
     : '<section class="empty-state"><h1>CollectFolio</h1><p>Opening your local collection…</p></section>');
   else if (onboardingVisible) renderRoot(renderOnboarding(state));
-  else if (inspectorOpen) {
-    const underlay = activeDetail.origin === 'search' ? renderSearch(state) : activeDetail.origin === 'insights' ? renderInsights(state) : renderPortfolio(state);
-    renderRoot(`<div class="inspector-underlay" inert aria-hidden="true">${underlay}</div>${renderQuickInspector(activeDetail, state)}`);
-  } else renderRoot((views[state.activeView] || renderHome)(state));
+  else renderRoot(`${(views[state.activeView] || renderHome)(state)}${panelVisible ? renderQuickInspector(activeDetail, state, { entering }) : ''}`);
+  if (panelVisible) syncPanelResizeHandleValue();
   // DCL-DET-09: scroll-spy applies only to the standalone Item Detail page,
-  // never the quick-inspector overlay (which renders different markup).
-  if (state.ready && !onboardingVisible && !inspectorOpen && state.activeView === 'detail') setupDetailScrollSpy();
+  // never the quick-view panel (which renders different markup and can
+  // never be showing at the same time -- see panelVisible above).
+  if (state.ready && !onboardingVisible && state.activeView === 'detail') setupDetailScrollSpy();
   else teardownDetailScrollSpy();
   const destination = primaryDestination(state.route || activeRoute);
   document.querySelectorAll('.primary-nav [data-nav]').forEach((button) => {
@@ -294,18 +345,24 @@ function render(state = getState()) {
       child.setAttribute('aria-hidden', 'true');
     });
   }
-  appShell?.classList.toggle('inspector-open', inspectorOpen || transientLayerOpen);
-  if (primaryNavigation) primaryNavigation.inert = inspectorOpen || transientLayerOpen;
-  if (topbar) topbar.inert = inspectorOpen || transientLayerOpen;
+  // panel-open only ever drives layout (content-area shift at wide
+  // viewports; see app.css) -- the panel is deliberately non-modal, so
+  // navigation and the topbar stay fully interactive while it is open.
+  // modal-open is the old dimming behavior, still exactly right for the
+  // two *actual* modals (category picker / search filters).
+  appShell?.classList.toggle('panel-open', panelVisible);
+  appShell?.classList.toggle('modal-open', transientLayerOpen);
+  if (primaryNavigation) primaryNavigation.inert = transientLayerOpen;
+  if (topbar) topbar.inert = transientLayerOpen;
   const shell = shellViewModel(state);
   document.querySelectorAll('[data-portfolio-label]').forEach((element) => { element.textContent = shell.portfolioLabel; });
   document.querySelectorAll('[data-sync-label]').forEach((element) => { element.textContent = shell.syncLabel; });
   document.querySelectorAll('[data-sync-status]').forEach((element) => { element.dataset.syncStatus = shell.syncStatus; });
   document.querySelectorAll('[data-account-label]').forEach((element) => { element.textContent = shell.accountLabel; });
   document.querySelectorAll('[data-search-label]').forEach((element) => { element.textContent = shell.searchQuery || 'Search'; });
-  if (inspectorOpen && !inspectorWasOpen) {
+  if (panelVisible && !panelWasOpen) {
     queueMicrotask(() => root.querySelector('.quick-inspector [data-action="close-detail"]')?.focus({ preventScroll: true }));
-  } else if (!inspectorOpen && inspectorWasOpen && inspectorReturnTarget) {
+  } else if (!panelVisible && panelWasOpen && inspectorReturnTarget) {
     const target = inspectorReturnTarget;
     queueMicrotask(() => {
       const origin = [...root.querySelectorAll('[data-action="open-detail"]')].find((element) =>
@@ -314,7 +371,7 @@ function render(state = getState()) {
       inspectorReturnTarget = null;
     });
   }
-  inspectorWasOpen = inspectorOpen;
+  panelWasOpen = panelVisible;
 }
 
 function runtimeFlag(name, fallback = false) {
@@ -714,39 +771,59 @@ async function hydrateCardRoute(route) {
   }
 }
 
-function resolveRouteContext(route, state = getState()) {
+// preserveActiveDetail: true only for the "Open full details" promotion
+// (see the open-full-detail click handler) -- activeDetail is already the
+// exact item the panel was just showing, so this skips re-deriving it from
+// state.search.results/watchlistItems, which can no longer be trusted to
+// still contain that item by the time the button is clicked (the panel can
+// stay open across pagination/re-search, unlike the old modal that always
+// navigated the instant it opened).
+function resolveRouteContext(route, state = getState(), { preserveActiveDetail = false } = {}) {
   if (route.key === 'holding-detail') {
-    const holding = state.holdings.find((entry) => entry.id === route.entityId);
-    activeDetail = holding ? { origin: route.origin || 'portfolio', item: holding.item, holding, catalogRef: catalogReferenceForItem(holding.item, {
-      canonicalVariantId: holding.canonicalVariantId,
-      conditionClass: holding.grade ? 'graded' : 'raw',
-      marketCondition: watchMarketConditionForHolding(holding)
-    }) } : null;
+    if (!preserveActiveDetail || !activeDetail?.holding) {
+      const holding = state.holdings.find((entry) => entry.id === route.entityId);
+      activeDetail = holding ? { origin: route.origin || 'portfolio', item: holding.item, holding, catalogRef: catalogReferenceForItem(holding.item, {
+        canonicalVariantId: holding.canonicalVariantId,
+        conditionClass: holding.grade ? 'graded' : 'raw',
+        marketCondition: watchMarketConditionForHolding(holding)
+      }) } : null;
+    }
+    // Reaching the real detail route always supersedes the quick-view panel.
+    panelOpen = false;
+    panelHistoryPushed = false;
     if (activeDetail?.item) {
       scheduleCatalogEnrichment(activeDetail.item);
       hydrateTrajectoryForecasts().catch(() => {});
       hydratePriceHistory().catch(() => {});
     }
   } else if (route.key === 'card-detail') {
-    const item = state.search.results.find((entry) => routeItemIdentifiers(entry).has(route.entityId));
-    const watched = watchedItemForRoute(state.watchlistItems, route.entityId);
-    const selected = item || (watched ? { ...watched.catalogRef, variant: watched.catalogRef.finish } : null);
-    activeDetail = selected ? {
-      origin: route.origin || 'search',
-      item: selected,
-      watched: watched || undefined,
-      catalogRef: catalogReferenceForItem(selected, {
-        canonicalVariantId: watched?.canonicalVariantId,
-        conditionClass: watched?.catalogRef?.conditionClass,
-        marketCondition: watched?.marketCondition
-      })
-    } : null;
+    if (!preserveActiveDetail || !activeDetail?.item) {
+      const item = state.search.results.find((entry) => routeItemIdentifiers(entry).has(route.entityId));
+      const watched = watchedItemForRoute(state.watchlistItems, route.entityId);
+      const selected = item || (watched ? { ...watched.catalogRef, variant: watched.catalogRef.finish } : null);
+      activeDetail = selected ? {
+        origin: route.origin || 'search',
+        item: selected,
+        watched: watched || undefined,
+        catalogRef: catalogReferenceForItem(selected, {
+          canonicalVariantId: watched?.canonicalVariantId,
+          conditionClass: watched?.catalogRef?.conditionClass,
+          marketCondition: watched?.marketCondition
+        })
+      } : null;
+    }
+    panelOpen = false;
+    panelHistoryPushed = false;
     if (activeDetail?.item) {
       scheduleCatalogEnrichment(activeDetail.item);
       hydrateTrajectoryForecasts().catch(() => {});
       hydratePriceHistory().catch(() => {});
     }
-  } else {
+  } else if (!panelOpen) {
+    // Ordinary navigation between non-detail views never touches
+    // activeDetail while the quick-view panel is showing it -- switching
+    // nav destinations is exactly the "keep browsing" case the panel is
+    // meant to survive (Kevin directive 2).
     activeDetail = null;
   }
   if (route.key === 'add-review') {
@@ -997,19 +1074,20 @@ async function hydrateCatalogGames({ bypassCache = false } = {}) {
   }
 }
 
-function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = true } = {}) {
+function applyAppRoute(route, { historyMode = 'push', focus = true, scroll = true, preserveActiveDetail = false } = {}) {
   if (activeRoute.key === 'add-review' && route.key !== 'add-review') releaseDraftSource();
   activeRoute = route;
   if (route.key !== 'card-detail') routeHydrationId += 1;
   const state = getState();
-  resolveRouteContext(route, state);
+  resolveRouteContext(route, state, { preserveActiveDetail });
   const current = currentAppPath(location);
-  const historyState = {
-    collectfolio: true,
-    routeKey: route.key,
-    inspector: historyMode === 'push' && route.legacyView === 'detail'
-  };
+  const historyState = { collectfolio: true, routeKey: route.key };
   if (historyMode === 'push' && current !== route.canonicalPath) {
+    // A real navigation always supersedes the quick-view panel's own
+    // shallow history entry (if any) -- once buried under this new entry
+    // it is no longer the thing a back-gesture should close (see
+    // panelHistoryPushed's declaration above).
+    panelHistoryPushed = false;
     history.pushState(historyState, '', route.canonicalPath);
   } else if (historyMode === 'replace' || current !== route.canonicalPath || !history.state?.collectfolio) {
     history.replaceState(historyState, '', route.canonicalPath);
@@ -1626,11 +1704,14 @@ function watchlistPreferencesForm(entry) {
   });
 }
 
-// Opens the price-intelligence detail view for an item resolved from search,
-// a holding, or a watchlist entry. card_view (and search_view when arriving
-// from search) demand events are recorded here — both are no-ops for
-// unmapped items, opted-out users, signed-out sessions, and model-mediated
-// Insights opens that would create a recommendation feedback loop.
+// Opens the quick-view panel for an item resolved from search, a holding,
+// or a watchlist entry. Directive 2: this never touches the route/URL any
+// more -- it only sets activeDetail + panelOpen, so whatever view the user
+// was browsing stays exactly where it was. card_view (and search_view when
+// arriving from search) demand events are recorded here -- both are no-ops
+// for unmapped items, opted-out users, signed-out sessions, and
+// model-mediated Insights opens that would create a recommendation
+// feedback loop.
 function openDetail(detail) {
   const catalogRef = catalogReferenceForItem(detail.item, {
     canonicalVariantId: detail.holding?.canonicalVariantId || detail.watched?.canonicalVariantId,
@@ -1646,16 +1727,58 @@ function openDetail(detail) {
   if (detail.origin === 'search') recordDemandEvent(
     catalogRef.canonicalVariantId, 'search_view', { origin: detail.origin }
   ).catch(() => {});
-  applyAppRoute(appRouteForLegacyView('detail', getState(), { detail: activeDetail }), { focus: false, scroll: false });
+  // Normally fired from resolveRouteContext for a route-driven detail open
+  // -- the panel bypasses routing entirely, so it fires these itself.
+  scheduleCatalogEnrichment(activeDetail.item);
+  hydrateTrajectoryForecasts().catch(() => {});
+  hydratePriceHistory().catch(() => {});
+  openPanel();
+}
+
+function isMobilePanelViewport() {
+  return typeof matchMedia !== 'function' || matchMedia('(max-width: 767px)').matches;
+}
+
+function openPanel() {
+  if (!panelOpen && isMobilePanelViewport()) {
+    // A shallow, same-path entry so the system back gesture closes the
+    // sheet on mobile (see the popstate listener below). Desktop/tablet
+    // never push one: Esc and the close button are the only close
+    // affordances there, per spec.
+    history.pushState({ ...history.state }, '', currentAppPath(location));
+    panelHistoryPushed = true;
+  }
+  panelOpen = true;
+  render();
+}
+
+// The actual state reset, shared by every close path (×, Esc, mobile
+// scrim tap, and the popstate handler finishing a back-gesture close).
+function finishClosePanel() {
+  panelOpen = false;
+  panelHistoryPushed = false;
+  activeDetail = null;
+  render();
+}
+
+function closePanel() {
+  if (!panelOpen) return;
+  // On mobile this was opened behind a shallow history entry -- go back
+  // through it so the entry doesn't linger, and let the resulting
+  // popstate finish the close (see below). Calling history.back() and
+  // finishing synchronously here would race a caller that immediately
+  // pushes its own navigation afterward (crumb clicks do exactly that --
+  // see select-browse-game/open-browse-set, which close the panel via
+  // finishClosePanel() directly for that reason, not this function).
+  if (panelHistoryPushed) { history.back(); return; }
+  finishClosePanel();
 }
 
 function closeActiveDetail() {
+  if (panelOpen) { closePanel(); return; }
   const origin = activeDetail?.origin === 'search' ? 'search' : activeDetail?.origin === 'insights' ? 'insights' : 'portfolio';
-  if (history.state?.inspector) history.back();
-  else {
-    activeDetail = null;
-    navigate(origin, origin === 'portfolio' ? { portfolioSection: 'holdings' } : {});
-  }
+  activeDetail = null;
+  navigate(origin, origin === 'portfolio' ? { portfolioSection: 'holdings' } : {});
 }
 
 async function updateAlertRecord(id, patch) {
@@ -2091,6 +2214,13 @@ root.addEventListener('click', async (event) => {
     return;
   }
   if (action.dataset.action === 'select-browse-game') {
+    // Catalog crumb (directive 3) reuses this same action for its game
+    // segment -- a crumb click is an explicit destination change, so it
+    // closes the quick-view panel first (Kevin: "the crumb as
+    // navigation"). finishClosePanel(), not closePanel(): the navigateBrowse
+    // call right below pushes its own history entry synchronously, which
+    // would race closePanel()'s history.back() on mobile.
+    if (panelOpen && action.closest('.quick-inspector')) finishClosePanel();
     const game = action.dataset.game || 'all';
     const requiresSession = catalogGameRequiresSession(game, getState().discover.games, getState().auth.session);
     navigateBrowse({ game, setId: '', years: [], setPage: 1, categoryPickerOpen: false });
@@ -2099,6 +2229,8 @@ root.addEventListener('click', async (event) => {
   }
   if (action.dataset.action === 'browse-all-games') navigateBrowse({ game: 'all', setId: '', years: [], setPage: 1 });
   if (action.dataset.action === 'open-browse-set') {
+    // Catalog crumb's set segment -- see select-browse-game above.
+    if (panelOpen && action.closest('.quick-inspector')) finishClosePanel();
     const selected = getState().discover.sets.find((set) => set.gameId === action.dataset.game && set.externalId === action.dataset.setId);
     const recentlyViewed = selected
       ? [selected, ...(getState().discover.recentlyViewed || []).filter((set) => set.id !== selected.id)].slice(0, 8)
@@ -2223,7 +2355,7 @@ root.addEventListener('click', async (event) => {
   }
   if (action.dataset.action === 'clear-compare') setState({ compare: [] });
   if (action.dataset.action === 'open-compare') openCompareModal();
-  if (['open-detail', 'review-catalog-identity'].includes(action.dataset.action)) {
+  if (action.dataset.action === 'open-detail') {
     inspectorReturnTarget = Object.fromEntries(['index', 'holdingId', 'watchKey', 'catalogScope']
       .filter((key) => action.dataset[key] !== undefined).map((key) => [key, action.dataset[key]]));
     if (action.dataset.index !== undefined) {
@@ -2243,13 +2375,6 @@ root.addEventListener('click', async (event) => {
     queueMicrotask(() => root.querySelector('[data-action="toggle-inspector-detent"]')?.focus({ preventScroll: true }));
     return;
   }
-  if (action.dataset.action === 'confirm-detail-identity' && activeDetail) {
-    activeDetail = { ...activeDetail, identityConfirmed: true };
-    render();
-    showToast('Exact item confirmed');
-    queueMicrotask(() => root.querySelector('[data-action="add-from-detail"]')?.focus({ preventScroll: true }));
-    return;
-  }
   if (action.dataset.action === 'close-detail') closeActiveDetail();
   if (action.dataset.action === 'view-detail-purchases') {
     activeDetail = null;
@@ -2258,12 +2383,14 @@ root.addEventListener('click', async (event) => {
     return;
   }
   if (action.dataset.action === 'open-full-detail' && activeDetail) {
-    history.replaceState({ ...history.state, inspector: false }, '', currentAppPath(location));
+    // Promotes the panel's item onto the real /items or /holdings route.
+    // preserveActiveDetail: true trusts the activeDetail already in hand
+    // instead of re-deriving it from state.search.results/watchlistItems
+    // (see resolveRouteContext) -- the panel can stay open across
+    // pagination/re-search, so that lookup can no longer be assumed to
+    // still find the item by the time this button is clicked.
     inspectorReturnTarget = null;
-    inspectorWasOpen = false;
-    render();
-    root.focus({ preventScroll: true });
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    applyAppRoute(appRouteForLegacyView('detail', getState(), { detail: activeDetail }), { preserveActiveDetail: true });
   }
   if (action.dataset.action === 'add-from-detail' && activeDetail) {
     holdingForm(null, { title: 'Add item to collection', item: { ...activeDetail.item, canonicalVariantId: activeDetail.catalogRef.canonicalVariantId } });
@@ -2587,16 +2714,29 @@ root.addEventListener('keydown', (event) => {
     result.click();
     return;
   }
-  const dialog = root.querySelector('.quick-inspector, .category-picker, .search-filter-panel');
-  if (!dialog) return;
-  if (event.key === 'Escape') {
+  // Bonus keyboard resize for the panel's drag handle (pointer dragging is
+  // wired below): Left/Right shrink/grow it by a fixed step.
+  const resizeHandle = event.target.closest?.('.panel-resize-handle');
+  if (resizeHandle && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
     event.preventDefault();
-    const close = dialog.querySelector('[data-action="close-detail"], [data-action="close-category-picker"], [data-action="close-search-filters"]');
-    close?.click();
+    setPanelWidth(currentPanelWidth() + (event.key === 'ArrowLeft' ? 16 : -16));
     return;
   }
-  if (event.key !== 'Tab') return;
-  const focusable = [...dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+  const modal = root.querySelector('.category-picker, .search-filter-panel');
+  // The quick-view panel is non-modal at tablet/desktop (per spec: focus
+  // is never trapped there) -- it only behaves like the true modals below
+  // while presented as a mobile bottom sheet.
+  const panel = root.querySelector('.quick-inspector');
+  if (!modal && !panel) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (modal) modal.querySelector('[data-action="close-category-picker"], [data-action="close-search-filters"]')?.click();
+    else closePanel();
+    return;
+  }
+  const trap = modal || (panel && isMobilePanelViewport() ? panel : null);
+  if (!trap || event.key !== 'Tab') return;
+  const focusable = [...trap.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
     .filter((element) => !element.disabled && element.getAttribute('aria-hidden') !== 'true');
   if (!focusable.length) return;
   const first = focusable[0];
@@ -2609,6 +2749,32 @@ root.addEventListener('keydown', (event) => {
     first.focus();
   }
 });
+
+// Left-edge drag-to-resize for the panel (tablet/desktop only -- the
+// handle is CSS-hidden below the 768px breakpoint, see app.css). Delegated
+// on document (not root) because renderRoot fully replaces #main-content's
+// children on every render, and a drag can run across several of them.
+document.addEventListener('pointerdown', (event) => {
+  const handle = event.target.closest?.('.panel-resize-handle');
+  if (!handle) return;
+  event.preventDefault();
+  panelResizePointerId = event.pointerId;
+  panelResizeStartX = event.clientX;
+  panelResizeStartWidth = currentPanelWidth();
+  handle.setPointerCapture?.(event.pointerId);
+});
+document.addEventListener('pointermove', (event) => {
+  if (panelResizePointerId === null || event.pointerId !== panelResizePointerId) return;
+  // The panel is right-docked -- dragging the left-edge handle leftward
+  // (negative clientX delta) should grow it, so the delta is inverted.
+  setPanelWidth(panelResizeStartWidth + (panelResizeStartX - event.clientX));
+});
+const endPanelResizeDrag = (event) => {
+  if (panelResizePointerId === null || (event && event.pointerId !== panelResizePointerId)) return;
+  panelResizePointerId = null;
+};
+document.addEventListener('pointerup', endPanelResizeDrag);
+document.addEventListener('pointercancel', endPanelResizeDrag);
 
 root.addEventListener('change', async (event) => {
   if (event.target.matches('[data-scan-input]')) {
@@ -2761,6 +2927,10 @@ subscribe(render);
 render();
 hydrateTcgcsvRefreshStatus();
 addEventListener('popstate', () => {
+  // The path is unchanged (openPanel() pushed a same-path entry), so this
+  // pop is the system back gesture closing the mobile panel -- finish
+  // that locally instead of re-running full route resolution.
+  if (panelHistoryPushed) { finishClosePanel(); return; }
   applyAppRoute(parseAppRoute(location), { historyMode: 'none', focus: true, scroll: false });
 });
 loadLocal().then(() => {
