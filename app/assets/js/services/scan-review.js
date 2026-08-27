@@ -4,7 +4,7 @@ import { deleteRecord, deleteRecords, getAll, putRecord, saveHolding } from '../
 import { catalogPriceForValuation } from '../core/pricing-policy.js';
 import { searchCatalog } from './catalog.js';
 import { cardRecognitionMode, lookupCardWithCollectCapture } from './collectcapture.js';
-import { candidateEvidenceScore, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
+import { candidateEvidenceScore, imageDimensionsFromBytes, queryEvidenceFromText, recognizeText, rerankCandidates } from './image.js';
 import { recordDemandEvent } from './demand-events.js';
 import { discoverVisualCandidates } from './visual-index.js';
 import { hydrateMappedVisualCandidate, mapProviderCandidatesToTCGCSV } from './catalog-enrichment.js';
@@ -15,6 +15,10 @@ export const ACQUISITION_FIELDS = Object.freeze([
 ]);
 export const COMPLETED_SCAN_RETENTION_DAYS = 30;
 export const COMPLETED_SCAN_RECEIPT_LIMIT = 20;
+// CollectCapture's proposed minimum crop resolution (shortest side, px).
+// Their server gate is disabled pending confirmation this client precheck is
+// live, so this is the only thing enforcing it today.
+const MIN_CARD_LOOKUP_DIMENSION_PX = 200;
 const discardedScanDraftIds = new Set();
 
 const text = (value, max) => String(value ?? '').trim().slice(0, max);
@@ -292,30 +296,98 @@ export async function applyAcquisitionToAll(draft, patch = {}) {
   return count;
 }
 
+// TCGCSV's three flagship category ids, the only ones the client's category
+// enum recognizes by name (services/collectcapture.js normalizedCategory).
+// Every other TCGCSV category, and every custom item outside this set,
+// falls back to 'all' rather than risk sending an unvalidated value.
+const TCGCSV_FLAGSHIP_CATEGORY_GAME = Object.freeze({ 3: 'pokemon', 1: 'magic', 2: 'yugioh' });
+const REFINEMENT_CATEGORY_ENUM = new Set(['pokemon', 'magic', 'yugioh']);
+
+// Q6: refinements no longer hardcode category:'all' -- derive it from
+// whatever identity is already selected on the crop (a prior candidate pick,
+// or a custom item), and only ever the three enum values collectcapture.js
+// itself validates against. Before anything is selected this naturally
+// resolves to 'all', matching the original (auto/initial) behavior.
+function refinementCategory(crop) {
+  const selected = selectedCropItem(crop);
+  if (!selected) return 'all';
+  const flagshipGame = TCGCSV_FLAGSHIP_CATEGORY_GAME[Number(selected.categoryId)];
+  if (flagshipGame) return flagshipGame;
+  const rawCategory = String(selected.category || '').toLowerCase();
+  return REFINEMENT_CATEGORY_ENUM.has(rawCategory) ? rawCategory : 'all';
+}
+
+// Decodes only the base64 payload of a crop data: URL and reads pixel
+// dimensions from the format header bytes via image.js's
+// imageDimensionsFromBytes -- no image-element or canvas decode, so the
+// CollectCapture min-resolution precheck is dependency-free and runs
+// identically in the browser and under node:test. Returns null (not a
+// size) when the header can't be read, so a parsing miss never blocks
+// sending a legitimate crop.
+function decodedCropDimensions(dataUrl) {
+  const value = String(dataUrl || '');
+  const commaIndex = value.indexOf(',');
+  if (!value.startsWith('data:') || commaIndex < 0 || typeof globalThis.atob !== 'function') return null;
+  try {
+    const binary = globalThis.atob(value.slice(commaIndex + 1));
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return imageDimensionsFromBytes(bytes);
+  } catch {
+    return null;
+  }
+}
+
 export async function identifyCrop(draft, cropId, editedQuery = '', options = {}) {
   const lookup = options.lookup || lookupCardWithCollectCapture;
   const mode = options.mode || (options.lookup ? 'collectcapture' : cardRecognitionMode());
   const visualSearch = options.visualSearch || discoverVisualCandidates;
   const mapVisualCandidates = options.mapVisualCandidates || mapProviderCandidatesToTCGCSV;
+  const measureImage = options.measureImage || decodedCropDimensions;
   const crop = draft.crops.find((entry) => entry.id === cropId);
   if (!crop) throw new Error('Crop not found.');
+  const trimmedQuery = editedQuery.trim();
+  // Q6: read before the crop's existing selection is cleared below -- a
+  // refinement's category comes from whatever was already identified, not
+  // from whatever is left after this call resets the crop for a fresh pass.
+  const category = refinementCategory(crop);
   crop.status = 'identifying'; crop.error = ''; crop.approved = false;
   crop.candidates = []; crop.selectedId = ''; crop.customItem = null;
   await saveScanDraft(draft);
   try {
     if (mode === 'collectcapture') {
+      // A manual refinement (a typed query) sends text-only -- no crop
+      // re-upload, so it skips both the ~2.8MB image payload and the vision
+      // concurrency gate. Initial/automatic identification (no query yet)
+      // stays on the image path, unchanged.
+      const textOnly = Boolean(trimmedQuery);
+      if (!textOnly) {
+        const dimensions = measureImage(crop.image);
+        const shortestSide = dimensions ? Math.min(dimensions.width, dimensions.height) : null;
+        if (shortestSide !== null && shortestSide < MIN_CARD_LOOKUP_DIMENSION_PX) {
+          // Never sent -- so it never touched the vision gate or the
+          // per-user quota. Distinct status from 'error' so the crop reads
+          // as "too small", not "identification failed".
+          crop.status = 'too_small';
+          crop.error = "This card is too small in the photo. Retake closer or crop tighter. This attempt didn't use one of your scans.";
+          await saveScanDraft(draft);
+          return crop;
+        }
+      }
       const result = await lookup({
-        imageDataUrl: crop.image,
-        query: editedQuery.trim(),
-        category: 'all',
-        limit: 24
+        ...(textOnly ? {} : { imageDataUrl: crop.image }),
+        query: trimmedQuery,
+        category,
+        limit: 24,
+        textOnly
       });
       crop.ocrEngine = result.recognition.source === 'user_query'
         ? 'CollectCapture manual search'
         : 'CollectCapture image recognition';
       crop.ocrText = result.recognition.visibleText.join('\n');
-      crop.query = editedQuery.trim() || result.recognition.queries[0] || '';
+      crop.query = trimmedQuery || result.recognition.queries[0] || '';
       crop.candidates = result.candidates;
+      if (result.rateLimit) draft.scanQuota = result.rateLimit;
       autoSelectTopCandidate(crop);
       crop.status = crop.candidates.length ? 'matched' : 'unmatched';
       crop.error = crop.candidates.length

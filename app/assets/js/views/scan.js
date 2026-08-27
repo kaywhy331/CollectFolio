@@ -57,6 +57,18 @@ function queueSummary(summary) {
   </section>`;
 }
 
+// RULE-5: chrome, not permanent status -- renders only once the hourly
+// CollectCapture quota is actually running low (<=10 left) and both numbers
+// were actually reported by the server; otherwise nothing renders here.
+function scanQuotaLine(scanQuota) {
+  const remaining = scanQuota?.remaining;
+  const limit = scanQuota?.limit;
+  if (typeof remaining !== 'number' || !Number.isFinite(remaining)) return '';
+  if (typeof limit !== 'number' || !Number.isFinite(limit)) return '';
+  if (remaining > 10) return '';
+  return `<p class="fine-print scan-quota-line" role="status">${remaining} of ${limit} scans left this hour</p>`;
+}
+
 function bulkAcquisition(draft) {
   return `<details class="bulk-acquisition" open>
     <summary><span><strong>Apply purchase details to all</strong><small>Set shared purchase and storage details once, then refine any item below.</small></span><span aria-hidden="true">+</span></summary>
@@ -168,6 +180,7 @@ export function renderScanReview(draft, state = {}) {
   return `${pageHeader('Add items', `Review ${draft.crops.length} detected item${draft.crops.length === 1 ? '' : 's'}`, 'Resolve any unidentified items, add shared purchase details, then skip anything you do not want.', headerActions)}
     <nav class="intake-steps" aria-label="Intake progress"><span class="complete">1 · Scan or upload</span><span aria-current="step">2 · Review detected items</span><span>3 · Confirm and add</span></nav>
     ${queueSummary(summary)}
+    ${scanQuotaLine(draft.scanQuota)}
     ${draft.submissionError ? `<p class="inline-warning" role="status">${escapeHTML(draft.submissionError)}</p>` : ''}
     <section class="scan-source-privacy"><div><span>${icon('diamond', { size: 16 })}</span><p><strong>Private by default.</strong> Photos stay on this device; only the card crop is sent for identification.</p></div>${sourceAvailable ? '<button class="button ghost small" type="button" data-action="release-source-photo">Release source copy now</button>' : ''}</section>
     ${photoHandlingDisclosure()}

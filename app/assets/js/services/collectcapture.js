@@ -3,6 +3,16 @@ import { validSession } from './supabase.js';
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_IMAGE_DATA_URL_LENGTH = 2_800_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+// card_lookup_busy retries are free server-side (no quota unit is deducted
+// for a 503 rejection), so a small bounded number of silent retries costs
+// the collector nothing but time.
+const MAX_BUSY_RETRIES = 2;
+const DEFAULT_BUSY_RETRY_SECONDS = 5;
+const MAX_BUSY_RETRY_SECONDS = 15;
+
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function runtimeConfig() {
   return globalThis.window?.COLLECTFOLIO_CONFIG || {};
@@ -59,24 +69,39 @@ export async function lookupCardWithCollectCapture({
   imageDataUrl,
   query = '',
   category = 'all',
-  limit = 12
+  limit = 12,
+  textOnly = false
 } = {}, {
   configuration = runtimeConfig(),
   session,
   fetchImpl = globalThis.fetch,
-  timeout = REQUEST_TIMEOUT_MS
+  timeout = REQUEST_TIMEOUT_MS,
+  sleepImpl = defaultSleep
 } = {}) {
-  const image = String(imageDataUrl || '');
-  if (image.length > MAX_IMAGE_DATA_URL_LENGTH) {
-    throw new CollectCaptureLookupError('The cropped card image is too large for CollectCapture.', {
-      status: 413,
-      code: 'media_too_large'
+  const normalizedQuery = String(query || '').trim().slice(0, 240);
+  // PR #12: imageDataUrl is optional when the caller explicitly opts into a
+  // text-only refinement AND supplies a non-empty query -- otherwise this is
+  // the original image-carrying request shape, unchanged.
+  const useTextOnly = Boolean(textOnly);
+  if (useTextOnly && !normalizedQuery) {
+    throw new CollectCaptureLookupError('Enter a name, set, or number to search without a new photo.', {
+      code: 'missing_query'
     });
   }
-  if (!/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(image)) {
-    throw new CollectCaptureLookupError('The cropped card image is not a supported JPEG, PNG, or WebP image.', {
-      code: 'invalid_card_image'
-    });
+  let image = '';
+  if (!useTextOnly) {
+    image = String(imageDataUrl || '');
+    if (image.length > MAX_IMAGE_DATA_URL_LENGTH) {
+      throw new CollectCaptureLookupError('The cropped card image is too large for CollectCapture.', {
+        status: 413,
+        code: 'media_too_large'
+      });
+    }
+    if (!/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(image)) {
+      throw new CollectCaptureLookupError('The cropped card image is not a supported JPEG, PNG, or WebP image.', {
+        code: 'invalid_card_image'
+      });
+    }
   }
   let activeSession = session;
   if (!String(activeSession?.access_token || '').trim()) {
@@ -97,52 +122,65 @@ export async function lookupCardWithCollectCapture({
       code: 'unauthorized'
     });
   }
-  const normalizedQuery = String(query || '').trim().slice(0, 240);
   const normalizedCategory = ['all', 'pokemon', 'magic', 'yugioh', 'other'].includes(category) ? category : 'all';
   const normalizedLimit = Math.max(1, Math.min(24, Math.trunc(Number(limit)) || 12));
-  const expectedContentSha256 = await imageContentSha256(image);
+  const expectedContentSha256 = useTextOnly ? null : await imageContentSha256(image);
+  const requestBody = {
+    ...(useTextOnly ? {} : { imageDataUrl: image }),
+    query: normalizedQuery,
+    category: normalizedCategory,
+    limit: normalizedLimit
+  };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, Number(timeout) || REQUEST_TIMEOUT_MS));
   try {
-    const response = await fetchImpl(url, {
-      method: 'POST',
-      signal: controller.signal,
-      cache: 'no-store',
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        imageDataUrl: image,
-        query: normalizedQuery,
-        category: normalizedCategory,
-        limit: normalizedLimit
-      })
-    });
-    const text = await readBoundedResponseText(response);
+    let response;
     let payload;
-    try {
-      payload = text ? JSON.parse(text) : {};
-    } catch {
-      throw new CollectCaptureLookupError('CollectCapture returned invalid JSON.', {
-        status: 502,
-        code: 'invalid_response'
+    let busyRetries = 0;
+    while (true) {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        signal: controller.signal,
+        cache: 'no-store',
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        headers: {
+          accept: 'application/json',
+          authorization: `Bearer ${accessToken}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
       });
+      const text = await readBoundedResponseText(response);
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        throw new CollectCaptureLookupError('CollectCapture returned invalid JSON.', {
+          status: 502,
+          code: 'invalid_response'
+        });
+      }
+      if (response.ok) break;
+      const failure = responseError(response.status, payload, response.headers);
+      if (response.status === 503 && failure.code === 'card_lookup_busy' && busyRetries < MAX_BUSY_RETRIES) {
+        // Busy retries never burn a quota unit (see MAX_BUSY_RETRIES comment
+        // above) -- retry silently before surfacing anything to the collector.
+        busyRetries += 1;
+        await sleepImpl(busyRetryDelayMs(response.headers.get('retry-after')));
+        continue;
+      }
+      throw failure;
     }
-    if (!response.ok) throw responseError(response.status, payload);
     if (!String(response.headers.get('content-type') || '').toLowerCase().includes('application/json')) {
       throw invalidResponse();
     }
-    const result = normalizeCollectCaptureLookup(payload?.lookup);
-    if (result.contentSha256 !== expectedContentSha256) throw invalidResponse();
+    const result = normalizeCollectCaptureLookup(payload?.lookup, { textOnly: useTextOnly });
+    if (!useTextOnly && result.contentSha256 !== expectedContentSha256) throw invalidResponse();
     if (result.candidates.length > normalizedLimit) throw invalidResponse();
     if (normalizedQuery
       ? result.recognition.source !== 'user_query' || result.recognition.queries[0] !== normalizedQuery
       : result.recognition.source !== 'vision') throw invalidResponse();
-    return result;
+    return { ...result, rateLimit: parseRateLimitHeaders(response.headers) };
   } catch (error) {
     if (error instanceof CollectCaptureLookupError) throw error;
     if (error?.name === 'AbortError') {
@@ -157,6 +195,28 @@ export async function lookupCardWithCollectCapture({
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Retry-After: default 5s when the header is absent or not a usable positive
+// number, capped at 15s regardless of what the server asks for.
+function busyRetryDelayMs(headerValue) {
+  const parsed = Number(headerValue);
+  const seconds = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BUSY_RETRY_SECONDS;
+  return Math.min(seconds, MAX_BUSY_RETRY_SECONDS) * 1000;
+}
+
+function parseRateLimitHeaderValue(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function parseRateLimitHeaders(headers) {
+  return {
+    limit: parseRateLimitHeaderValue(headers.get('x-ratelimit-limit')),
+    remaining: parseRateLimitHeaderValue(headers.get('x-ratelimit-remaining')),
+    reset: parseRateLimitHeaderValue(headers.get('x-ratelimit-reset'))
+  };
 }
 
 async function imageContentSha256(dataUrl) {
@@ -180,11 +240,15 @@ async function imageContentSha256(dataUrl) {
   }
 }
 
-export function normalizeCollectCaptureLookup(value) {
+export function normalizeCollectCaptureLookup(value, { textOnly = false } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidResponse();
-  if (value.imageRetained !== false
-    || typeof value.contentSha256 !== 'string'
-    || !/^[a-f0-9]{64}$/.test(value.contentSha256)) {
+  // Text-only refinements never submit an image, so the server returns
+  // contentSha256: null exactly -- image-carrying responses keep the
+  // original strict 64-hex requirement, byte-for-byte unchanged.
+  const contentSha256Valid = textOnly
+    ? value.contentSha256 === null
+    : typeof value.contentSha256 === 'string' && /^[a-f0-9]{64}$/.test(value.contentSha256);
+  if (value.imageRetained !== false || !contentSha256Valid) {
     throw invalidResponse();
   }
   const recognition = normalizeRecognition(value.recognition);
@@ -278,12 +342,59 @@ function normalizeCandidate(value) {
   };
 }
 
-function responseError(status, payload) {
+// Q4 ruling (Kevin, 2026-08-27): the 30/hour ceiling is sustained, so a
+// binder session will genuinely hit 429 -- the copy must say when the
+// window resets. x-ratelimit-reset may be epoch seconds or seconds-from-now
+// depending on the server build; values above ~1e9 are clearly epochs.
+function quotaResetPhrase(headers) {
+  if (!headers || typeof headers.get !== 'function') return '';
+  const reset = Number.parseInt(headers.get('x-ratelimit-reset') || '', 10);
+  const retryAfter = Number.parseInt(headers.get('retry-after') || '', 10);
+  let seconds = null;
+  if (Number.isFinite(reset) && reset > 0) {
+    seconds = reset > 1_000_000_000 ? Math.round(reset - (Date.now() / 1000)) : reset;
+  } else if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    seconds = retryAfter;
+  }
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 90) return ' Scans reset in about a minute.';
+  return ` Scans reset in about ${Math.max(2, Math.round(seconds / 60))} minutes.`;
+}
+
+function responseError(status, payload, headers = null) {
   const code = boundedErrorString(payload?.error, 'request_failed', 80);
   if (status === 401) return new CollectCaptureLookupError('Sign in again to identify cards with CollectCapture.', { status, code });
   if (status === 413) return new CollectCaptureLookupError('The cropped card image is too large for CollectCapture.', { status, code });
-  if (status === 429) return new CollectCaptureLookupError('CollectCapture has reached its lookup limit. Wait and retry.', { status, code });
-  if (status === 503) return new CollectCaptureLookupError('CollectCapture card lookup is temporarily unavailable.', { status, code });
+  if (status === 429) return new CollectCaptureLookupError(`CollectCapture has reached its lookup limit.${quotaResetPhrase(headers) || ' Wait and retry.'}`, { status, code });
+  if (status === 502) {
+    // card_recognition_timeout / card_recognition_unavailable are retryable;
+    // card_recognition_misconfigured / card_recognition_invalid_output are
+    // not -- the collector should report those instead of retrying.
+    if (code === 'card_recognition_timeout') {
+      return new CollectCaptureLookupError('Card lookup took too long. Retry in a moment.', { status, code });
+    }
+    if (code === 'card_recognition_unavailable') {
+      return new CollectCaptureLookupError('Card lookup is temporarily unavailable. Retry in a moment.', { status, code });
+    }
+    if (code === 'card_recognition_misconfigured' || code === 'card_recognition_invalid_output') {
+      return new CollectCaptureLookupError('Card lookup needs attention on the scanner side. Report this if it keeps happening.', { status, code });
+    }
+    return new CollectCaptureLookupError(
+      boundedErrorString(payload?.message, `CollectCapture lookup failed with HTTP ${status}.`, 500),
+      { status, code }
+    );
+  }
+  if (status === 503) {
+    if (code === 'card_lookup_busy') {
+      return new CollectCaptureLookupError('Scanner is busy — trying again shortly.', { status, code });
+    }
+    // The user's own session is fine here -- their box just can't reach
+    // Supabase to verify it, so this must never suggest signing in again.
+    if (code === 'authentication_unavailable') {
+      return new CollectCaptureLookupError("Card lookup can't verify sign-ins right now. Your session is fine — try again in a moment.", { status, code });
+    }
+    return new CollectCaptureLookupError('CollectCapture card lookup is temporarily unavailable.', { status, code });
+  }
   return new CollectCaptureLookupError(
     boundedErrorString(payload?.message, `CollectCapture lookup failed with HTTP ${status}.`, 500),
     { status, code }

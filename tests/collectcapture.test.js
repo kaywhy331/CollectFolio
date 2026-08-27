@@ -217,6 +217,7 @@ for (const [status, code, message] of [
   [401, 'unauthorized', /sign in again/i],
   [413, 'media_too_large', /too large/i],
   [429, 'rate_limited', /lookup limit/i],
+  [429, 'rate_limited', /wait and retry/i],
   [503, 'unavailable', /temporarily unavailable/i]
 ]) {
   test(`CollectCapture maps HTTP ${status} into an actionable lookup error`, async () => {
@@ -233,6 +234,42 @@ for (const [status, code, message] of [
     );
   });
 }
+
+// Q4 ruling: the sustained 30/hour ceiling makes 429 normal binder-session
+// UX, so the copy must state when the window resets when headers allow.
+test('a 429 with x-ratelimit-reset delta seconds states the reset in minutes', async () => {
+  await assert.rejects(
+    lookupCardWithCollectCapture({ imageDataUrl }, {
+      configuration,
+      session: { access_token: 'folio-token' },
+      fetchImpl: async () => jsonResponse({ error: 'rate_limited' }, 429, { 'x-ratelimit-reset': '1800' })
+    }),
+    (error) => error.status === 429 && /reset in about 30 minutes/i.test(error.message)
+  );
+});
+
+test('a 429 with an epoch x-ratelimit-reset still yields a sane minutes phrase', async () => {
+  const epoch = String(Math.round(Date.now() / 1000) + 600);
+  await assert.rejects(
+    lookupCardWithCollectCapture({ imageDataUrl }, {
+      configuration,
+      session: { access_token: 'folio-token' },
+      fetchImpl: async () => jsonResponse({ error: 'rate_limited' }, 429, { 'x-ratelimit-reset': epoch })
+    }),
+    (error) => error.status === 429 && /reset in about (?:[2-9]|1[0-2]) minutes/i.test(error.message)
+  );
+});
+
+test('a 429 with only retry-after under 90s says about a minute', async () => {
+  await assert.rejects(
+    lookupCardWithCollectCapture({ imageDataUrl }, {
+      configuration,
+      session: { access_token: 'folio-token' },
+      fetchImpl: async () => jsonResponse({ error: 'rate_limited' }, 429, { 'retry-after': '45' })
+    }),
+    (error) => error.status === 429 && /reset in about a minute/i.test(error.message)
+  );
+});
 
 test('CollectCapture aborts a lookup that exceeds its timeout', async () => {
   await assert.rejects(
@@ -265,6 +302,172 @@ test('CollectCapture only permits HTTPS endpoints outside local development', ()
     collectCaptureBaseUrl({ ENABLE_COLLECTCAPTURE: true, COLLECTCAPTURE_API_URL: 'http://localhost:4100' }).href,
     'http://localhost:4100/'
   );
+});
+
+test('CollectCapture sends a text-only refinement without imageDataUrl and accepts contentSha256: null', async () => {
+  let request;
+  const result = await lookupCardWithCollectCapture({
+    query: 'Charizard ex 223/197',
+    category: 'pokemon',
+    limit: 24,
+    textOnly: true
+  }, {
+    configuration,
+    session: { access_token: 'folio-token' },
+    fetchImpl: async (url, init) => {
+      request = { url: String(url), init };
+      return jsonResponse({
+        lookup: lookup({
+          contentSha256: null,
+          recognition: {
+            source: 'user_query', category: 'pokemon', name: null, setName: null,
+            collectorNumber: null, language: 'und', visibleText: [],
+            queries: ['Charizard ex 223/197'], confidence: 1,
+            provider: 'collector', model: 'manual-query'
+          }
+        })
+      });
+    }
+  });
+  const body = JSON.parse(request.init.body);
+  assert.equal('imageDataUrl' in body, false);
+  assert.deepEqual(body, { query: 'Charizard ex 223/197', category: 'pokemon', limit: 24 });
+  assert.equal(result.contentSha256, null);
+});
+
+test('CollectCapture rejects a text-only request with an empty query before any request is sent', async () => {
+  let called = false;
+  await assert.rejects(
+    lookupCardWithCollectCapture({ query: '   ', textOnly: true }, {
+      configuration,
+      session: { access_token: 'folio-token' },
+      fetchImpl: async () => { called = true; return jsonResponse({ lookup: lookup() }); }
+    }),
+    (error) => error instanceof CollectCaptureLookupError && error.code === 'missing_query'
+  );
+  assert.equal(called, false);
+});
+
+test('CollectCapture rejects a null contentSha256 on an image-carrying response', async () => {
+  await assert.rejects(
+    lookupCardWithCollectCapture({ imageDataUrl }, {
+      configuration,
+      session: { access_token: 'folio-token' },
+      fetchImpl: async () => jsonResponse({ lookup: lookup({ contentSha256: null }) })
+    }),
+    (error) => error instanceof CollectCaptureLookupError && error.code === 'invalid_response'
+  );
+  assert.throws(
+    () => normalizeCollectCaptureLookup(lookup({ contentSha256: null })),
+    (error) => error instanceof CollectCaptureLookupError && error.code === 'invalid_response'
+  );
+});
+
+test('CollectCapture retries a busy 503 honoring retry-after, capped, before succeeding', async () => {
+  let calls = 0;
+  const sleeps = [];
+  const result = await lookupCardWithCollectCapture({ imageDataUrl }, {
+    configuration,
+    session: { access_token: 'folio-token' },
+    sleepImpl: async (ms) => { sleeps.push(ms); },
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return jsonResponse({ error: 'card_lookup_busy' }, 503, { 'retry-after': '3' });
+      if (calls === 2) return jsonResponse({ error: 'card_lookup_busy' }, 503, { 'retry-after': '999' });
+      return jsonResponse({ lookup: lookup() });
+    }
+  });
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [3000, 15000]);
+  assert.equal(result.candidates.length, 1);
+});
+
+test('CollectCapture surfaces a busy error after exhausting its bounded retries', async () => {
+  let calls = 0;
+  await assert.rejects(
+    lookupCardWithCollectCapture({ imageDataUrl }, {
+      configuration,
+      session: { access_token: 'folio-token' },
+      sleepImpl: async () => {},
+      fetchImpl: async () => { calls += 1; return jsonResponse({ error: 'card_lookup_busy' }, 503); }
+    }),
+    (error) => error instanceof CollectCaptureLookupError && error.status === 503 && error.code === 'card_lookup_busy'
+  );
+  assert.equal(calls, 3);
+});
+
+test('CollectCapture defaults the busy retry delay to 5s when retry-after is absent or invalid', async () => {
+  let calls = 0;
+  const sleeps = [];
+  await lookupCardWithCollectCapture({ imageDataUrl }, {
+    configuration,
+    session: { access_token: 'folio-token' },
+    sleepImpl: async (ms) => { sleeps.push(ms); },
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return jsonResponse({ error: 'card_lookup_busy' }, 503);
+      if (calls === 2) return jsonResponse({ error: 'card_lookup_busy' }, 503, { 'retry-after': 'not-a-number' });
+      return jsonResponse({ lookup: lookup() });
+    }
+  });
+  assert.deepEqual(sleeps, [5000, 5000]);
+});
+
+test('CollectCapture never suggests signing in again when authentication_unavailable', async () => {
+  await assert.rejects(
+    lookupCardWithCollectCapture({ imageDataUrl }, {
+      configuration,
+      session: { access_token: 'folio-token' },
+      fetchImpl: async () => jsonResponse({ error: 'authentication_unavailable' }, 503)
+    }),
+    (error) => error instanceof CollectCaptureLookupError
+      && error.status === 503
+      && error.code === 'authentication_unavailable'
+      && !/sign in/i.test(error.message)
+      && /session is fine/i.test(error.message)
+  );
+});
+
+for (const [code, expectRetryable] of [
+  ['card_recognition_timeout', true],
+  ['card_recognition_unavailable', true],
+  ['card_recognition_misconfigured', false],
+  ['card_recognition_invalid_output', false]
+]) {
+  test(`CollectCapture words a 502 ${code} as ${expectRetryable ? 'retryable' : 'non-retryable'}`, async () => {
+    await assert.rejects(
+      lookupCardWithCollectCapture({ imageDataUrl }, {
+        configuration,
+        session: { access_token: 'folio-token' },
+        fetchImpl: async () => jsonResponse({ error: code }, 502)
+      }),
+      (error) => error instanceof CollectCaptureLookupError
+        && error.status === 502
+        && error.code === code
+        && (expectRetryable ? /retry/i.test(error.message) : /needs attention|report this/i.test(error.message))
+        && (expectRetryable ? !/report this/i.test(error.message) : !/^retry/i.test(error.message))
+    );
+  });
+}
+
+test('CollectCapture exposes per-user rate-limit headers on a successful response', async () => {
+  const result = await lookupCardWithCollectCapture({ imageDataUrl }, {
+    configuration,
+    session: { access_token: 'folio-token' },
+    fetchImpl: async () => jsonResponse({ lookup: lookup() }, 200, {
+      'x-ratelimit-limit': '30', 'x-ratelimit-remaining': '7', 'x-ratelimit-reset': '1700000000'
+    })
+  });
+  assert.deepEqual(result.rateLimit, { limit: 30, remaining: 7, reset: 1700000000 });
+});
+
+test('CollectCapture reports null rate-limit fields when headers are missing or malformed', async () => {
+  const result = await lookupCardWithCollectCapture({ imageDataUrl }, {
+    configuration,
+    session: { access_token: 'folio-token' },
+    fetchImpl: async () => jsonResponse({ lookup: lookup() }, 200, { 'x-ratelimit-remaining': 'soon' })
+  });
+  assert.deepEqual(result.rateLimit, { limit: null, remaining: null, reset: null });
 });
 
 test('CollectCapture drops credential-bearing candidate images and bounds server error text', async () => {

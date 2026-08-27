@@ -159,6 +159,28 @@ test('redesigned review exposes bulk editing, trusted identity, cost basis, and 
   assert.match(html, /Edit crop boundary/);
 });
 
+test('the review screen renders a quota line only when remaining scans is a finite number at or below 10', () => {
+  const draft = reviewDraft();
+  const options = { settings: { currency: 'USD' }, watchlistItems: [], featureFlags: { watchlists: true } };
+
+  draft.scanQuota = { limit: 30, remaining: 3, reset: 1700000000 };
+  assert.match(renderScanReview(draft, options), /3 of 30 scans left this hour/);
+
+  draft.scanQuota = { limit: 30, remaining: 10, reset: 1700000000 };
+  assert.match(renderScanReview(draft, options), /10 of 30 scans left this hour/);
+
+  // RULE-5: not permanent chrome -- plenty of quota left renders nothing.
+  draft.scanQuota = { limit: 30, remaining: 11, reset: 1700000000 };
+  assert.doesNotMatch(renderScanReview(draft, options), /scans left this hour/);
+
+  // Missing/partial quota data also renders nothing rather than a broken sentence.
+  draft.scanQuota = { limit: null, remaining: 3, reset: null };
+  assert.doesNotMatch(renderScanReview(draft, options), /scans left this hour/);
+
+  delete draft.scanQuota;
+  assert.doesNotMatch(renderScanReview(draft, options), /scans left this hour/);
+});
+
 test('scan review recognizes a condition-aware mapped watch', () => {
   const variantId = '123e4567-e89b-42d3-a456-426614174000';
   const mappedCard = { ...card, canonicalVariantId: variantId };
@@ -260,6 +282,170 @@ test('successful identification auto-selects the strongest candidate and auto-in
     assert.equal(unmatchedCrop.status, 'unmatched');
     assert.equal(unmatchedCrop.approved, false);
     assert.equal(unmatchedCrop.selectedId, '');
+  } finally {
+    restoreIndexedDB();
+  }
+});
+
+test('a manual refinement sends text-only (no image, no re-upload) while auto identification stays on the image path', async () => {
+  const restoreIndexedDB = installFakeScansIndexedDB();
+  try {
+    const draft = createScanDraft([
+      { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+    ]);
+    const requests = [];
+    const fakeLookup = async (request) => {
+      requests.push(request);
+      return {
+        recognition: { source: request.query ? 'user_query' : 'vision', visibleText: ['Charizard ex'], queries: ['Charizard ex'] },
+        candidates: [],
+        warnings: []
+      };
+    };
+    await identifyCrop(draft, draft.crops[0].id, '', { lookup: fakeLookup });
+    await identifyCrop(draft, draft.crops[0].id, '  Charizard ex  ', { lookup: fakeLookup });
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].textOnly, false);
+    assert.equal(requests[0].imageDataUrl, 'data:image/jpeg;base64,AA==');
+    assert.equal(requests[1].textOnly, true);
+    assert.equal('imageDataUrl' in requests[1], false);
+    assert.equal(requests[1].query, 'Charizard ex');
+  } finally {
+    restoreIndexedDB();
+  }
+});
+
+test('refinement category is derived from the selected candidate, never hardcoded, and always in the validated enum', async () => {
+  const restoreIndexedDB = installFakeScansIndexedDB();
+  try {
+    const requests = [];
+    const fakeLookup = async (request) => {
+      requests.push(request);
+      return { recognition: { source: 'user_query', visibleText: [], queries: [request.query] }, candidates: [], warnings: [] };
+    };
+
+    // Nothing selected yet -- falls back to 'all'.
+    const blankDraft = createScanDraft([{ box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }]);
+    await identifyCrop(blankDraft, blankDraft.crops[0].id, 'Charizard', { lookup: fakeLookup });
+    assert.equal(requests.at(-1).category, 'all');
+
+    // A TCGCSV candidate's categoryId (3 = Pokemon) maps into the enum even
+    // though its own .category field is the internal 'tcgcsv-category-3' form.
+    const pokemonDraft = reviewDraft();
+    pokemonDraft.crops[0].candidates = [{ ...card, categoryId: 3, category: 'tcgcsv-category-3' }];
+    pokemonDraft.crops[0].selectedId = card.id;
+    await identifyCrop(pokemonDraft, pokemonDraft.crops[0].id, 'Charizard', { lookup: fakeLookup });
+    assert.equal(requests.at(-1).category, 'pokemon');
+
+    // A Magic candidate (categoryId 1).
+    const magicDraft = reviewDraft();
+    magicDraft.crops[0].candidates = [{ ...card, categoryId: 1, category: 'tcgcsv-category-1' }];
+    magicDraft.crops[0].selectedId = card.id;
+    await identifyCrop(magicDraft, magicDraft.crops[0].id, 'Black Lotus', { lookup: fakeLookup });
+    assert.equal(requests.at(-1).category, 'magic');
+
+    // A non-flagship TCGCSV category (not in the client enum) -- falls back to 'all'.
+    const otherDraft = reviewDraft();
+    otherDraft.crops[0].candidates = [{ ...card, categoryId: 99, category: 'tcgcsv-category-99' }];
+    otherDraft.crops[0].selectedId = card.id;
+    await identifyCrop(otherDraft, otherDraft.crops[0].id, 'Some sports card', { lookup: fakeLookup });
+    assert.equal(requests.at(-1).category, 'all');
+
+    // A custom item whose raw .category is already an enum value.
+    const customDraft = reviewDraft();
+    customDraft.crops[0].candidates = [];
+    customDraft.crops[0].selectedId = '';
+    customDraft.crops[0].customItem = { id: 'custom-1', name: 'Handmade card', category: 'yugioh' };
+    await identifyCrop(customDraft, customDraft.crops[0].id, 'Blue-Eyes', { lookup: fakeLookup });
+    assert.equal(requests.at(-1).category, 'yugioh');
+  } finally {
+    restoreIndexedDB();
+  }
+});
+
+test('a crop below the minimum lookup resolution is never sent and is marked distinctly, without spending a scan', async () => {
+  const restoreIndexedDB = installFakeScansIndexedDB();
+  try {
+    const draft = createScanDraft([
+      { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+    ]);
+    let called = false;
+    const crop = await identifyCrop(draft, draft.crops[0].id, '', {
+      lookup: async () => { called = true; return { recognition: { source: 'vision', visibleText: [], queries: [] }, candidates: [], warnings: [] }; },
+      measureImage: () => ({ width: 320, height: 140 })
+    });
+    assert.equal(called, false);
+    assert.equal(crop.status, 'too_small');
+    assert.match(crop.error, /too small/i);
+    assert.match(crop.error, /didn't use one of your scans/i);
+  } finally {
+    restoreIndexedDB();
+  }
+});
+
+test('a crop at or above the minimum lookup resolution is sent normally, and a text-only refinement is exempt from the size check', async () => {
+  const restoreIndexedDB = installFakeScansIndexedDB();
+  try {
+    const draft = createScanDraft([
+      { box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }
+    ]);
+    let measureCalls = 0;
+    const fakeLookup = async () => ({ recognition: { source: 'vision', visibleText: [], queries: [] }, candidates: [], warnings: [] });
+    const okCrop = await identifyCrop(draft, draft.crops[0].id, '', {
+      lookup: fakeLookup,
+      measureImage: () => { measureCalls += 1; return { width: 200, height: 280 }; }
+    });
+    assert.equal(okCrop.status, 'unmatched');
+    assert.equal(measureCalls, 1);
+
+    // Text-only refinements never carry an image, so the precheck must not
+    // run (and must not block) on the refinement path.
+    const refinedCrop = await identifyCrop(draft, draft.crops[0].id, 'Charizard', {
+      lookup: async () => ({ recognition: { source: 'user_query', visibleText: [], queries: ['Charizard'] }, candidates: [], warnings: [] }),
+      measureImage: () => { measureCalls += 1; return { width: 10, height: 10 }; }
+    });
+    assert.equal(refinedCrop.status, 'unmatched');
+    assert.equal(measureCalls, 1);
+  } finally {
+    restoreIndexedDB();
+  }
+});
+
+test('a real too-small synthetic PNG data URL is measured and blocked without any DOM/Image dependency', async () => {
+  const restoreIndexedDB = installFakeScansIndexedDB();
+  try {
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+    png.set([0x49, 0x48, 0x44, 0x52], 12);
+    new DataView(png.buffer).setUint32(16, 150);
+    new DataView(png.buffer).setUint32(20, 400);
+    const dataUrl = `data:image/png;base64,${Buffer.from(png).toString('base64')}`;
+    const draft = createScanDraft([{ box: { x: 0, y: 0, width: 10, height: 14 }, image: dataUrl }]);
+    let called = false;
+    const crop = await identifyCrop(draft, draft.crops[0].id, '', {
+      lookup: async () => { called = true; return { recognition: { source: 'vision', visibleText: [], queries: [] }, candidates: [], warnings: [] }; }
+    });
+    assert.equal(called, false);
+    assert.equal(crop.status, 'too_small');
+  } finally {
+    restoreIndexedDB();
+  }
+});
+
+test('the observed rate-limit values from a successful lookup are recorded on the draft as scanQuota', async () => {
+  const restoreIndexedDB = installFakeScansIndexedDB();
+  try {
+    const draft = createScanDraft([{ box: { x: 0, y: 0, width: 10, height: 14 }, image: 'data:image/jpeg;base64,AA==' }]);
+    assert.equal('scanQuota' in draft, false);
+    await identifyCrop(draft, draft.crops[0].id, '', {
+      lookup: async () => ({
+        recognition: { source: 'vision', visibleText: [], queries: [] },
+        candidates: [],
+        warnings: [],
+        rateLimit: { limit: 30, remaining: 4, reset: 1700000000 }
+      })
+    });
+    assert.deepEqual(draft.scanQuota, { limit: 30, remaining: 4, reset: 1700000000 });
   } finally {
     restoreIndexedDB();
   }
