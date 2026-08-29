@@ -62,7 +62,12 @@ function rotatedTexturedCardPNG(width = 360, height = 440) {
 }
 
 const rotatedCardPNG = rotatedTexturedCardPNG();
-const unrecognizablePNG = solidPNG();
+// 320x320: solid and featureless (so corner detection still falls back and
+// CollectCapture still returns no candidates for it), but comfortably above
+// the 200px min-crop-dimension precheck once the 2.5% fallback-outline inset
+// is applied -- a bare 64x64 fixture now trips that precheck before the
+// request is ever sent.
+const unrecognizablePNG = solidPNG(320, 320);
 
 async function skipOnboarding(page) {
   await page.goto('/');
@@ -102,9 +107,15 @@ function collectCaptureCandidate(overrides = {}) {
 
 function collectCaptureLookup(request, candidates = []) {
   const query = String(request.query || '').trim();
-  const imageBytes = Buffer.from(String(request.imageDataUrl || '').split(',')[1] || '', 'base64');
+  // PR #12: a text-only refinement omits imageDataUrl entirely, and the real
+  // server returns contentSha256: null for it -- image-carrying requests keep
+  // the real byte-for-byte hash the client verifies.
+  const hasImage = typeof request.imageDataUrl === 'string' && request.imageDataUrl.length > 0;
+  const contentSha256 = hasImage
+    ? createHash('sha256').update(Buffer.from(request.imageDataUrl.split(',')[1] || '', 'base64')).digest('hex')
+    : null;
   return {
-    contentSha256: createHash('sha256').update(imageBytes).digest('hex'),
+    contentSha256,
     imageRetained: false,
     recognition: {
       source: query ? 'user_query' : 'vision', category: 'pokemon',
@@ -119,6 +130,14 @@ function collectCaptureLookup(request, candidates = []) {
   };
 }
 
+// Marks a `respond` result as a raw HTTP error fulfillment (status/headers/
+// error code) instead of a 200 { lookup } body -- used to simulate the 503
+// card_lookup_busy path a `respond` callback can return for one attempt and
+// a normal lookup for the next.
+function httpError({ status, error, headers = {} }) {
+  return { __httpError: true, status, error, headers };
+}
+
 async function configureCollectCaptureStub(page, { respond } = {}) {
   const requests = [];
   await page.addInitScript(() => {
@@ -130,7 +149,7 @@ async function configureCollectCaptureStub(page, { respond } = {}) {
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.36-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.37-test',
       COLLECTCAPTURE_API_URL: '${COLLECTCAPTURE_ORIGIN}/', ENABLE_COLLECTCAPTURE: true,
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
       ENABLE_PRICE_INTELLIGENCE: false, ENABLE_CLOUD_DATA_REMOVAL: false
@@ -142,8 +161,17 @@ async function configureCollectCaptureStub(page, { respond } = {}) {
       body: route.request().postDataJSON()
     };
     requests.push(request);
-    const lookup = respond ? await respond(request.body, requests.length) : collectCaptureLookup(request.body);
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ lookup }) });
+    const outcome = respond ? await respond(request.body, requests.length) : collectCaptureLookup(request.body);
+    if (outcome?.__httpError) {
+      await route.fulfill({
+        status: outcome.status,
+        contentType: 'application/json',
+        headers: outcome.headers,
+        body: JSON.stringify({ error: outcome.error })
+      });
+      return;
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ lookup: outcome }) });
   });
   return requests;
 }
@@ -152,7 +180,7 @@ async function configureDisabledCollectCapture(page, { localRollback = false } =
   await page.route('**/runtime-config.js', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `window.COLLECTFOLIO_CONFIG = Object.freeze({
-      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.36-test',
+      SUPABASE_URL: '', SUPABASE_ANON_KEY: '', APP_VERSION: '0.8.37-test',
       COLLECTCAPTURE_API_URL: '', ENABLE_COLLECTCAPTURE: false,
       ENABLE_LOCAL_SCAN_ROLLBACK: ${localRollback},
       ENABLE_TESSERACT: false, ENABLE_WATCHLISTS: true,
@@ -303,6 +331,23 @@ test('a CollectCapture catalog printing is auto-selected as a trusted identity a
   expect(browserCatalogRequests).toEqual([]);
 });
 
+test('a busy scanner (503 card_lookup_busy) retries automatically and resolves without collector action', async ({ page }) => {
+  const requests = await configureCollectCaptureStub(page, {
+    respond: (request, attempt) => attempt === 1
+      ? httpError({ status: 503, error: 'card_lookup_busy', headers: { 'retry-after': '0.1' } })
+      : collectCaptureLookup(request, [collectCaptureCandidate()])
+  });
+  await skipOnboarding(page);
+  await openImageReview(page, unrecognizablePNG);
+
+  // The busy rejection on the first attempt is retried silently by the
+  // client (bounded, honoring retry-after) -- the collector never sees an
+  // error, and the crop still resolves to a trusted, auto-included identity.
+  await expect(page.locator('.selected-match .match-state')).toHaveText('Identified');
+  await expect(page.locator('.approval-state')).toHaveText('Included ✓');
+  await expect.poll(() => requests.length).toBe(2);
+});
+
 test('manual scanner query retries through CollectCapture without invoking browser catalogs', async ({ page }) => {
   const browserCatalogRequests = [];
   page.on('request', (request) => {
@@ -332,7 +377,11 @@ test('manual scanner query retries through CollectCapture without invoking brows
   await expect(page.locator('[data-crop-query]')).toHaveValue('Synthetic Dragon ex 223/197');
   expect(requests).toHaveLength(2);
   expect(requests[1].body.query).toBe('Synthetic Dragon ex 223/197');
-  expect(requests[1].body.imageDataUrl).toBe(requests[0].body.imageDataUrl);
+  // PR #12: a typed refinement is a text-only lookup -- imageDataUrl is
+  // omitted from the request body entirely rather than the crop being
+  // re-uploaded, unlike the first (image-carrying) request.
+  expect(requests[0].body.imageDataUrl).toMatch(/^data:image\/jpeg;base64,/);
+  expect(requests[1].body).not.toHaveProperty('imageDataUrl');
   expect(browserCatalogRequests).toEqual([]);
 });
 

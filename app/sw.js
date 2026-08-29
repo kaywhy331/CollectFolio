@@ -1,4 +1,4 @@
-const CACHE = 'collectfolio-shell-v0.8.36';
+const CACHE = 'collectfolio-shell-v0.8.37';
 const IMAGE_CACHE = 'collectfolio-provider-images-v1';
 const VISUAL_INDEX_CACHE = 'collectfolio-visual-index-v1';
 const MAX_PROVIDER_IMAGE_ENTRIES = 160;
